@@ -1,0 +1,14 @@
+work/
+work-*/
+__pycache__/
+*.pyc
+.build/
+standalone/
+/target/
+node_modules/
+dist/
+src-tauri/binaries/
+src-tauri/gen/schemas/*
+!src-tauri/gen/schemas/.gitkeep
+*.log
+.playwright-mcp/

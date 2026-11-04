@@ -1,0 +1,157 @@
+:root {
+  --font-sans: "Pretendard Variable", Pretendard, -apple-system, "Segoe UI", "Malgun Gothic", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Cascadia Code", Consolas, ui-monospace, monospace;
+}
+
+:root,
+:root[data-theme="light"] {
+  --paper: #f6f7f9;
+  --surface: #ffffff;
+  --surface2: #f1f3f6;
+  --sunken: #e9ecf1;
+  --line: #ebedf1;
+  --line2: #e0e4ea;
+  --text: #1b2330;
+  --text2: #5b6677;
+  --text3: #909aa8;
+  --accent: #2c66ae;
+  --accent2: #1f4b85;
+  --accent-soft: #eaf1fb;
+  --accent-ink: #ffffff;
+  --ok: #1e9e6a;
+  --ok-soft: #e5f4ec;
+  --warn: #c0851a;
+  --warn-soft: #faf0dc;
+  --danger: #c8463d;
+  --danger-soft: #fcedec;
+  --sh1: 0 1px 2px rgba(16, 24, 40, 0.05);
+  --ring: 0 0 0 3px rgba(44, 102, 174, 0.16);
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  --paper: #0c0f15;
+  --surface: #13171f;
+  --surface2: #1a1f29;
+  --sunken: #0e1218;
+  --line: #21272f;
+  --line2: #2b323d;
+  --text: #e6e9ef;
+  --text2: #9aa4b2;
+  --text3: #6b7484;
+  --accent: #4c8df0;
+  --accent2: #7aaef7;
+  --accent-soft: #16243b;
+  --accent-ink: #08111f;
+  --ok: #35c28a;
+  --ok-soft: #102a20;
+  --warn: #e0a23b;
+  --warn-soft: #2c2410;
+  --danger: #f07068;
+  --danger-soft: #2c1716;
+  --sh1: 0 1px 2px rgba(0, 0, 0, 0.4);
+  --ring: 0 0 0 3px rgba(76, 141, 240, 0.24);
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-size: 13px;
+  color: var(--text);
+  background: var(--surface);
+  -webkit-font-smoothing: antialiased;
+  user-select: none;
+}
+
+input,
+button,
+select,
+textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+input::placeholder {
+  color: var(--text3);
+}
+
+.mono {
+  font-family: var(--font-mono);
+  font-feature-settings: "tnum" 1;
+}
+
+::-webkit-scrollbar {
+  width: 12px;
+  height: 12px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--line2);
+  border-radius: 8px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--text3);
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+@keyframes traypop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse {
+  0% {
+    box-shadow: 0 0 0 0 color-mix(in srgb, var(--accent) 45%, transparent);
+  }
+  70% {
+    box-shadow: 0 0 0 6px transparent;
+  }
+  100% {
+    box-shadow: 0 0 0 0 transparent;
+  }
+}
+
+@keyframes sweep {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(260%);
+  }
+}
+
+.anim-traypop {
+  animation: traypop 0.16s cubic-bezier(0.22, 0.61, 0.36, 1) both;
+}

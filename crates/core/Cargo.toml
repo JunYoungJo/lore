@@ -1,0 +1,18 @@
+[package]
+name = "qmd-memory-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "qmd_memory_core"
+
+[dependencies]
+serde.workspace = true
+serde_json = { workspace = true, features = ["preserve_order"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+sha2 = "0.10"
+zstd = "0.13"
+
+[dev-dependencies]
+tempfile = "3"

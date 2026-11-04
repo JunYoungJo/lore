@@ -1,0 +1,13 @@
+[package]
+name = "qmd-memory-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "qmd-memory-cli"
+path = "src/main.rs"
+
+[dependencies]
+qmd-memory-core = { path = "../core" }
+serde_json.workspace = true
