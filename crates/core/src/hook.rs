@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 
 use crate::error::{Error, Result};
+use crate::hooks::EVENTS;
 use crate::transcript::{canonical_path, Provider};
 
 #[derive(Debug, Deserialize)]
@@ -11,8 +12,6 @@ struct Event {
     transcript_path: Option<String>,
     session_id: Option<String>,
 }
-
-const RECORDED_EVENTS: [&str; 2] = ["SessionEnd", "PreCompact"];
 
 pub fn find_codex_session(root: &Path, session_id: &str) -> Option<PathBuf> {
     if session_id.is_empty() {
@@ -44,7 +43,7 @@ pub fn find_codex_session(root: &Path, session_id: &str) -> Option<PathBuf> {
 
 pub fn transcript_for(provider: Provider, event_json: &str, codex_sessions_dir: &Path) -> Result<Option<PathBuf>> {
     let event: Event = serde_json::from_str(event_json.trim_start_matches('\u{feff}').trim()).map_err(|error| Error::permanent(format!("훅 입력을 읽지 못했습니다: {error}")))?;
-    if !event.hook_event_name.as_deref().map(|name| RECORDED_EVENTS.contains(&name)).unwrap_or(false) {
+    if !event.hook_event_name.as_deref().map(|name| EVENTS.contains(&name)).unwrap_or(false) {
         return Ok(None);
     }
     if let Some(path) = event.transcript_path.filter(|path| !path.trim().is_empty()) {
@@ -66,6 +65,12 @@ mod tests {
         assert_eq!(transcript_for(Provider::Claude, event, Path::new("")).unwrap(), Some(PathBuf::from("C:/s/a.jsonl")));
         let bom = format!("\u{feff}{event}");
         assert!(transcript_for(Provider::Claude, &bom, Path::new("")).unwrap().is_some());
+    }
+
+    #[test]
+    fn codex_pre_compact_with_a_transcript_path_is_accepted() {
+        let event = r#"{"hook_event_name": "PreCompact", "session_id": "0aa1", "transcript_path": "C:/u/.codex/sessions/2026/11/05/rollout-x-0aa1.jsonl", "cwd": "D:/src/x", "model": "gpt", "turn_id": "t1", "trigger": "auto"}"#;
+        assert_eq!(transcript_for(Provider::Codex, event, Path::new("")).unwrap(), Some(PathBuf::from("C:/u/.codex/sessions/2026/11/05/rollout-x-0aa1.jsonl")));
     }
 
     #[test]

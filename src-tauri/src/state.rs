@@ -19,6 +19,7 @@ pub struct AppState {
     settings: Mutex<Settings>,
     current: Mutex<Option<Current>>,
     problem: Mutex<Option<String>>,
+    reviewing: Mutex<bool>,
     wake: Mutex<bool>,
     signal: Condvar,
 }
@@ -29,11 +30,32 @@ fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
 
 impl AppState {
     pub fn new(paths: Paths, settings: Settings) -> Self {
-        Self { paths, settings: Mutex::new(settings), current: Mutex::new(None), problem: Mutex::new(None), wake: Mutex::new(false), signal: Condvar::new() }
+        Self {
+            paths,
+            settings: Mutex::new(settings),
+            current: Mutex::new(None),
+            problem: Mutex::new(None),
+            reviewing: Mutex::new(false),
+            wake: Mutex::new(false),
+            signal: Condvar::new(),
+        }
+    }
+
+    pub fn reviewing(&self) -> bool {
+        *lock(&self.reviewing)
+    }
+
+    pub fn set_reviewing(&self, reviewing: bool) {
+        *lock(&self.reviewing) = reviewing;
+        self.wake();
     }
 
     pub fn settings(&self) -> Settings {
         lock(&self.settings).clone()
+    }
+
+    pub fn read_settings<T>(&self, read: impl FnOnce(&Settings) -> T) -> T {
+        read(&lock(&self.settings))
     }
 
     pub fn replace_settings(&self, settings: Settings) {

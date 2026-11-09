@@ -5,6 +5,8 @@ use serde::Serialize;
 
 use crate::copy;
 use crate::error::Result;
+use crate::notes;
+use crate::queue::Job;
 use crate::settings::{atomic_write, home};
 use crate::transcript::{parse, read_transcript, Provider};
 
@@ -173,6 +175,54 @@ pub fn migrate_links(knowledge_root: &Path, backup: Option<&Path>, apply: bool) 
     Ok(report)
 }
 
+#[derive(Debug, Clone, Default, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RefreshReport {
+    pub copies: Vec<String>,
+    pub added_turns: usize,
+    pub notes: Vec<String>,
+    pub relinked: usize,
+    pub unavailable: Vec<String>,
+}
+
+pub fn refresh_copies(knowledge_root: &Path, jobs: &[Job], apply: bool) -> Result<RefreshReport> {
+    let mut report = RefreshReport::default();
+    let mut notes = notes::load_all(knowledge_root)?;
+    for job in jobs.iter().filter(|job| job.cursor_line > 0) {
+        let transcript = PathBuf::from(&job.transcript);
+        let Ok(data) = read_transcript(&transcript) else {
+            report.unavailable.push(job.transcript.clone());
+            continue;
+        };
+        let parsed = parse(&data, job.provider)?;
+        let copy_file = copy::copy_path(knowledge_root, job.provider, &parsed.session_id, &job.id);
+        let Ok(old_copy) = std::fs::read_to_string(&copy_file) else { continue };
+        let dialogue = copy::render(&parsed, job.provider, &transcript, job.cursor_line);
+        if dialogue.text == old_copy {
+            continue;
+        }
+        report.added_turns += dialogue.lines.len().saturating_sub(copy::parse_headings(&old_copy).len());
+        let moves = copy::line_moves(&old_copy, &dialogue.lines);
+        for (note, text) in notes.iter_mut() {
+            let Some(updated) = copy::relink(text, &copy_file, &moves) else { continue };
+            report.relinked += 1;
+            if !report.notes.contains(note) {
+                report.notes.push(note.clone());
+            }
+            if apply {
+                atomic_write(&knowledge_root.join(note.as_str()), updated.as_bytes())?;
+            }
+            *text = updated;
+        }
+        if apply {
+            atomic_write(&copy_file, dialogue.text.as_bytes())?;
+        }
+        report.copies.push(copy_file.to_string_lossy().replace('\\', "/"));
+    }
+    report.notes.sort();
+    Ok(report)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -198,6 +248,64 @@ mod tests {
         assert_eq!(nearest(&lines, 15), Some((7, false)));
         assert_eq!(nearest(&lines, 16), Some((15, false)));
         assert_eq!(nearest(&lines, 30), None);
+    }
+
+    fn job(id: &str, transcript: &Path, cursor_line: usize) -> Job {
+        Job {
+            id: id.into(),
+            provider: Provider::Claude,
+            transcript: transcript.to_string_lossy().to_string(),
+            status: crate::queue::Status::Done,
+            cursor_line,
+            cursor_hash: String::new(),
+            project: Some("demo".into()),
+            session_id: Some("s1".into()),
+            attempts: 0,
+            next_attempt_at: 0,
+            manifest: None,
+            last_error: None,
+            updated_at: 0,
+        }
+    }
+
+    #[test]
+    fn copies_are_rebuilt_with_turns_the_old_reader_missed_and_links_follow() {
+        let dir = tempfile::tempdir().unwrap();
+        let knowledge = dir.path().join("knowledge");
+        let transcript = dir.path().join("s1.jsonl");
+        let records = [
+            r#"{"type":"user","uuid":"a","sessionId":"s1","cwd":"D:/demo","userType":"external","message":{"content":"로그만 남기십시오"}}"#,
+            r#"{"type":"attachment","uuid":"q","attachment":{"type":"queued_command","prompt":"보관 기간도 정하십시오","origin":{"kind":"human"}}}"#,
+            r#"{"type":"assistant","uuid":"b","message":{"content":[{"type":"text","text":"그렇게 하겠습니다"}]}}"#,
+            r#"{"type":"user","uuid":"c","userType":"external","message":{"content":"아직 기록 전인 말"}}"#,
+        ];
+        fs::write(&transcript, records.iter().map(|line| format!("{line}\n")).collect::<String>()).unwrap();
+        let parsed = parse(&fs::read(&transcript).unwrap(), Provider::Claude).unwrap();
+        let mut old_reader = parsed.clone();
+        old_reader.turns.retain(|turn| turn.line != 2);
+        let old_copy = copy::render(&old_reader, Provider::Claude, &transcript, 3);
+        let copy_file = copy::copy_path(&knowledge, Provider::Claude, "s1", "job1");
+        fs::create_dir_all(copy_file.parent().unwrap()).unwrap();
+        fs::write(&copy_file, &old_copy.text).unwrap();
+        let note = knowledge.join("projects").join("demo").join("bg.md");
+        fs::create_dir_all(note.parent().unwrap()).unwrap();
+        let note_text = format!("- [L3]({}) — 그렇게 하겠습니다\n", copy::link_target(&copy_file, old_copy.lines[&3]));
+        fs::write(&note, &note_text).unwrap();
+        let jobs = vec![job("job1", &transcript, 3), job("gone", &dir.path().join("missing.jsonl"), 5)];
+
+        let preview = refresh_copies(&knowledge, &jobs, false).unwrap();
+        assert_eq!(preview.copies, vec![copy_file.to_string_lossy().replace('\\', "/")]);
+        assert_eq!(preview.added_turns, 1);
+        assert_eq!(preview.notes, vec!["projects/demo/bg.md".to_string()]);
+        assert_eq!(preview.unavailable, vec![jobs[1].transcript.clone()]);
+        assert_eq!(fs::read_to_string(&note).unwrap(), note_text);
+
+        refresh_copies(&knowledge, &jobs, true).unwrap();
+        let rebuilt = fs::read_to_string(&copy_file).unwrap();
+        let lines = copy::parse_headings(&rebuilt);
+        assert!(rebuilt.contains("## L2 · 사용자") && !rebuilt.contains("아직 기록 전인 말"));
+        assert_eq!(fs::read_to_string(&note).unwrap(), format!("- [L3]({}) — 그렇게 하겠습니다\n", copy::link_target(&copy_file, lines[&3])));
+        assert!(refresh_copies(&knowledge, &jobs, true).unwrap().copies.is_empty());
     }
 
     #[test]

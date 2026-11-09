@@ -8,10 +8,12 @@ license.workspace = true
 name = "qmd_memory_core"
 
 [dependencies]
+chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }
 serde.workspace = true
 serde_json = { workspace = true, features = ["preserve_order"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
+similar = "2"
 zstd = "0.13"
 
 [dev-dependencies]

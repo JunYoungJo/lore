@@ -28,12 +28,7 @@ pub struct HookStatus {
     pub error: Option<String>,
 }
 
-pub fn events(provider: Provider) -> &'static [&'static str] {
-    match provider {
-        Provider::Claude => &["SessionEnd", "PreCompact"],
-        Provider::Codex => &["SessionEnd"],
-    }
-}
+pub const EVENTS: [&str; 2] = ["SessionEnd", "PreCompact"];
 
 pub fn config_path(provider: Provider) -> PathBuf {
     match provider {
@@ -85,7 +80,7 @@ pub fn inspect(text: Option<&str>, provider: Provider, wanted: &str) -> Result<(
     let root = parse(text)?;
     let mut all_connected = true;
     let mut other = None;
-    for event in events(provider) {
+    for event in EVENTS {
         let commands = event_commands(&root, event);
         if !commands.iter().any(|command| command == wanted) {
             all_connected = false;
@@ -106,8 +101,8 @@ pub fn add_hooks(text: Option<&str>, provider: Provider, wanted: &str) -> Result
     let object = root.as_object_mut().ok_or_else(|| Error::permanent("훅 설정 파일의 최상위가 JSON 객체가 아닙니다."))?;
     let hooks = object.entry("hooks").or_insert_with(|| Value::Object(Map::new()));
     let hooks = hooks.as_object_mut().ok_or_else(|| Error::permanent("훅 설정 파일의 hooks가 JSON 객체가 아닙니다."))?;
-    for event in events(provider) {
-        let entries = hooks.entry(*event).or_insert_with(|| Value::Array(Vec::new()));
+    for event in EVENTS {
+        let entries = hooks.entry(event).or_insert_with(|| Value::Array(Vec::new()));
         let entries = entries.as_array_mut().ok_or_else(|| Error::permanent(format!("훅 설정 파일의 {event} 항목이 배열이 아닙니다.")))?;
         for entry in entries.iter_mut() {
             if let Some(list) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
@@ -241,6 +236,26 @@ mod tests {
     }
 
     #[test]
+    fn both_tools_are_hooked_on_session_end_and_before_compaction() {
+        for provider in [Provider::Claude, Provider::Codex] {
+            let value: Value = serde_json::from_str(&add_hooks(None, provider, &wanted(provider)).unwrap()).unwrap();
+            assert_eq!(event_commands(&value, "SessionEnd"), vec![wanted(provider)]);
+            assert_eq!(event_commands(&value, "PreCompact"), vec![wanted(provider)]);
+        }
+    }
+
+    #[test]
+    fn a_codex_connection_with_only_session_end_is_completed_by_reconnecting() {
+        let old = format!(r#"{{"hooks": {{"SessionEnd": [{{"hooks": [{{"type": "command", "command": "{}", "timeout": 10}}]}}]}}}}"#, wanted(Provider::Codex));
+        assert_eq!(inspect(Some(&old), Provider::Codex, &wanted(Provider::Codex)).unwrap().0, HookState::Missing);
+        let updated = add_hooks(Some(&old), Provider::Codex, &wanted(Provider::Codex)).unwrap();
+        let value: Value = serde_json::from_str(&updated).unwrap();
+        assert_eq!(event_commands(&value, "SessionEnd"), vec![wanted(Provider::Codex)]);
+        assert_eq!(event_commands(&value, "PreCompact"), vec![wanted(Provider::Codex)]);
+        assert_eq!(inspect(Some(&updated), Provider::Codex, &wanted(Provider::Codex)).unwrap().0, HookState::Connected);
+    }
+
+    #[test]
     fn stale_install_path_is_replaced_not_duplicated() {
         let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/qmd-memory-cli.exe hook codex", "timeout": 10}]}]}}"#;
         assert_eq!(inspect(Some(stale), Provider::Codex, &wanted(Provider::Codex)).unwrap(), (HookState::OtherPath, Some("D:/old/qmd-memory-cli.exe hook codex".into())));
@@ -280,7 +295,7 @@ mod tests {
     fn removal_leaves_the_other_tool_and_old_paths_are_removed_too() {
         let both = add_hooks(Some(&add_hooks(None, Provider::Codex, &wanted(Provider::Codex)).unwrap()), Provider::Claude, &wanted(Provider::Claude)).unwrap();
         let (text, removed) = remove_hooks(Some(&both), Provider::Codex).unwrap();
-        assert_eq!(removed, 1);
+        assert_eq!(removed, 2);
         assert_eq!(inspect(Some(&text), Provider::Claude, &wanted(Provider::Claude)).unwrap().0, HookState::Connected);
         let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/qmd-memory-cli.exe hook codex"}]}]}}"#;
         assert_eq!(remove_hooks(Some(stale), Provider::Codex).unwrap().1, 1);
@@ -293,7 +308,7 @@ mod tests {
         assert_eq!(unregister_at(&config, Provider::Codex, 1).unwrap(), 0);
         register_at(&config, Provider::Codex, Path::new(CLI), 2).unwrap();
         let connected = std::fs::read_to_string(&config).unwrap();
-        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), 1);
+        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), 2);
         assert_eq!(std::fs::read_to_string(dir.path().join("hooks.json.qmd-memory-backup-3")).unwrap(), connected);
         assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Missing);
         assert_eq!(unregister_at(&config, Provider::Codex, 4).unwrap(), 0);

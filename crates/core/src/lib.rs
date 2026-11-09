@@ -11,6 +11,7 @@ pub mod proposal;
 pub mod qmd;
 pub mod queue;
 pub mod recorder;
+pub mod review;
 pub mod run;
 pub mod scan;
 pub mod settings;

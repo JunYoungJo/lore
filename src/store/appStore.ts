@@ -1,23 +1,39 @@
 import { create } from "zustand";
 
 import * as api from "@/ipc/api";
-import type { Provider, Settings, Snapshot } from "@/ipc/contract";
+import type { EditableSettings, Job, Models, Provider, Settings, Snapshot } from "@/ipc/contract";
 
-export type View = "status" | "settings";
+export type View = "status" | "settings" | "queue";
+
+export type QueueGroup = "recording" | "ready" | "waiting" | "failed";
+
+export function editable({ knowledgeRoot, backend, models, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget }: Settings): EditableSettings {
+  return { knowledgeRoot, backend, models: { ...models }, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget };
+}
+
+const cleanModel = (model: string | null) => (model?.trim() ? model.trim() : null);
+
+export const cleanModels = (models: Models): Models => ({ codex: cleanModel(models.codex), claude: cleanModel(models.claude) });
 
 interface AppStore {
   snapshot: Snapshot | null;
   view: View;
-  draft: Settings | null;
+  draft: EditableSettings | null;
   error: string | null;
   saving: boolean;
+  queue: Job[] | null;
+  queueFocus: QueueGroup;
   refresh: () => Promise<void>;
+  loadQueue: () => Promise<void>;
   showSettings: () => void;
   showStatus: () => void;
-  editDraft: (patch: Partial<Settings>) => void;
+  showQueue: (focus: QueueGroup) => void;
+  editDraft: (patch: Partial<EditableSettings>) => void;
   saveDraft: () => Promise<void>;
   togglePause: () => Promise<void>;
   retry: (id: string) => Promise<void>;
+  discard: (id: string) => Promise<void>;
+  clearActivity: () => Promise<void>;
   setAutostart: (enabled: boolean) => Promise<void>;
   connecting: Provider | null;
   connectHook: (provider: Provider) => Promise<void>;
@@ -27,6 +43,7 @@ interface AppStore {
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 let refreshing: Promise<void> | null = null;
+let loadingQueue: Promise<void> | null = null;
 
 export const useAppStore = create<AppStore>((set, get) => ({
   snapshot: null,
@@ -34,8 +51,11 @@ export const useAppStore = create<AppStore>((set, get) => ({
   draft: null,
   error: null,
   saving: false,
+  queue: null,
+  queueFocus: "ready",
 
   refresh: () => {
+    if (get().view === "queue") void get().loadQueue();
     if (refreshing) return refreshing;
     refreshing = api
       .getSnapshot()
@@ -47,9 +67,26 @@ export const useAppStore = create<AppStore>((set, get) => ({
     return refreshing;
   },
 
+  loadQueue: () => {
+    if (loadingQueue) return loadingQueue;
+    loadingQueue = api
+      .getQueue()
+      .then((queue) => set({ queue }))
+      .catch((error) => set({ error: message(error) }))
+      .finally(() => {
+        loadingQueue = null;
+      });
+    return loadingQueue;
+  },
+
+  showQueue: (focus) => {
+    set({ view: "queue", queueFocus: focus, queue: null, error: null });
+    void get().loadQueue();
+  },
+
   showSettings: () => {
     const settings = get().snapshot?.settings ?? null;
-    set({ view: "settings", draft: settings ? structuredClone(settings) : null, error: null });
+    set({ view: "settings", draft: settings ? editable(settings) : null, error: null });
   },
 
   showStatus: () => set({ view: "status", draft: null, error: null }),
@@ -64,7 +101,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     if (!draft) return;
     set({ saving: true, error: null });
     try {
-      await api.saveSettings({ ...draft, model: draft.model?.trim() ? draft.model.trim() : null });
+      await api.saveSettings({ ...draft, models: cleanModels(draft.models) });
       set({ view: "status", draft: null });
       await get().refresh();
     } catch (error) {
@@ -87,6 +124,24 @@ export const useAppStore = create<AppStore>((set, get) => ({
   retry: async (id) => {
     try {
       await api.retryJob(id);
+      await get().refresh();
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  discard: async (id) => {
+    try {
+      await api.discardJob(id);
+      await get().refresh();
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  },
+
+  clearActivity: async () => {
+    try {
+      await api.clearActivity();
       await get().refresh();
     } catch (error) {
       set({ error: message(error) });

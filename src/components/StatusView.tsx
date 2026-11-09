@@ -4,6 +4,7 @@ import {
   CircleDashed,
   FileCheck2,
   FileText,
+  GitCompare,
   Inbox,
   LoaderCircle,
   Pause,
@@ -11,12 +12,16 @@ import {
   RotateCw,
   type LucideIcon,
 } from "lucide-react";
+import { useRef, useState } from "react";
 
+import { JobActions } from "@/components/JobActions";
 import * as api from "@/ipc/api";
 import type { Activity, ActivityKind, Job, Snapshot } from "@/ipc/contract";
 import { elapsed, fileName, minutesUntil, providerLabel, relativeTime } from "@/format";
-import { useAppStore } from "@/store/appStore";
+import { useAppStore, type QueueGroup } from "@/store/appStore";
+import { ConfirmCard } from "@/ui/ConfirmCard";
 import { IconChip, type Tint } from "@/ui/IconChip";
+import { useNow } from "@/useNow";
 
 const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label: string; tone: string }>> = {
   recorded: { glyph: FileCheck2, tint: "green", label: "기록함", tone: "ok" },
@@ -28,7 +33,8 @@ const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   const togglePause = useAppStore((store) => store.togglePause);
   const { current, settings } = snapshot;
-  const model = `${providerLabel(settings.backend)}${settings.model ? ` ${settings.model}` : ""}`;
+  const chosen = settings.models[settings.backend];
+  const model = `${providerLabel(settings.backend)}${chosen ? ` ${chosen}` : ""}`;
 
   if (current) {
     return (
@@ -43,6 +49,21 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
             <span />
           </div>
         </div>
+      </section>
+    );
+  }
+
+  if (snapshot.reviewing) {
+    return (
+      <section className="now paused" aria-label="진행 중">
+        <IconChip glyph={GitCompare} tint="amber" />
+        <div className="now-main">
+          <div className="now-title">검토 중</div>
+          <div className="now-sub">검토 창이 열려 있는 동안에는 새 기록을 시작하지 않습니다. 창을 닫으면 차례로 기록합니다.</div>
+        </div>
+        <button type="button" className="pill primary" onClick={() => void api.openReview()}>
+          검토 창
+        </button>
       </section>
     );
   }
@@ -96,46 +117,53 @@ function HookCallout({ snapshot }: { snapshot: Snapshot }) {
 }
 
 function Stats({ snapshot }: { snapshot: Snapshot }) {
-  const { counts } = snapshot;
-  const items: { label: string; value: number; tone: string }[] = [
-    { label: "대기", value: counts.ready, tone: counts.ready === 0 ? "muted" : "" },
-    { label: "재시도 대기", value: counts.waiting, tone: counts.waiting > 0 ? "warn" : "muted" },
-    { label: "실패", value: counts.failed, tone: counts.failed > 0 ? "danger" : "muted" },
-    { label: "완료", value: counts.done, tone: counts.done === 0 ? "muted" : "" },
+  const showQueue = useAppStore((store) => store.showQueue);
+  const { counts, review } = snapshot;
+  const items: { group: QueueGroup; label: string; value: number; tone: string; hint: string }[] = [
+    { group: "ready", label: "대기", value: counts.ready, tone: counts.ready === 0 ? "muted" : "", hint: "기록을 기다리는 세션을 봅니다" },
+    { group: "waiting", label: "재시도 대기", value: counts.waiting, tone: counts.waiting > 0 ? "warn" : "muted", hint: "다시 시도를 기다리는 세션을 봅니다" },
+    { group: "failed", label: "실패", value: counts.failed, tone: counts.failed > 0 ? "danger" : "muted", hint: "실패한 세션을 봅니다" },
   ];
+  const reviewValue = review === null ? "–" : String(review);
   return (
     <section className="stats" aria-label="큐 상태">
       {items.map((item) => (
-        <div key={item.label} className={`stat ${item.tone}`}>
+        <button key={item.label} type="button" className={`stat stat-button ${item.tone}`} aria-label={`${item.label} ${item.value}`} title={item.hint} onClick={() => showQueue(item.group)}>
           <div className="stat-value">{item.value}</div>
           <div className="stat-label">{item.label}</div>
-        </div>
+        </button>
       ))}
+      <button type="button" className={`stat stat-button ${review ? "" : "muted"}`} aria-label={`검토 대기 ${reviewValue}`} title="바뀐 기억 문서를 검토하고 커밋합니다" onClick={() => void api.openReview()}>
+        <div className="stat-value">{reviewValue}</div>
+        <div className="stat-label">검토 대기</div>
+      </button>
     </section>
   );
 }
 
 function AttentionRow({ job, now }: { job: Job; now: number }) {
-  const retry = useAppStore((store) => store.retry);
   const failed = job.status === "failed";
   const status = failed ? "실패" : job.status === "index_pending" ? "색인 갱신 대기" : "문서 저장 중단";
+  const name = job.project ?? providerLabel(job.provider);
   return (
     <div className="row">
       <IconChip glyph={failed ? CircleAlert : RotateCw} tint={failed ? "red" : "amber"} />
       <div className="row-main">
         <div className="row-title">
-          <span className="name">{job.project ?? providerLabel(job.provider)}</span>
+          <span className="name" title={name}>
+            {name}
+          </span>
           <span className="badge">{providerLabel(job.provider)}</span>
           <span className={`row-kind ${failed ? "danger" : "warn"}`}>{status}</span>
         </div>
-        {job.lastError && <div className="row-sub danger">{job.lastError}</div>}
+        {job.lastError && (
+          <div className="row-sub danger" title={job.lastError}>
+            {job.lastError}
+          </div>
+        )}
         {!failed && job.nextAttemptAt > now && <div className="row-sub">약 {minutesUntil(job.nextAttemptAt, now)}분 뒤 다시 시도합니다.</div>}
       </div>
-      {failed && (
-        <button type="button" className="pill primary" onClick={() => void retry(job.id)}>
-          다시 시도
-        </button>
-      )}
+      {failed && <JobActions job={job} />}
     </div>
   );
 }
@@ -144,16 +172,23 @@ function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
   const detail = activity.error ?? activity.summary;
   const label = activity.kind === "recorded" ? `문서 ${activity.notes.length}개 고침` : kind.label;
+  const name = activity.project ?? providerLabel(activity.provider);
   return (
     <div className="row">
       <IconChip glyph={kind.glyph} tint={kind.tint} />
       <div className="row-main">
         <div className="row-title">
-          <span className="name">{activity.project ?? providerLabel(activity.provider)}</span>
+          <span className="name" title={name}>
+            {name}
+          </span>
           <span className="badge">{providerLabel(activity.provider)}</span>
           <span className={`row-kind ${kind.tone}`}>{label}</span>
         </div>
-        {detail && <div className={activity.error ? "row-sub danger" : "row-sub"}>{detail}</div>}
+        {detail && (
+          <div className={activity.error ? "row-sub danger" : "row-sub"} title={detail}>
+            {detail}
+          </div>
+        )}
         {activity.notes.length > 0 && (
           <div className="files">
             {activity.notes.map((note) => (
@@ -171,7 +206,10 @@ function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
 }
 
 export function StatusView({ snapshot }: { snapshot: Snapshot }) {
-  const now = Math.floor(Date.now() / 1000);
+  const now = useNow(15_000);
+  const clearActivity = useAppStore((store) => store.clearActivity);
+  const [confirming, setConfirming] = useState(false);
+  const clearButton = useRef<HTMLButtonElement>(null);
   const recent = snapshot.recent.filter((activity) => KINDS[activity.kind]);
 
   return (
@@ -190,7 +228,24 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
       )}
 
       <section aria-label="최근 기록">
-        <div className="eyebrow">최근 기록</div>
+        <div className="eyebrow">
+          최근 기록
+          {snapshot.recent.length > 0 && (
+            <button ref={clearButton} type="button" className="eyebrow-btn" aria-label="최근 기록 지우기" aria-expanded={confirming} onClick={() => setConfirming(!confirming)}>
+              지우기
+            </button>
+          )}
+        </div>
+        {confirming && snapshot.recent.length > 0 && (
+          <ConfirmCard
+            anchor={clearButton}
+            label="최근 기록 지우기 확인"
+            message="최근 기록을 모두 지울까요? 기억 문서와 큐는 그대로 둡니다."
+            action="모두 지우기"
+            onConfirm={() => void clearActivity()}
+            onClose={() => setConfirming(false)}
+          />
+        )}
         {recent.length === 0 ? (
           <div className="empty">
             <div className="empty-icon">

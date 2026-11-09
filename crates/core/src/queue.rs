@@ -265,18 +265,29 @@ impl Queue {
         Ok(changed > 0)
     }
 
-    pub fn counts(&self, now: i64) -> Result<Counts> {
+    pub fn counts(&self, now: i64, recording: Option<&str>) -> Result<Counts> {
         Ok(self.connection.query_row(
             "SELECT
-                COALESCE(SUM(status IN ('pending', 'applying', 'index_pending') AND next_attempt_at <= ?1), 0),
+                COALESCE(SUM(status IN ('pending', 'applying', 'index_pending') AND next_attempt_at <= ?1 AND id IS NOT ?2), 0),
                 COALESCE(SUM(status IN ('pending', 'applying', 'index_pending') AND next_attempt_at > ?1), 0),
                 COALESCE(SUM(status = 'failed'), 0),
                 COALESCE(SUM(status = 'done'), 0),
                 COALESCE(SUM(status = 'skipped'), 0)
              FROM jobs",
-            params![now],
+            params![now, recording],
             |row| Ok(Counts { ready: row.get(0)?, waiting: row.get(1)?, failed: row.get(2)?, done: row.get(3)?, skipped: row.get(4)? }),
         )?)
+    }
+
+    pub fn unfinished_jobs(&self) -> Result<Vec<Job>> {
+        let sql = format!(
+            "SELECT {JOB_COLUMNS} FROM jobs
+             WHERE status IN ('pending', 'applying', 'index_pending', 'failed')
+             ORDER BY CASE status WHEN 'pending' THEN 1 ELSE 0 END, next_attempt_at, rowid"
+        );
+        let mut statement = self.connection.prepare(&sql)?;
+        let rows = statement.query_map([], job_from_row)?;
+        Ok(rows.collect::<rusqlite::Result<Vec<_>>>()?)
     }
 
     pub fn jobs_with_status(&self, statuses: &[Status], limit: usize) -> Result<Vec<Job>> {
@@ -304,6 +315,10 @@ impl Queue {
         let last = self.connection.last_insert_rowid();
         self.connection.execute("DELETE FROM activity WHERE id <= ?1", params![last - ACTIVITY_KEPT])?;
         Ok(())
+    }
+
+    pub fn clear_activity(&self) -> Result<usize> {
+        Ok(self.connection.execute("DELETE FROM activity", [])?)
     }
 
     pub fn recent_activity(&self, limit: usize) -> Result<Vec<Activity>> {
@@ -451,7 +466,32 @@ mod tests {
         assert_eq!(queue.enqueue(Provider::Codex, &upper, 100).unwrap(), first);
         assert_eq!(queue.enqueue(Provider::Codex, &crate::transcript::compressed_path(&lower), 100).unwrap(), first);
         assert_ne!(queue.enqueue(Provider::Claude, &lower, 100).unwrap(), first);
-        assert_eq!(queue.counts(100).unwrap().ready, 2);
+        assert_eq!(queue.counts(100, None).unwrap().ready, 2);
+    }
+
+    #[test]
+    fn the_job_being_recorded_is_not_counted_as_waiting() {
+        let (dir, queue) = queue();
+        let recording = add(&queue, &dir, "a.jsonl");
+        add(&queue, &dir, "b.jsonl");
+        assert_eq!(queue.counts(100, Some(&recording)).unwrap().ready, 1);
+        assert_eq!(queue.counts(100, Some("gone")).unwrap().ready, 2);
+    }
+
+    #[test]
+    fn unfinished_jobs_are_listed_in_processing_order_with_failures() {
+        let (dir, queue) = queue();
+        let later = add(&queue, &dir, "later.jsonl");
+        let first = add(&queue, &dir, "first.jsonl");
+        let applying = add(&queue, &dir, "applying.jsonl");
+        let failed = add(&queue, &dir, "failed.jsonl");
+        let done = add(&queue, &dir, "done.jsonl");
+        queue.record_failure(&later, Failure::Transient, "시간 초과", 100).unwrap();
+        queue.begin_apply(&applying, "{}", 100).unwrap();
+        queue.record_failure(&failed, Failure::Permanent, "원문 없음", 100).unwrap();
+        queue.finish(&done, 3, "h", false, 100).unwrap();
+        let listed: Vec<String> = queue.unfinished_jobs().unwrap().into_iter().map(|job| job.id).collect();
+        assert_eq!(listed, vec![applying, failed, first, later]);
     }
 
     #[test]
@@ -460,7 +500,7 @@ mod tests {
         let a = add(&queue, &dir, "a.jsonl");
         add(&queue, &dir, "b.jsonl");
         queue.record_failure(&a, Failure::Transient, "x", 100).unwrap();
-        assert_eq!(queue.counts(100).unwrap(), Counts { ready: 1, waiting: 1, failed: 0, done: 0, skipped: 0 });
+        assert_eq!(queue.counts(100, None).unwrap(), Counts { ready: 1, waiting: 1, failed: 0, done: 0, skipped: 0 });
         for kind in ["started", "recorded"] {
             queue
                 .add_activity(&Activity { id: 0, at: 100, job_id: a.clone(), provider: Provider::Claude, project: Some("demo".into()), kind: kind.into(), summary: None, notes: vec!["projects/demo/a.md".into()], error: None })
@@ -469,5 +509,19 @@ mod tests {
         let recent = queue.recent_activity(10).unwrap();
         assert_eq!(recent.iter().map(|a| a.kind.as_str()).collect::<Vec<_>>(), vec!["recorded", "started"]);
         assert_eq!(recent[0].notes, vec!["projects/demo/a.md".to_string()]);
+    }
+
+    #[test]
+    fn clearing_activity_leaves_the_jobs_alone() {
+        let (dir, queue) = queue();
+        let failed = add(&queue, &dir, "failed.jsonl");
+        queue.record_failure(&failed, Failure::Permanent, "없음", 100).unwrap();
+        for kind in ["recorded", "failed"] {
+            queue.add_activity(&Activity { id: 0, at: 100, job_id: failed.clone(), provider: Provider::Claude, project: None, kind: kind.into(), summary: None, notes: vec![], error: None }).unwrap();
+        }
+        assert_eq!(queue.clear_activity().unwrap(), 2);
+        assert!(queue.recent_activity(10).unwrap().is_empty());
+        assert_eq!(queue.get(&failed).unwrap().unwrap().status, Status::Failed);
+        assert_eq!(queue.clear_activity().unwrap(), 0);
     }
 }

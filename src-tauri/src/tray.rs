@@ -132,20 +132,25 @@ pub fn set_paused(app: &AppHandle, paused: bool) -> Result<(), String> {
     settings.paused = paused;
     qmd_memory_core::settings::save(&state.paths.settings(), &settings).map_err(|error| error.to_string())?;
     state.replace_settings(settings);
-    if let Some(item) = app.try_state::<PauseItem>() {
-        let _ = item.0.set_checked(paused);
-    }
+    show_paused(app, paused);
     refresh_tooltip(app);
     let _ = app.emit("state-changed", ());
     Ok(())
 }
 
+pub fn show_paused(app: &AppHandle, paused: bool) {
+    if let Some(item) = app.try_state::<PauseItem>() {
+        let _ = item.0.set_checked(paused);
+    }
+}
+
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let text = match (state.current(), state.settings().paused) {
-        (Some(current), _) => format!("qmd-memory · 기록 중: {}", current.project),
-        (None, true) => "qmd-memory · 일시 중지".to_string(),
-        (None, false) => "qmd-memory · 대기 중".to_string(),
+    let text = match (state.current(), state.reviewing(), state.settings().paused) {
+        (Some(current), _, _) => format!("qmd-memory · 기록 중: {}", current.project),
+        (None, true, _) => "qmd-memory · 검토 중이라 기록을 멈춤".to_string(),
+        (None, false, true) => "qmd-memory · 일시 중지".to_string(),
+        (None, false, false) => "qmd-memory · 대기 중".to_string(),
     };
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(text));

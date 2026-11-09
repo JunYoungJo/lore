@@ -1,11 +1,10 @@
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use serde_json::{json, Value};
 
 use crate::error::{Error, Result};
-use crate::proposal::Proposal;
-use crate::run;
+use crate::proposal::{Proposal, EDIT_OPS};
+use crate::run::{self, Limit};
 use crate::settings::{atomic_write, Settings};
 
 pub const PROMPT: &str = include_str!("recorder-prompt.md");
@@ -29,6 +28,18 @@ pub fn schema() -> Value {
                     "kind": {"type": "string", "enum": ["decision", "lesson", "issue"]},
                     "authority": {"type": "string", "enum": ["user_decision", "assistant_report", "mixed_evidence"]},
                     "body": {"type": "string"},
+                    "edits": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "op": {"type": "string", "enum": EDIT_OPS},
+                            "find": {"type": "string"},
+                            "section": {"type": "string"},
+                            "heading": {"type": "string"},
+                            "text": {"type": "string"}
+                        },
+                        "required": ["op", "find", "section", "heading", "text"],
+                        "additionalProperties": false
+                    }},
                     "evidence": {"type": "array", "items": {
                         "type": "object",
                         "properties": {"ref": {"type": "string"}, "quote": {"type": "string"}},
@@ -36,7 +47,7 @@ pub fn schema() -> Value {
                         "additionalProperties": false
                     }}
                 },
-                "required": ["path", "title", "kind", "authority", "body", "evidence"],
+                "required": ["path", "title", "kind", "authority", "body", "edits", "evidence"],
                 "additionalProperties": false
             }},
             "needs_notes": {"type": "array", "items": {"type": "string"}}
@@ -55,19 +66,13 @@ pub struct CliRecorder {
     pub model: Option<String>,
     pub command: Vec<String>,
     pub workdir: PathBuf,
-    pub timeout: Duration,
+    pub limit: Limit,
 }
 
 impl CliRecorder {
-    pub fn from_settings(settings: &Settings, workdir: &Path) -> Self {
+    pub fn from_settings(settings: &Settings, workdir: &Path, limit: Limit) -> Self {
         let command = if settings.backend == "claude" { settings.commands.claude.clone() } else { settings.commands.codex.clone() };
-        Self {
-            backend: settings.backend.clone(),
-            model: settings.model.clone().filter(|model| !model.trim().is_empty()),
-            command,
-            workdir: workdir.to_path_buf(),
-            timeout: Duration::from_secs(settings.model_timeout_secs),
-        }
+        Self { backend: settings.backend.clone(), model: settings.model().map(str::to_string), command, workdir: workdir.to_path_buf(), limit }
     }
 
     fn arguments(&self, schema_path: &Path, response_path: &Path) -> Vec<String> {
@@ -158,7 +163,7 @@ impl Recorder for CliRecorder {
         let response_path = artifacts.join("response.json");
         let _ = std::fs::remove_file(&response_path);
         let command = self.arguments(&schema_path, &response_path);
-        let output = run::run(&command, &self.workdir, &[], Some(&prompt), self.timeout)?;
+        let output = run::run(&command, &self.workdir, &[], Some(&prompt), self.limit.as_ref())?;
         atomic_write(&artifacts.join("model-stderr.txt"), output.stderr.as_bytes())?;
         let text = if self.backend == "claude" {
             let text = claude_result(&output.stdout)?;
@@ -174,6 +179,7 @@ impl Recorder for CliRecorder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::settings::Models;
 
     #[test]
     fn claude_envelope_prefers_structured_output_and_reports_errors() {
@@ -185,16 +191,61 @@ mod tests {
     }
 
     #[test]
+    fn recorder_runs_the_model_set_for_the_chosen_cli() {
+        let mut settings = Settings { backend: "claude".into(), models: Models { codex: Some("gpt-x".into()), claude: Some("opus".into()) }, ..Settings::default() };
+        settings.commands.claude = vec!["claude.exe".into()];
+        settings.commands.codex = vec!["codex.exe".into()];
+        let model_in = |settings: &Settings| {
+            let args = CliRecorder::from_settings(settings, Path::new("w"), run::fixed(1)).arguments(Path::new("s.json"), Path::new("r.json"));
+            let flag = if settings.backend == "claude" { "--model" } else { "-m" };
+            args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone()
+        };
+        assert_eq!(model_in(&settings), "opus");
+        settings.backend = "codex".into();
+        assert_eq!(model_in(&settings), "gpt-x");
+        settings.models = Models::default();
+        assert_eq!(model_in(&settings), DEFAULT_CODEX_MODEL);
+    }
+
+    #[test]
     fn malformed_model_answer_is_a_rejection() {
         let error = parse_proposal("not json").unwrap_err();
         assert_eq!(error.failure, crate::error::Failure::Rejected);
     }
 
+    fn objects(schema: &Value) -> Vec<&Value> {
+        let mut found = Vec::new();
+        if schema["type"] == "object" {
+            found.push(schema);
+        }
+        for child in schema["properties"].as_object().into_iter().flat_map(|properties| properties.values()).chain(schema.get("items")) {
+            found.extend(objects(child));
+        }
+        found
+    }
+
     #[test]
-    fn schema_requires_every_property_for_strict_output() {
+    fn schema_requires_every_property_of_every_object_for_strict_output() {
         let schema = schema();
-        let required: Vec<&str> = schema["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-        let properties: Vec<&String> = schema["properties"].as_object().unwrap().keys().collect();
-        assert_eq!(required.len(), properties.len());
+        let all = objects(&schema);
+        assert_eq!(all.len(), 4);
+        for object in all {
+            let mut required: Vec<&str> = object["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+            let mut properties: Vec<&str> = object["properties"].as_object().unwrap().keys().map(String::as_str).collect();
+            required.sort();
+            properties.sort();
+            assert_eq!(required, properties);
+            assert_eq!(object["additionalProperties"], false);
+        }
+        let edit = &schema["properties"]["changes"]["items"]["properties"]["edits"]["items"];
+        let ops: Vec<&str> = edit["properties"]["op"]["enum"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+        assert_eq!(ops, crate::proposal::EDIT_OPS);
+    }
+
+    #[test]
+    fn model_answer_with_edits_reads_into_a_proposal() {
+        let text = r#"{"summary": "s", "changes": [{"path": "projects/demo/a.md", "title": "", "kind": "decision", "authority": "assistant_report", "body": "", "edits": [{"op": "append", "find": "", "section": "결정", "heading": "", "text": "로그만"}], "evidence": []}], "needs_notes": []}"#;
+        let proposal = parse_proposal(text).unwrap();
+        assert_eq!(proposal.changes[0].edits[0].section, "결정");
     }
 }

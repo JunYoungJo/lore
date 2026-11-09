@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::io::ErrorKind;
+use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -51,6 +51,12 @@ pub struct Turn {
     pub origin: Origin,
     pub timestamp: String,
     pub text: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Identity {
+    pub session_id: String,
+    pub cwd: String,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -141,6 +147,60 @@ fn text_field(value: &Value, key: &str) -> String {
     value.get(key).and_then(Value::as_str).unwrap_or("").to_string()
 }
 
+fn codex_session_id(payload: &Value) -> String {
+    let id = text_field(payload, "id");
+    if id.is_empty() {
+        text_field(payload, "session_id")
+    } else {
+        id
+    }
+}
+
+fn open_transcript(path: &Path) -> Result<Box<dyn Read>> {
+    match std::fs::File::open(path) {
+        Ok(file) => Ok(Box::new(file)),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let file = std::fs::File::open(compressed_path(path))?;
+            Ok(Box::new(zstd::stream::Decoder::new(file)?))
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+// Reads only up to the first record that names the session, so a long transcript is not loaded to show its queue row.
+pub fn read_identity(path: &Path, provider: Provider) -> Result<Identity> {
+    let mut reader = BufReader::new(open_transcript(path)?);
+    let mut identity = Identity::default();
+    let mut raw = Vec::new();
+    loop {
+        raw.clear();
+        if reader.read_until(b'\n', &mut raw)? == 0 {
+            return Ok(identity);
+        }
+        let Ok(line) = std::str::from_utf8(&raw) else { continue };
+        let Ok(record) = serde_json::from_str::<Value>(line.trim_start_matches('\u{feff}')) else { continue };
+        match provider {
+            Provider::Codex => {
+                if record.get("type").and_then(Value::as_str) == Some("session_meta") {
+                    let payload = record.get("payload").unwrap_or(&Value::Null);
+                    return Ok(Identity { session_id: codex_session_id(payload), cwd: text_field(payload, "cwd") });
+                }
+            }
+            Provider::Claude => {
+                if identity.session_id.is_empty() {
+                    identity.session_id = text_field(&record, "sessionId");
+                }
+                if identity.cwd.is_empty() {
+                    identity.cwd = text_field(&record, "cwd");
+                }
+                if !identity.session_id.is_empty() && !identity.cwd.is_empty() {
+                    return Ok(identity);
+                }
+            }
+        }
+    }
+}
+
 fn truthy(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,
@@ -163,6 +223,19 @@ fn message_text(content: Option<&Value>) -> String {
             .join("\n"),
         _ => String::new(),
     }
+}
+
+fn queued_input(record: &Value) -> Option<(String, Origin)> {
+    let attachment = record.get("attachment")?;
+    if attachment.get("type").and_then(Value::as_str) != Some("queued_command") {
+        return None;
+    }
+    let origin = match attachment.get("origin").and_then(|origin| origin.get("kind")).and_then(Value::as_str) {
+        Some("human") => Origin::User,
+        Some("peer") => Origin::Agent,
+        _ => return None,
+    };
+    Some((message_text(attachment.get("prompt")), origin))
 }
 
 pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
@@ -189,8 +262,7 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                 let payload = record.get("payload").cloned().unwrap_or(Value::Null);
                 let kind = record.get("type").and_then(Value::as_str);
                 if kind == Some("session_meta") {
-                    let id = text_field(&payload, "id");
-                    result.session_id = if id.is_empty() { text_field(&payload, "session_id") } else { id };
+                    result.session_id = codex_session_id(&payload);
                     result.cwd = text_field(&payload, "cwd");
                     worker = payload.get("source").filter(|source| source.is_object()).map(|source| truthy(source.get("subagent"))).unwrap_or(false);
                     if worker {
@@ -207,22 +279,27 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                 (text_field(&payload, "role"), message_text(payload.get("content")), text_field(&payload, "id"), origin)
             }
             Provider::Claude => {
-                let text = match record.get("message") {
-                    Some(message) if message.is_object() => message_text(message.get("content")),
-                    _ => String::new(),
-                };
                 if result.session_id.is_empty() {
                     result.session_id = text_field(&record, "sessionId");
                 }
                 if result.cwd.is_empty() {
                     result.cwd = text_field(&record, "cwd");
                 }
-                let external = record.get("userType").and_then(Value::as_str) == Some("external");
-                let mut origin = if external && !truthy(record.get("isSidechain")) && !worker { Origin::User } else { Origin::Unverified };
-                if truthy(record.get("isCompactSummary")) || truthy(record.get("isMeta")) {
-                    origin = Origin::Context;
+                if record.get("type").and_then(Value::as_str) == Some("attachment") {
+                    let Some((text, origin)) = queued_input(&record) else { continue };
+                    ("user".to_string(), text, text_field(&record, "uuid"), origin)
+                } else {
+                    let text = match record.get("message") {
+                        Some(message) if message.is_object() => message_text(message.get("content")),
+                        _ => String::new(),
+                    };
+                    let external = record.get("userType").and_then(Value::as_str) == Some("external");
+                    let mut origin = if external && !truthy(record.get("isSidechain")) && !worker { Origin::User } else { Origin::Unverified };
+                    if truthy(record.get("isCompactSummary")) || truthy(record.get("isMeta")) {
+                        origin = Origin::Context;
+                    }
+                    (text_field(&record, "type"), text, text_field(&record, "uuid"), origin)
                 }
-                (text_field(&record, "type"), text, text_field(&record, "uuid"), origin)
             }
         };
         if (role != "user" && role != "assistant") || text.trim().is_empty() {
@@ -317,6 +394,40 @@ mod tests {
             vec![("L1", Origin::User, "알림을 제외하십시오."), ("L3", Origin::Context, "이전 대화 요약"), ("L4", Origin::Assistant, "제외하겠습니다.")]
         );
         assert_eq!(parsed.session_id, "session-b");
+    }
+
+    fn queued(uuid: &str, origin: &str, prompt: Value) -> Value {
+        json!({"type": "attachment", "uuid": uuid, "timestamp": "2026-11-04T07:16:28.384Z", "attachment": {"type": "queued_command", "prompt": prompt, "commandMode": "prompt", "origin": {"kind": origin}}})
+    }
+
+    #[test]
+    fn messages_sent_while_the_assistant_works_are_read_in_place() {
+        let data = jsonl(&[
+            json!({"type": "user", "uuid": "a", "userType": "external", "message": {"content": "레퍼런스를 찾아보십시오."}}),
+            json!({"type": "assistant", "uuid": "b", "message": {"content": [{"type": "text", "text": "찾고 있습니다."}]}}),
+            json!({"type": "queue-operation", "operation": "enqueue", "content": "구조만 참고하십시오."}),
+            queued("c", "human", json!("구조만 참고하십시오.")),
+            queued("d", "human", json!([{"type": "text", "text": "[Image #1]\n\nalfa 가 fmi 야."}, {"type": "image", "source": {"data": "AAAA"}}])),
+            queued("e", "human", json!("You have 1 orchestration message. Run `orca orchestration check`.")),
+            queued("f", "peer", json!("<agent-message from=\"a1\">\n[Subagent hand-back] 검토 결과입니다.\n</agent-message>")),
+            queued("g", "task-notification", json!("<task-notification>done</task-notification>")),
+            json!({"type": "attachment", "uuid": "h", "attachment": {"type": "skill_listing", "content": "skills"}}),
+            queued("c", "human", json!("구조만 참고하십시오.")),
+        ]);
+        let parsed = parse(&data, Provider::Claude).unwrap();
+        let turns: Vec<_> = parsed.turns.iter().map(|turn| (turn.reference.as_str(), turn.role.as_str(), turn.origin, turn.text.as_str())).collect();
+        assert_eq!(
+            turns,
+            vec![
+                ("L1", "user", Origin::User, "레퍼런스를 찾아보십시오."),
+                ("L2", "assistant", Origin::Assistant, "찾고 있습니다."),
+                ("L4", "user", Origin::User, "구조만 참고하십시오."),
+                ("L5", "user", Origin::User, "[Image #1]\n\nalfa 가 fmi 야."),
+                ("L6", "user", Origin::Agent, "You have 1 orchestration message. Run `orca orchestration check`."),
+                ("L7", "user", Origin::Agent, "<agent-message from=\"a1\">\n[Subagent hand-back] 검토 결과입니다.\n</agent-message>"),
+            ]
+        );
+        assert_eq!(parsed.turns[2].timestamp, "2026-11-04T07:16:28.384Z");
     }
 
     #[test]
@@ -415,5 +526,30 @@ mod tests {
         assert_eq!(canonical_path(&compressed_path(&path)), path);
         let missing = read_transcript(&dir.path().join("missing.jsonl")).unwrap_err();
         assert_eq!(missing.failure, crate::error::Failure::Permanent);
+    }
+
+    #[test]
+    fn claude_identity_comes_from_the_first_records_that_name_the_session_and_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("s1.jsonl");
+        let mut data = "\u{feff}".as_bytes().to_vec();
+        data.extend(jsonl(&[
+            json!({"type": "file-history-snapshot", "messageId": "m"}),
+            json!({"type": "user", "sessionId": "s1", "userType": "external", "message": {"role": "user", "content": "시작"}}),
+            json!({"type": "assistant", "sessionId": "s1", "cwd": "D:/src/demo", "message": {"role": "assistant", "content": "네"}}),
+            json!({"type": "user", "sessionId": "other", "cwd": "D:/elsewhere"}),
+        ]));
+        std::fs::write(&path, data).unwrap();
+        assert_eq!(read_identity(&path, Provider::Claude).unwrap(), Identity { session_id: "s1".into(), cwd: "D:/src/demo".into() });
+    }
+
+    #[test]
+    fn codex_identity_comes_from_session_meta_even_when_only_the_compressed_file_is_left() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rollout-x-0aa1.jsonl");
+        let data = jsonl(&[json!({"type": "session_meta", "payload": {"id": "0aa1", "cwd": "C:/work"}}), codex_message("assistant", "완료")]);
+        std::fs::write(compressed_path(&path), zstd::stream::encode_all(&data[..], 3).unwrap()).unwrap();
+        assert_eq!(read_identity(&path, Provider::Codex).unwrap(), Identity { session_id: "0aa1".into(), cwd: "C:/work".into() });
+        assert!(read_identity(&dir.path().join("missing.jsonl"), Provider::Codex).is_err());
     }
 }

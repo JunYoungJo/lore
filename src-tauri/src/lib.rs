@@ -4,8 +4,10 @@ use tauri_plugin_notification::NotificationExt;
 
 mod background;
 mod commands;
+mod review;
 mod state;
 mod tray;
+mod watch;
 
 pub fn run() {
     let paths = Paths::standard();
@@ -29,13 +31,17 @@ pub fn run() {
             tray::create_popover(&handle);
             let opener = handle.clone();
             let _ = handle.notification().on_action(move |_| tray::open_popover(&opener));
+            watch::spawn(handle.clone());
             background::spawn(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
             commands::get_snapshot,
+            commands::get_queue,
             commands::set_paused,
             commands::retry_job,
+            commands::discard_job,
+            commands::clear_activity,
             commands::save_settings,
             commands::set_autostart,
             commands::open_note,
@@ -43,6 +49,12 @@ pub fn run() {
             commands::hide_window,
             commands::connect_hook,
             commands::disconnect_hook,
+            review::open_review,
+            review::begin_review,
+            review::end_review,
+            review::get_review,
+            review::review_diff,
+            review::commit_review,
         ])
         .build(tauri::generate_context!())
         .expect("qmd-memory를 시작하지 못했습니다")

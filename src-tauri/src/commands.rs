@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
 use qmd_memory_core::hooks::{self, HookStatus};
+use qmd_memory_core::pipeline;
 use qmd_memory_core::queue::{Activity, Counts, Job, Queue, Status};
-use qmd_memory_core::settings::{self, Settings};
+use qmd_memory_core::review;
+use qmd_memory_core::settings::{self, EditableSettings, Settings};
 use qmd_memory_core::transcript::Provider;
 use qmd_memory_core::worker;
 use serde::Serialize;
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -25,6 +27,8 @@ pub struct Snapshot {
     pub settings: Settings,
     pub autostart: bool,
     pub hooks: Vec<HookStatus>,
+    pub review: Option<usize>,
+    pub reviewing: bool,
     pub version: &'static str,
 }
 
@@ -69,17 +73,22 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let now = worker::now();
     let settings = state.settings();
     let current = state.current();
+    let reviewing = state.reviewing();
     let label = if current.is_some() {
         "working"
+    } else if reviewing {
+        "reviewing"
     } else if settings.paused {
         "paused"
     } else {
         "idle"
     };
+    let review = review::working_changes(&settings.knowledge_root()).ok().flatten().map(|changes| changes.notes.len());
+    let counts = queue.counts(now, current.as_ref().map(|current| current.job_id.as_str())).map_err(error)?;
     Ok(Snapshot {
         state: label,
         current,
-        counts: queue.counts(now).map_err(error)?,
+        counts,
         recent: queue.recent_activity(30).map_err(error)?,
         attention: queue
             .jobs_with_status(&[Status::Failed, Status::Applying, Status::IndexPending], 20)
@@ -91,6 +100,8 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         settings,
         hooks: hook_statuses(),
+        review,
+        reviewing,
         version: env!("CARGO_PKG_VERSION"),
     })
 }
@@ -109,13 +120,45 @@ pub fn retry_job(app: AppHandle, state: State<'_, AppState>, id: String) -> Resu
     Ok(retried)
 }
 
+// Async and off the main thread: a job that has not started yet is named by opening its transcript.
 #[tauri::command]
-pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Settings) -> Result<(), String> {
-    settings.validate().map_err(error)?;
-    let current = state.settings();
-    let mut merged = settings;
-    merged.since = current.since;
-    merged.paused = current.paused;
+pub async fn get_queue(app: AppHandle) -> Result<Vec<Job>, String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        let queue = Queue::open(&app.state::<AppState>().paths.database()).map_err(error)?;
+        Ok(queue.unfinished_jobs().map_err(error)?.into_iter().map(pipeline::identify).collect())
+    })
+    .await
+    .map_err(error)?
+}
+
+// Async and off the main thread: discarding reads and parses the whole transcript, which can be tens of MB.
+#[tauri::command]
+pub async fn discard_job(app: AppHandle, id: String) -> Result<bool, String> {
+    let handle = app.clone();
+    let discarded = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        let queue = Queue::open(&state.paths.database()).map_err(error)?;
+        worker::discard(&queue, &state.settings(), &state.paths, &id, worker::now()).map_err(error)
+    })
+    .await
+    .map_err(error)??;
+    app.state::<AppState>().wake();
+    let _ = app.emit("state-changed", ());
+    Ok(discarded.is_some())
+}
+
+#[tauri::command]
+pub fn clear_activity(app: AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
+    let queue = Queue::open(&state.paths.database()).map_err(error)?;
+    let cleared = queue.clear_activity().map_err(error)?;
+    let _ = app.emit("state-changed", ());
+    Ok(cleared)
+}
+
+#[tauri::command]
+pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: EditableSettings) -> Result<(), String> {
+    let mut merged = state.settings().edited(settings);
+    merged.validate().map_err(error)?;
     merged.fill_missing_commands();
     settings::save(&state.paths.settings(), &merged).map_err(error)?;
     state.set_problem(None);

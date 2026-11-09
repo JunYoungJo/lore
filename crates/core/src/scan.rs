@@ -81,7 +81,7 @@ mod tests {
         assert_eq!(scan(&queue, &settings, stamp + 10).unwrap(), 0);
         assert_eq!(scan(&queue, &settings, stamp + 600).unwrap(), 2);
         assert_eq!(scan(&queue, &settings, stamp + 700).unwrap(), 0);
-        assert_eq!(queue.counts(stamp + 700).unwrap().ready, 2);
+        assert_eq!(queue.counts(stamp + 700, None).unwrap().ready, 2);
         let later = Settings { since: stamp + 1, ..settings };
         let fresh = Queue::open(&dir.path().join("other.sqlite")).unwrap();
         assert_eq!(scan(&fresh, &later, stamp + 700).unwrap(), 0);

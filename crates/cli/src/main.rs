@@ -6,26 +6,31 @@ use qmd_memory_core::error::{Error, Result};
 use qmd_memory_core::hook;
 use qmd_memory_core::hooks;
 use qmd_memory_core::migrate;
+use qmd_memory_core::qmd::Qmd;
 use qmd_memory_core::queue::{Job, Queue, Status};
 use qmd_memory_core::recorder::CliRecorder;
-use qmd_memory_core::run::RECORDER_MARK;
+use qmd_memory_core::run::{fixed, RECORDER_MARK};
 use qmd_memory_core::scan;
 use qmd_memory_core::settings::{self, Paths};
 use qmd_memory_core::transcript::Provider;
-use qmd_memory_core::worker::{self, Outcome, Reporter, WorkerLock};
+use qmd_memory_core::worker::{self, Discarded, Outcome, Reporter, WorkerLock};
 
 const USAGE: &str = "사용법: qmd-memory-cli <명령>
-  hook <claude|codex>              세션 종료 훅 입력(표준입력 JSON)을 큐에 등록
+  hook <claude|codex>              세션 종료·압축 직전 훅 입력(표준입력 JSON)을 큐에 등록
   enqueue <claude|codex> <원문>     원문 파일을 큐에 등록
   scan                             훅이 놓친 세션을 찾아 큐에 등록
   work [--once]                    큐의 작업을 처리 (트레이 앱이 실행 중이면 거부)
   status                           큐 상태와 실패한 작업 출력
   retry <작업 ID>                   실패하거나 건너뛴 작업을 다시 대기열에 넣음
+  discard <작업 ID>                 실패한 작업의 실패한 구간을 기록하지 않고 넘어감
+                                   (원문을 읽을 수 없으면 그 세션을 더 기록하지 않음)
   hooks                            Claude·Codex 훅 연결 상태 출력
   connect <claude|codex>           전역 훅 설정에 이 CLI를 추가 (이전 설정은 백업)
   disconnect <claude|codex>        전역 훅 설정에서 qmd-memory 훅을 제거 (이전 설정은 백업)
   migrate-links [--apply] [--backup <폴더>]
-                                   기억 문서의 원본 세션 링크를 대화 사본으로 옮김 (기본은 미리보기)";
+                                   기억 문서의 원본 세션 링크를 대화 사본으로 옮김 (기본은 미리보기)
+  refresh-copies [--apply]         큐에 있는 세션의 대화 사본을 지금의 읽기 방식으로 다시 만들고
+                                   기억 문서의 사본 링크를 옮김 (기본은 미리보기, 트레이 앱이 실행 중이면 거부)";
 
 struct PrintReporter;
 
@@ -81,10 +86,11 @@ fn run(args: &[String]) -> Result<()> {
             };
             let (settings, queue) = open(&paths)?;
             settings.validate()?;
-            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir());
+            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
+            let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
             let once = args.iter().any(|arg| arg == "--once");
             loop {
-                match worker::step(&queue, &settings, &paths, &recorder, &PrintReporter)? {
+                match worker::step(&queue, &settings, &paths, &recorder, &qmd, &PrintReporter)? {
                     None => {
                         println!("처리할 작업이 없습니다.");
                         break;
@@ -96,7 +102,7 @@ fn run(args: &[String]) -> Result<()> {
         }
         "status" => {
             let (_, queue) = open(&paths)?;
-            let counts = queue.counts(worker::now())?;
+            let counts = queue.counts(worker::now(), None)?;
             println!("{}", serde_json::to_string_pretty(&counts)?);
             for job in queue.jobs_with_status(&[Status::Failed, Status::Pending, Status::Applying, Status::IndexPending], 50)? {
                 println!("{} {:?} {} {}", job.id, job.status, job.project.as_deref().unwrap_or("-"), job.last_error.as_deref().unwrap_or(""));
@@ -109,6 +115,15 @@ fn run(args: &[String]) -> Result<()> {
                 return Err(Error::permanent("실패했거나 건너뛴 작업만 다시 넣을 수 있습니다."));
             }
             println!("다시 대기열에 넣었습니다: {id}");
+        }
+        "discard" => {
+            let id = args.get(1).ok_or_else(|| Error::permanent("작업 ID가 필요합니다."))?;
+            let (settings, queue) = open(&paths)?;
+            match worker::discard(&queue, &settings, &paths, id, worker::now())? {
+                None => return Err(Error::permanent("실패한 작업만 버릴 수 있습니다.")),
+                Some(Discarded::Batch { after_line, end_line }) => println!("원문 {}~{end_line}번째 줄을 기록하지 않고 넘어갑니다: {id}", after_line + 1),
+                Some(Discarded::Session { reason }) => println!("원문을 읽을 수 없어 이 세션을 더 기록하지 않습니다: {id} ({reason})"),
+            }
         }
         "hooks" => {
             let cli = std::env::current_exe()?;
@@ -138,6 +153,20 @@ fn run(args: &[String]) -> Result<()> {
             let apply = args.iter().any(|arg| arg == "--apply");
             let backup = args.iter().position(|arg| arg == "--backup").and_then(|index| args.get(index + 1)).map(PathBuf::from);
             let report = migrate::migrate_links(&settings.knowledge_root(), backup.as_deref(), apply)?;
+            println!("{}", serde_json::to_string_pretty(&report)?);
+            if !apply {
+                println!("미리보기입니다. 반영하려면 --apply를 붙이십시오.");
+            }
+        }
+        "refresh-copies" => {
+            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
+                return Err(Error::transient("트레이 앱 또는 다른 처리 작업이 실행 중입니다."));
+            };
+            let (settings, queue) = open(&paths)?;
+            let apply = args.iter().any(|arg| arg == "--apply");
+            let all = [Status::Pending, Status::Applying, Status::IndexPending, Status::Done, Status::Failed, Status::Skipped];
+            let jobs = queue.jobs_with_status(&all, usize::MAX >> 1)?;
+            let report = migrate::refresh_copies(&settings.knowledge_root(), &jobs, apply)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !apply {
                 println!("미리보기입니다. 반영하려면 --apply를 붙이십시오.");

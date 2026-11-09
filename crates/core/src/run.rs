@@ -1,6 +1,7 @@
 use std::io::{Read, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -15,6 +16,12 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
 pub const RECORDER_MARK: &str = "QMD_MEMORY_RECORDER";
+
+pub type Limit = Arc<dyn Fn() -> Duration + Send + Sync>;
+
+pub fn fixed(seconds: u64) -> Limit {
+    Arc::new(move || Duration::from_secs(seconds))
+}
 
 pub struct Output {
     pub stdout: String,
@@ -42,7 +49,7 @@ fn kill_tree(pid: u32) {
     }
 }
 
-pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option<&str>, timeout: Duration) -> Result<Output> {
+pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option<&str>, limit: &dyn Fn() -> Duration) -> Result<Output> {
     let (program, args) = command.split_first().ok_or_else(|| Error::transient("실행할 명령이 설정되지 않았습니다."))?;
     std::fs::create_dir_all(cwd)?;
     let mut builder = Command::new(program);
@@ -89,6 +96,7 @@ pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option
         if let Some(status) = child.try_wait()? {
             break status;
         }
+        let timeout = limit();
         if started.elapsed() >= timeout {
             kill_tree(child.id());
             let _ = child.wait();

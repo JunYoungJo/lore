@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
+use chrono::{DateTime, Local, TimeZone};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -9,10 +10,10 @@ use crate::copy;
 use crate::error::{Error, Result};
 use crate::notes::{self, CatalogEntry};
 use crate::project;
-use crate::proposal::{check_snapshot, render_note, validate, Proposal, Scope};
+use crate::proposal::{check_snapshot, render_note, validate, Change, Edit, Proposal, Scope};
 use crate::queue::Job;
 use crate::settings::atomic_write;
-use crate::transcript::{check_prefix, parse, prefix_hash, read_transcript, Origin, Parsed, Provider, Turn};
+use crate::transcript::{check_prefix, parse, prefix_hash, read_identity, read_transcript, Origin, Parsed, Provider, Turn};
 
 pub struct Prepared {
     pub transcript: PathBuf,
@@ -68,10 +69,39 @@ pub fn prepare(job: &Job, max_chars: usize, recorder_workdir: &Path) -> Result<P
     Ok(Preparation::Ready(Box::new(Prepared { transcript, provider: job.provider, parsed, project: repository.name, batch, end_hash })))
 }
 
+// The worker stores the project and session id only when it starts a job, so a job still waiting is identified from its transcript.
+pub fn identify(mut job: Job) -> Job {
+    if job.project.is_some() && job.session_id.is_some() {
+        return job;
+    }
+    let Ok(identity) = read_identity(Path::new(&job.transcript), job.provider) else { return job };
+    if job.session_id.is_none() && !identity.session_id.is_empty() {
+        job.session_id = Some(identity.session_id);
+    }
+    if job.project.is_none() {
+        job.project = project::resolve(Path::new(&identity.cwd)).map(|repository| repository.name);
+    }
+    job
+}
+
 pub fn ranking_query(batch: &Batch) -> String {
     let user: Vec<&str> = batch.new_turns.iter().filter(|turn| turn.origin == Origin::User).map(|turn| turn.text.as_str()).collect();
     let source = if user.is_empty() { batch.new_turns.iter().map(|turn| turn.text.as_str()).collect() } else { user };
     source.join("\n").chars().take(1_500).collect()
+}
+
+pub fn local_stamp<Zone: TimeZone>(stamp: &str, zone: &Zone) -> String
+where
+    Zone::Offset: std::fmt::Display,
+{
+    match DateTime::parse_from_rfc3339(stamp) {
+        Ok(time) => time.with_timezone(zone).format("%Y-%m-%d %H:%M:%S %:z").to_string(),
+        Err(_) => stamp.to_string(),
+    }
+}
+
+fn in_local_time(turns: &[Turn]) -> Vec<Turn> {
+    turns.iter().map(|turn| Turn { timestamp: local_stamp(&turn.timestamp, &Local), ..turn.clone() }).collect()
 }
 
 pub struct Request {
@@ -88,8 +118,8 @@ pub fn build_request(prepared: &Prepared, scope_notes: &BTreeMap<String, String>
         "project": prepared.project,
         "provider": prepared.provider.as_str(),
         "session_id": prepared.parsed.session_id,
-        "new_turns": prepared.batch.new_turns,
-        "context_turns": prepared.batch.context_turns,
+        "new_turns": in_local_time(&prepared.batch.new_turns),
+        "context_turns": in_local_time(&prepared.batch.context_turns),
         "omitted_context_turns": prepared.batch.omitted_context_turns,
         "existing_notes": selection.bodies,
         "note_catalog": catalog,
@@ -120,6 +150,18 @@ fn offered_turns(prepared: &Prepared) -> Vec<Turn> {
     prepared.parsed.turns.iter().filter(|turn| offered.contains(turn.reference.as_str())).cloned().collect()
 }
 
+fn relinked_change(change: &Change, copy_file: &Path, moves: &BTreeMap<usize, usize>) -> Change {
+    if moves.is_empty() {
+        return change.clone();
+    }
+    let fix = |text: &str| copy::relink(text, copy_file, moves).unwrap_or_else(|| text.to_string());
+    Change {
+        body: fix(&change.body),
+        edits: change.edits.iter().map(|edit| Edit { find: fix(&edit.find), text: fix(&edit.text), ..edit.clone() }).collect(),
+        ..change.clone()
+    }
+}
+
 pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowledge_root: &Path, fallback_name: &str) -> Result<Plan> {
     let turns = offered_turns(prepared);
     validate(proposal, &Scope { project: &prepared.project, turns: &turns, existing: &request.existing, editable: &request.editable })?;
@@ -139,11 +181,26 @@ pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowled
     }
     let dialogue = copy::render(&prepared.parsed, prepared.provider, &prepared.transcript, prepared.batch.end_line);
     let copy_file = copy::copy_path(knowledge_root, prepared.provider, &prepared.parsed.session_id, fallback_name);
+    let moves = copy::line_moves(&std::fs::read_to_string(&copy_file).unwrap_or_default(), &dialogue.lines);
+    let mut relinked = BTreeMap::new();
+    if !moves.is_empty() {
+        for (note, text) in notes::load_all(knowledge_root)? {
+            let original = request.base.get(&note).cloned().unwrap_or(text);
+            if let Some(updated) = copy::relink(&original, &copy_file, &moves) {
+                result.base.entry(note.clone()).or_insert(original);
+                relinked.insert(note, updated);
+            }
+        }
+    }
     let lines_by_ref: HashMap<&str, usize> = turns.iter().filter_map(|turn| dialogue.lines.get(&turn.line).map(|line| (turn.reference.as_str(), *line))).collect();
     let link = |evidence: &crate::proposal::Evidence| copy::link_target(&copy_file, lines_by_ref.get(evidence.reference.as_str()).copied().unwrap_or(1));
     for change in &proposal.changes {
-        let old = request.base.get(&change.path).map(String::as_str).unwrap_or("");
-        result.rendered.insert(change.path.clone(), render_note(change, &prepared.project, &link, old));
+        let change = relinked_change(change, &copy_file, &moves);
+        let old = relinked.get(&change.path).or_else(|| request.base.get(&change.path)).map(String::as_str);
+        result.rendered.insert(change.path.clone(), render_note(&change, &prepared.project, &link, old)?);
+    }
+    for (note, text) in relinked {
+        result.rendered.entry(note).or_insert(text);
     }
     result.copy_file = Some(copy_file.to_string_lossy().to_string());
     result.copy_text = Some(dialogue.text);
@@ -151,7 +208,14 @@ pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowled
 }
 
 pub fn apply(knowledge_root: &Path, plan: &Plan) -> Result<()> {
-    let current = notes::load_scope(knowledge_root, &plan.project)?;
+    let mut current = notes::load_scope(knowledge_root, &plan.project)?;
+    for note in plan.base.keys().chain(plan.rendered.keys()) {
+        if !current.contains_key(note) {
+            if let Ok(text) = std::fs::read_to_string(knowledge_root.join(note)) {
+                current.insert(note.clone(), text);
+            }
+        }
+    }
     check_snapshot(&current, &plan.base, &plan.rendered)?;
     if let (Some(file), Some(text)) = (&plan.copy_file, &plan.copy_text) {
         atomic_write(Path::new(file), text.as_bytes())?;
@@ -171,7 +235,7 @@ pub fn apply(knowledge_root: &Path, plan: &Plan) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proposal::{Change, Evidence};
+    use crate::proposal::{Change, Edit, Evidence};
     use crate::queue::Status;
     use serde_json::json;
     use std::fs;
@@ -247,10 +311,20 @@ mod tests {
                 kind: "decision".into(),
                 authority: "user_decision".into(),
                 body: "TP 로그만 남깁니다.".into(),
+                edits: vec![],
                 evidence: vec![Evidence { reference: "L1".into(), quote: "로그만 남기십시오".into() }],
             }],
             needs_notes: vec![],
         }
+    }
+
+    fn appended(path: &str, section: &str, text: &str) -> Proposal {
+        let mut proposal = decision(path);
+        let change = &mut proposal.changes[0];
+        change.title = String::new();
+        change.body = String::new();
+        change.edits = vec![Edit { op: "append".into(), find: String::new(), section: section.into(), heading: String::new(), text: text.into() }];
+        proposal
     }
 
     #[test]
@@ -372,18 +446,68 @@ mod tests {
         let fixture = fixture_with_two_lines();
         let prepared = ready(&fixture, 0, "");
         let mut scope = BTreeMap::new();
-        scope.insert("projects/demo/bg.md".to_string(), format!("# 기존\n{}", "z".repeat(100)));
+        scope.insert("projects/demo/bg.md".to_string(), format!("# 기존\n\n## 결정\n\n경고를 띄웁니다.{}\n", " ".repeat(100)));
+        let edit = appended("projects/demo/bg.md", "결정", "TP 로그만 남깁니다.");
         let narrow = build_request(&prepared, &scope, &[], &[], 10);
-        assert!(plan(&prepared, &narrow, &decision("projects/demo/bg.md"), &fixture.knowledge, "job1").is_err());
+        assert!(plan(&prepared, &narrow, &edit, &fixture.knowledge, "job1").is_err());
 
         let wide = build_request(&prepared, &scope, &[], &[], 60_000);
-        let planned = plan(&prepared, &wide, &decision("projects/demo/bg.md"), &fixture.knowledge, "job1").unwrap();
+        let planned = plan(&prepared, &wide, &edit, &fixture.knowledge, "job1").unwrap();
+        assert!(planned.rendered["projects/demo/bg.md"].contains("# 기존\n\n## 결정\n\n경고를 띄웁니다.\n\nTP 로그만 남깁니다.\n\n## 원문 근거"));
+        let unplaceable = appended("projects/demo/bg.md", "없는 절", "TP 로그만 남깁니다.");
+        assert_eq!(plan(&prepared, &wide, &unplaceable, &fixture.knowledge, "job1").unwrap_err().failure, crate::error::Failure::Rejected);
         let note = fixture.knowledge.join("projects/demo/bg.md");
         fs::create_dir_all(note.parent().unwrap()).unwrap();
         fs::write(&note, "사용자가 고친 내용").unwrap();
         let error = apply(&fixture.knowledge, &planned).unwrap_err();
         assert_eq!(error.failure, crate::error::Failure::Permanent);
         assert_eq!(fs::read_to_string(&note).unwrap(), "사용자가 고친 내용");
+    }
+
+    #[test]
+    fn links_in_every_note_follow_a_copy_that_gains_a_turn_in_the_middle() {
+        let fixture = fixture(&[
+            user("a", "경고는 빼고 로그만 남기십시오."),
+            json!({"type": "attachment", "uuid": "q", "attachment": {"type": "queued_command", "prompt": "보관 기간도 정하십시오.", "origin": {"kind": "human"}}}),
+            assistant("b", "그렇게 하겠습니다."),
+        ]);
+        let prepared = ready(&fixture, 0, "");
+        let copy_file = copy::copy_path(&fixture.knowledge, Provider::Claude, "sess-1", "job1");
+        let mut without_queued = prepared.parsed.clone();
+        without_queued.turns.retain(|turn| turn.line != 2);
+        let old_copy = copy::render(&without_queued, Provider::Claude, &fixture.transcript, 3);
+        fs::create_dir_all(copy_file.parent().unwrap()).unwrap();
+        fs::write(&copy_file, &old_copy.text).unwrap();
+        let old_link = copy::link_target(&copy_file, old_copy.lines[&3]);
+        let note = format!("# 기존\n\n## 결정\n\n경고를 띄웁니다. ([근거]({old_link}))\n\n## 원문 근거\n- [L3]({old_link}) — 그렇게 하겠습니다.\n");
+        let other = format!("# 다른 프로젝트\n\n같은 대화 ([근거]({old_link}))\n");
+        for (path, text) in [("projects/demo/bg.md", &note), ("projects/other/o.md", &other)] {
+            let file = fixture.knowledge.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, text).unwrap();
+        }
+
+        let scope = notes::load_scope(&fixture.knowledge, "demo").unwrap();
+        let request = build_request(&prepared, &scope, &[], &[], 60_000);
+        let mut proposal = appended("projects/demo/bg.md", "결정", "보관 기간도 정합니다.");
+        let change = &mut proposal.changes[0];
+        change.edits.insert(0, Edit { op: "replace".into(), find: format!("경고를 띄웁니다. ([근거]({old_link}))"), section: String::new(), heading: String::new(), text: format!("경고 없이 로그만 남깁니다. ([근거]({old_link}))") });
+        change.evidence = vec![Evidence { reference: "L2".into(), quote: "보관 기간도 정하십시오.".into() }];
+        let planned = plan(&prepared, &request, &proposal, &fixture.knowledge, "job1").unwrap();
+
+        let new_copy = planned.copy_text.as_ref().unwrap();
+        let lines = copy::parse_headings(new_copy);
+        assert!(lines[&3] > old_copy.lines[&3]);
+        let moved = copy::link_target(&copy_file, lines[&3]);
+        let added = copy::link_target(&copy_file, lines[&2]);
+        let edited = &planned.rendered["projects/demo/bg.md"];
+        assert!(edited.contains(&format!("경고 없이 로그만 남깁니다. ([근거]({moved}))\n\n보관 기간도 정합니다.")), "{edited}");
+        assert!(edited.contains(&format!("- [L3]({moved}) — 그렇게 하겠습니다.\n- [L2]({added}) — 보관 기간도 정하십시오.")), "{edited}");
+        assert_eq!(planned.rendered["projects/other/o.md"], format!("# 다른 프로젝트\n\n같은 대화 ([근거]({moved}))\n"));
+
+        apply(&fixture.knowledge, &planned).unwrap();
+        assert_eq!(fs::read_to_string(fixture.knowledge.join("projects/other/o.md")).unwrap(), planned.rendered["projects/other/o.md"]);
+        assert!(fs::read_to_string(&copy_file).unwrap().contains("## L2 · 사용자"));
     }
 
     #[test]
@@ -398,9 +522,29 @@ mod tests {
     }
 
     #[test]
+    fn turn_times_are_given_to_the_model_in_local_time_with_the_offset() {
+        let seoul = chrono::FixedOffset::east_opt(9 * 3600).unwrap();
+        assert_eq!(local_stamp("2026-11-04T07:50:45.012Z", &seoul), "2026-11-04 16:50:45 +09:00");
+        assert_eq!(local_stamp("2026-11-03T22:06:04.948Z", &seoul), "2026-11-04 07:06:04 +09:00");
+        assert_eq!(local_stamp("", &seoul), "");
+        assert_eq!(local_stamp("어제", &seoul), "어제");
+    }
+
+    #[test]
     fn ranking_query_prefers_user_turns() {
         let fixture = fixture_with_two_lines();
         let prepared = ready(&fixture, 0, "");
         assert_eq!(ranking_query(&prepared.batch), "경고는 빼고 로그만 남기십시오.");
+    }
+
+    #[test]
+    fn a_waiting_job_is_named_from_its_transcript_and_a_started_one_keeps_what_the_worker_stored() {
+        let fixture = fixture(&[user("u1", "시작")]);
+        let waiting = identify(job(&fixture.transcript, 0, ""));
+        assert_eq!((waiting.project.as_deref(), waiting.session_id.as_deref()), (Some("demo"), Some("sess-1")));
+        let started = identify(Job { project: Some("stored".into()), session_id: Some("kept".into()), ..job(&fixture.transcript, 0, "") });
+        assert_eq!((started.project.as_deref(), started.session_id.as_deref()), (Some("stored"), Some("kept")));
+        let missing = identify(job(&fixture.dir.path().join("missing.jsonl"), 0, ""));
+        assert_eq!((missing.project, missing.session_id), (None, None));
     }
 }

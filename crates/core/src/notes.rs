@@ -49,6 +49,25 @@ pub fn load_scope(knowledge_root: &Path, project: &str) -> Result<BTreeMap<Strin
     Ok(notes)
 }
 
+pub fn load_all(knowledge_root: &Path) -> Result<BTreeMap<String, String>> {
+    let mut notes = BTreeMap::new();
+    read_folder(knowledge_root, "common", &mut notes)?;
+    let projects = knowledge_root.join("projects");
+    match std::fs::read_dir(&projects) {
+        Ok(entries) => {
+            for entry in entries {
+                let entry = entry?;
+                if entry.file_type()?.is_dir() {
+                    read_folder(knowledge_root, &format!("projects/{}", entry.file_name().to_string_lossy()), &mut notes)?;
+                }
+            }
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error.into()),
+    }
+    Ok(notes)
+}
+
 pub fn title_of(content: &str) -> String {
     content.lines().find_map(|line| line.strip_prefix("# ")).map(|title| title.trim().to_string()).unwrap_or_default()
 }
@@ -134,5 +153,6 @@ mod tests {
         let scope = load_scope(dir.path(), "p").unwrap();
         assert_eq!(scope.keys().cloned().collect::<Vec<_>>(), vec!["common/a.md", "projects/p/b.md"]);
         assert!(load_scope(dir.path(), "new").unwrap().contains_key("common/a.md"));
+        assert_eq!(load_all(dir.path()).unwrap().keys().cloned().collect::<Vec<_>>(), vec!["common/a.md", "projects/p/b.md", "projects/q/c.md"]);
     }
 }

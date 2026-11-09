@@ -1,8 +1,12 @@
+use std::sync::Arc;
 use std::time::Duration;
 
 use qmd_memory_core::error::Failure;
+use qmd_memory_core::qmd::Qmd;
 use qmd_memory_core::queue::{Job, Queue};
 use qmd_memory_core::recorder::CliRecorder;
+use qmd_memory_core::run::Limit;
+use qmd_memory_core::settings::Settings;
 use qmd_memory_core::worker::{self, Outcome, Reporter, WorkerLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
@@ -22,6 +26,11 @@ fn notify(app: &AppHandle, title: &str, body: &str) {
 fn changed(app: &AppHandle) {
     tray::refresh_tooltip(app);
     let _ = app.emit("state-changed", ());
+}
+
+fn live_limit(app: &AppHandle, seconds: fn(&Settings) -> u64) -> Limit {
+    let app = app.clone();
+    Arc::new(move || Duration::from_secs(app.state::<AppState>().read_settings(seconds)))
 }
 
 fn minutes_until(timestamp: i64) -> i64 {
@@ -84,9 +93,11 @@ pub fn spawn(app: AppHandle) {
             }
         };
         let reporter = AppReporter { app: app.clone() };
+        let model_limit = live_limit(&app, |settings| settings.model_timeout_secs);
+        let qmd_limit = live_limit(&app, |settings| settings.qmd_timeout_secs);
         loop {
             let settings = state.settings();
-            if settings.paused {
+            if settings.paused || state.reviewing() {
                 state.wait(ERROR_WAIT);
                 continue;
             }
@@ -96,8 +107,9 @@ pub fn spawn(app: AppHandle) {
                 state.wait(ERROR_WAIT);
                 continue;
             }
-            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir());
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &reporter)));
+            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone());
+            let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
             match result {
                 Ok(Ok(Some(_))) => state.set_problem(None),
                 Ok(Ok(None)) => state.wait(IDLE_WAIT),

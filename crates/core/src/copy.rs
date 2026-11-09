@@ -43,7 +43,7 @@ fn provider_label(provider: Provider) -> &'static str {
 
 pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: usize) -> DialogueCopy {
     let mut text = format!(
-        "# {} 세션 {}\n\n- 원본: `{}`\n- 작업 폴더: `{}`\n\n기억 문서의 근거를 확인하기 위한 대화 사본입니다. 사용자와 어시스턴트 발언만 원본 줄 번호(L)와 함께 담았습니다. 도구 실행 결과는 들어 있지 않습니다.\n",
+        "# {} 세션 {}\n\n- 원본: `{}`\n- 작업 폴더: `{}`\n\n기억 문서의 근거를 확인하기 위한 대화 사본입니다. 사용자·어시스턴트 발언과 다른 에이전트가 보낸 메시지를 원본 줄 번호(L)와 함께 담았습니다. 시각은 UTC입니다. 도구 실행 결과는 들어 있지 않습니다.\n",
         provider_label(provider),
         parsed.session_id,
         transcript.to_string_lossy().replace('\\', "/"),
@@ -64,6 +64,37 @@ pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: 
 
 pub fn link_target(copy_file: &Path, copy_line: usize) -> String {
     format!("<{}:{}>", copy_file.to_string_lossy().replace('\\', "/"), copy_line)
+}
+
+pub fn line_moves(old_copy: &str, new_lines: &BTreeMap<usize, usize>) -> BTreeMap<usize, usize> {
+    parse_headings(old_copy)
+        .into_iter()
+        .filter_map(|(original, old_line)| new_lines.get(&original).filter(|new_line| **new_line != old_line).map(|new_line| (old_line, *new_line)))
+        .collect()
+}
+
+pub fn relink(text: &str, copy_file: &Path, moves: &BTreeMap<usize, usize>) -> Option<String> {
+    let prefix = format!("<{}:", copy_file.to_string_lossy().replace('\\', "/"));
+    let mut result = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut changed = false;
+    while let Some(found) = rest.find(&prefix) {
+        let digits_start = found + prefix.len();
+        let digits: String = rest[digits_start..].chars().take_while(char::is_ascii_digit).collect();
+        let closes = rest[digits_start + digits.len()..].starts_with('>');
+        let moved = digits.parse::<usize>().ok().filter(|_| closes).and_then(|line| moves.get(&line));
+        result.push_str(&rest[..digits_start]);
+        match moved {
+            Some(line) => {
+                result.push_str(&line.to_string());
+                changed = true;
+            }
+            None => result.push_str(&digits),
+        }
+        rest = &rest[digits_start + digits.len()..];
+    }
+    result.push_str(rest);
+    changed.then_some(result)
 }
 
 pub fn parse_headings(text: &str) -> BTreeMap<usize, usize> {
@@ -126,6 +157,40 @@ mod tests {
         let copy = render(&parsed(), Provider::Codex, Path::new("C:/s.jsonl"), 9);
         assert_eq!(parse_headings(&copy.text), copy.lines);
         assert!(copy.text.contains("## L9 · 확인되지 않은 입력"));
+    }
+
+    #[test]
+    fn links_follow_their_turn_when_a_rewritten_copy_moves_it() {
+        let transcript = Path::new("C:/s.jsonl");
+        let before = render(&parsed(), Provider::Claude, transcript, 9);
+        let mut grown = parsed();
+        grown.turns.insert(1, Turn { reference: "L3".into(), line: 3, role: "user".into(), origin: Origin::User, timestamp: String::new(), text: "도중에 보낸 말".into() });
+        let after = render(&grown, Provider::Claude, transcript, 9);
+        let moves = line_moves(&before.text, &after.lines);
+        assert_eq!(moves.get(&before.lines[&2]), None);
+        assert_eq!(moves[&before.lines[&5]], after.lines[&5]);
+        assert_eq!(moves[&before.lines[&9]], after.lines[&9]);
+
+        let file = Path::new("D:\\k\\sources\\claude\\abc-123.md");
+        let other = Path::new("D:\\k\\sources\\claude\\other.md");
+        let note = format!(
+            "본문 ([근거]({})) 다른 세션 ([근거]({}))\n## 원문 근거\n- [L5]({}) — 로그만\n- [L2]({}) — 경고는",
+            link_target(file, before.lines[&9]),
+            link_target(other, before.lines[&5]),
+            link_target(file, before.lines[&5]),
+            link_target(file, before.lines[&2])
+        );
+        let relinked = relink(&note, file, &moves).unwrap();
+        let expected = format!(
+            "본문 ([근거]({})) 다른 세션 ([근거]({}))\n## 원문 근거\n- [L5]({}) — 로그만\n- [L2]({}) — 경고는",
+            link_target(file, after.lines[&9]),
+            link_target(other, before.lines[&5]),
+            link_target(file, after.lines[&5]),
+            link_target(file, after.lines[&2])
+        );
+        assert_eq!(relinked, expected);
+        assert_eq!(relink(&expected.replace("abc-123", "unrelated"), file, &moves), None);
+        assert!(line_moves(&before.text, &before.lines).is_empty());
     }
 
     #[test]

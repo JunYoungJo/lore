@@ -52,10 +52,14 @@ export interface Commands {
   qmd: string[];
 }
 
+export type Backend = "codex" | "claude";
+
+export type Models = Record<Backend, string | null>;
+
 export interface Settings {
   knowledgeRoot: string;
-  backend: "codex" | "claude";
-  model: string | null;
+  backend: Backend;
+  models: Models;
   modelTimeoutSecs: number;
   qmdTimeoutSecs: number;
   claudeProjectsDir: string;
@@ -69,6 +73,8 @@ export interface Settings {
   commands: Commands;
 }
 
+export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "models" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
+
 export type HookState = "connected" | "other_path" | "missing";
 
 export interface HookStatus {
@@ -80,8 +86,50 @@ export interface HookStatus {
   error: string | null;
 }
 
+export type ChangeKind = "modified" | "added" | "deleted";
+
+export interface FileChange {
+  path: string;
+  kind: ChangeKind;
+}
+
+export interface ReviewSession {
+  at: number;
+  provider: Provider;
+  project: string | null;
+  summary: string | null;
+}
+
+export interface ReviewFile extends FileChange {
+  sessions: ReviewSession[];
+}
+
+export interface ReviewSnapshot {
+  repository: boolean;
+  waiting: boolean;
+  root: string;
+  files: ReviewFile[];
+  others: FileChange[];
+  message: string;
+}
+
+export interface Segment {
+  kind: "same" | "added" | "removed";
+  text: string;
+}
+
+export type RowKind = "same" | "changed" | "removed" | "added";
+
+export interface DiffRow {
+  kind: RowKind;
+  leftNo: number | null;
+  left: Segment[] | null;
+  rightNo: number | null;
+  right: Segment[] | null;
+}
+
 export interface Snapshot {
-  state: "idle" | "working" | "paused";
+  state: "idle" | "working" | "paused" | "reviewing";
   current: Current | null;
   counts: Counts;
   recent: Activity[];
@@ -90,5 +138,7 @@ export interface Snapshot {
   settings: Settings;
   autostart: boolean;
   hooks: HookStatus[];
+  review: number | null;
+  reviewing: boolean;
   version: string;
 }

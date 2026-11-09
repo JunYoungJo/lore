@@ -5,8 +5,11 @@ use serde_json::Value;
 
 use crate::error::{Error, Result};
 use crate::notes::collection_path;
-use crate::run;
+use crate::run::{self, Limit};
 use crate::settings::Settings;
+
+const SEARCH_LIMIT: Duration = Duration::from_secs(180);
+const CONTEXT_LIMIT: Duration = Duration::from_secs(120);
 
 pub struct Qmd {
     command: Vec<String>,
@@ -14,7 +17,7 @@ pub struct Qmd {
     cache_dir: PathBuf,
     index: String,
     workdir: PathBuf,
-    timeout: Duration,
+    limit: Limit,
 }
 
 pub fn collection_name(project: &str) -> String {
@@ -38,18 +41,18 @@ pub fn has_collection(config_text: &str, name: &str) -> bool {
 }
 
 impl Qmd {
-    pub fn new(settings: &Settings, workdir: &Path) -> Self {
+    pub fn new(settings: &Settings, workdir: &Path, limit: Limit) -> Self {
         Self {
             command: settings.commands.qmd.clone(),
             config_dir: settings.qmd_config_dir(),
             cache_dir: settings.qmd_cache_dir(),
             index: settings.qmd_index.clone(),
             workdir: workdir.to_path_buf(),
-            timeout: Duration::from_secs(settings.qmd_timeout_secs),
+            limit,
         }
     }
 
-    fn run(&self, args: &[&str], timeout: Duration) -> Result<String> {
+    fn run(&self, args: &[&str], limit: &dyn Fn() -> Duration) -> Result<String> {
         if self.command.is_empty() {
             return Err(Error::transient("qmd 실행 경로를 찾지 못했습니다. 설정에서 qmd 명령을 지정하십시오."));
         }
@@ -60,12 +63,12 @@ impl Qmd {
             ("QMD_CONFIG_DIR", self.config_dir.to_string_lossy().replace('\\', "/")),
             ("XDG_CACHE_HOME", self.cache_dir.to_string_lossy().replace('\\', "/")),
         ];
-        Ok(run::run(&full, &self.workdir, &env, None, timeout)?.stdout)
+        Ok(run::run(&full, &self.workdir, &env, None, limit)?.stdout)
     }
 
     pub fn refresh(&self) -> Result<()> {
-        self.run(&["update"], self.timeout)?;
-        self.run(&["embed"], self.timeout)?;
+        self.run(&["update"], self.limit.as_ref())?;
+        self.run(&["embed"], self.limit.as_ref())?;
         Ok(())
     }
 
@@ -76,7 +79,7 @@ impl Qmd {
             args.push("-c");
             args.push(collection);
         }
-        let output = self.run(&args, Duration::from_secs(180))?;
+        let output = self.run(&args, &|| SEARCH_LIMIT)?;
         let results = parse_results(&output)?;
         Ok(results
             .as_array()
@@ -99,9 +102,9 @@ impl Qmd {
             return Ok(());
         }
         let folder = folder.to_string_lossy().replace('\\', "/");
-        self.run(&["collection", "add", &folder, "--name", &name, "--mask", "**/*.md"], self.timeout)?;
+        self.run(&["collection", "add", &folder, "--name", &name, "--mask", "**/*.md"], self.limit.as_ref())?;
         let description = format!("{project} 프로젝트의 결정·문제·해결 및 변경 이력. 사용자 지시와 당시 에이전트 보고를 구분.");
-        self.run(&["context", "add", &format!("qmd://{name}"), &description], Duration::from_secs(120))?;
+        self.run(&["context", "add", &format!("qmd://{name}"), &description], &|| CONTEXT_LIMIT)?;
         Ok(())
     }
 }

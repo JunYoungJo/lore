@@ -3,6 +3,7 @@ import { ChevronLeft, FolderOpen, Moon, Pause, Play, Settings as SettingsIcon, S
 
 import * as api from "@/ipc/api";
 import type { Snapshot } from "@/ipc/contract";
+import { QueueView } from "@/components/QueueView";
 import { SettingsFooter, SettingsView } from "@/components/SettingsView";
 import { StatusView } from "@/components/StatusView";
 import { useAppStore } from "@/store/appStore";
@@ -11,6 +12,7 @@ import { BrandMark } from "@/ui/BrandMark";
 
 function statusLine(snapshot: Snapshot): string {
   if (snapshot.current) return `기록 중 · ${snapshot.current.project}`;
+  if (snapshot.reviewing) return "검토 중이라 기록을 멈춤";
   if (snapshot.settings.paused) return "일시 중지됨";
   if (snapshot.counts.ready > 0) return `대기 ${snapshot.counts.ready}건`;
   return "대기 중";
@@ -55,7 +57,8 @@ export function App() {
   }
 
   const paused = snapshot.settings.paused;
-  const dotClass = snapshot.current ? "dot working" : paused ? "dot paused" : "dot";
+  const dotClass = snapshot.current ? "dot working" : paused || snapshot.reviewing ? "dot paused" : "dot";
+  const status = statusLine(snapshot);
 
   return (
     <main key={shown} className="pop anim-traypop">
@@ -70,14 +73,27 @@ export function App() {
               <div className="head-sub">qmd-memory {snapshot.version}</div>
             </div>
           </>
+        ) : view === "queue" ? (
+          <>
+            <button type="button" className="icon-btn" title="뒤로" aria-label="뒤로" onClick={showStatus}>
+              <ChevronLeft size={18} strokeWidth={1.9} />
+            </button>
+            <div className="head-text">
+              <div className="head-title">큐</div>
+              <div className="head-sub" title={status}>
+                <span className={dotClass} />
+                {status}
+              </div>
+            </div>
+          </>
         ) : (
           <>
             <BrandMark />
             <div className="head-text">
               <div className="head-title">qmd-memory</div>
-              <div className="head-sub">
+              <div className="head-sub" title={status}>
                 <span className={dotClass} />
-                {statusLine(snapshot)}
+                {status}
               </div>
             </div>
             <button type="button" className="icon-btn" title={paused ? "다시 시작" : "일시 중지"} aria-label={paused ? "다시 시작" : "일시 중지"} onClick={() => void togglePause()}>
@@ -101,14 +117,14 @@ export function App() {
           <span>{snapshot.problem}</span>
         </div>
       )}
-      {error && view === "status" && (
+      {error && view !== "settings" && (
         <div className="banner" role="alert">
           <TriangleAlert size={15} strokeWidth={1.9} style={{ flex: "none", marginTop: 1 }} />
           <span>{error}</span>
         </div>
       )}
 
-      {view === "settings" ? <SettingsView snapshot={snapshot} /> : <StatusView snapshot={snapshot} />}
+      {view === "settings" ? <SettingsView snapshot={snapshot} /> : view === "queue" ? <QueueView snapshot={snapshot} /> : <StatusView snapshot={snapshot} />}
 
       {view === "settings" ? (
         <SettingsFooter snapshot={snapshot} />

@@ -4,7 +4,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Failure, Result};
 use crate::notes;
 use crate::pipeline::{self, Plan, Preparation};
 use crate::qmd::{collection_name, Qmd};
@@ -78,12 +78,11 @@ fn finish_plan(queue: &Queue, qmd: &Qmd, settings: &Settings, job: &Job, plan: &
     Ok(Outcome::Recorded { project: plan.project.clone(), notes: plan.rendered.keys().cloned().collect(), summary: plan.summary.clone() })
 }
 
-fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Recorder, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
-    let qmd = Qmd::new(settings, &paths.recorder_workdir());
+fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Recorder, qmd: &Qmd, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
     if matches!(job.status, Status::Applying | Status::IndexPending) {
         let manifest = job.manifest.as_deref().ok_or_else(|| Error::permanent("중단된 반영 정보가 없습니다."))?;
         let plan: Plan = serde_json::from_str(manifest).map_err(|error| Error::permanent(format!("중단된 반영 정보를 읽지 못했습니다: {error}")))?;
-        return finish_plan(queue, &qmd, settings, job, &plan, true);
+        return finish_plan(queue, qmd, settings, job, &plan, true);
     }
     let prepared = match pipeline::prepare(job, settings.max_chars, &paths.recorder_workdir())? {
         Preparation::Skip(reason) => {
@@ -129,7 +128,7 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
     }
     queue.begin_apply(&job.id, &serde_json::to_string(&plan)?, now())?;
     let applying = Job { status: Status::Applying, ..job.clone() };
-    finish_plan(queue, &qmd, settings, &applying, &plan, false)
+    finish_plan(queue, qmd, settings, &applying, &plan, false)
 }
 
 fn activity(job: &Job, outcome: &Outcome) -> Option<Activity> {
@@ -155,9 +154,9 @@ fn activity(job: &Job, outcome: &Outcome) -> Option<Activity> {
     })
 }
 
-pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Recorder, reporter: &dyn Reporter) -> Result<Option<(Job, Outcome)>> {
+pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Recorder, qmd: &Qmd, reporter: &dyn Reporter) -> Result<Option<(Job, Outcome)>> {
     let Some(job) = queue.next_job(now())? else { return Ok(None) };
-    let outcome = match process(queue, settings, paths, recorder, &job, reporter) {
+    let outcome = match process(queue, settings, paths, recorder, qmd, &job, reporter) {
         Ok(outcome) => outcome,
         Err(error) => {
             let project = queue.get(&job.id)?.and_then(|current| current.project);
@@ -172,4 +171,159 @@ pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Re
         reporter.finished(&job, &outcome);
     }
     Ok(Some((job, outcome)))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Discarded {
+    Batch { after_line: usize, end_line: usize },
+    Session { reason: String },
+}
+
+pub fn discard(queue: &Queue, settings: &Settings, paths: &Paths, id: &str, now: i64) -> Result<Option<Discarded>> {
+    let Some(job) = queue.get(id)?.filter(|job| job.status == Status::Failed) else { return Ok(None) };
+    let batch = match pipeline::prepare(&job, settings.max_chars, &paths.recorder_workdir()) {
+        Ok(Preparation::Ready(prepared)) => Ok((prepared.batch.end_line, prepared.end_hash.clone(), prepared.parsed.complete_lines > prepared.batch.end_line)),
+        Ok(Preparation::AgentOnly { end_line, end_hash, has_more }) => Ok((end_line, end_hash, has_more)),
+        Ok(Preparation::NothingNew { end_line, end_hash }) => Ok((end_line, end_hash, false)),
+        Ok(Preparation::Skip(reason)) => Err(reason),
+        Err(error) if error.failure == Failure::Permanent => Err(error.message),
+        Err(error) => return Err(error),
+    };
+    Ok(Some(match batch {
+        Ok((end_line, end_hash, has_more)) => {
+            queue.finish(id, end_line, &end_hash, has_more, now)?;
+            Discarded::Batch { after_line: job.cursor_line, end_line }
+        }
+        Err(reason) => {
+            queue.skip(id, &reason, now)?;
+            Discarded::Session { reason }
+        }
+    }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::queue::MAX_REJECTED_ATTEMPTS;
+    use crate::transcript::{compressed_path, prefix_hash, Provider};
+    use serde_json::json;
+    use std::fs;
+    use std::path::PathBuf;
+
+    struct Fixture {
+        dir: tempfile::TempDir,
+        queue: Queue,
+        settings: Settings,
+        paths: Paths,
+    }
+
+    fn fixture() -> Fixture {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("demo").join(".git")).unwrap();
+        let queue = Queue::open(&dir.path().join("state.sqlite")).unwrap();
+        let settings = Settings { max_chars: 1_000, ..Settings::default() };
+        let paths = Paths { root: dir.path().join("app") };
+        Fixture { dir, queue, settings, paths }
+    }
+
+    fn session(fixture: &Fixture, name: &str, turns: usize) -> PathBuf {
+        let cwd = fixture.dir.path().join("demo");
+        let mut text = String::new();
+        for index in 0..turns {
+            let body = index.to_string().repeat(400);
+            let mut record = if index % 2 == 0 {
+                json!({"type": "user", "uuid": format!("u{index}"), "userType": "external", "timestamp": "2026-11-05T00:00:00Z", "message": {"content": body}})
+            } else {
+                json!({"type": "assistant", "uuid": format!("a{index}"), "message": {"content": [{"type": "text", "text": body}]}})
+            };
+            record["cwd"] = json!(cwd.to_string_lossy());
+            record["sessionId"] = json!("sess-1");
+            text.push_str(&format!("{record}\n"));
+        }
+        let path = fixture.dir.path().join(name);
+        fs::write(&path, text).unwrap();
+        path
+    }
+
+    fn fail(queue: &Queue, id: &str) {
+        for _ in 0..MAX_REJECTED_ATTEMPTS {
+            queue.record_failure(id, Failure::Rejected, "모델이 기존 문서 본문을 다시 요청했습니다.", 100).unwrap();
+        }
+        assert_eq!(queue.get(id).unwrap().unwrap().status, Status::Failed);
+    }
+
+    fn failed(fixture: &Fixture, transcript: &Path) -> String {
+        let id = fixture.queue.enqueue(Provider::Claude, transcript, 100).unwrap();
+        fail(&fixture.queue, &id);
+        id
+    }
+
+    fn discard_job(fixture: &Fixture, id: &str) -> Result<Option<Discarded>> {
+        discard(&fixture.queue, &fixture.settings, &fixture.paths, id, 200)
+    }
+
+    #[test]
+    fn discarding_skips_only_the_failed_batch_and_queues_the_rest_of_the_session() {
+        let fixture = fixture();
+        let transcript = session(&fixture, "a.jsonl", 4);
+        let id = failed(&fixture, &transcript);
+        assert_eq!(discard_job(&fixture, &id).unwrap(), Some(Discarded::Batch { after_line: 0, end_line: 2 }));
+        let job = fixture.queue.get(&id).unwrap().unwrap();
+        assert_eq!((job.status, job.cursor_line, job.attempts, job.last_error), (Status::Pending, 2, 0, None));
+        assert_eq!(job.cursor_hash, prefix_hash(&fs::read(&transcript).unwrap(), 2));
+        assert_eq!(fixture.queue.next_job(200).unwrap().unwrap().id, id);
+    }
+
+    #[test]
+    fn discarding_the_last_batch_finishes_the_job() {
+        let fixture = fixture();
+        let transcript = session(&fixture, "a.jsonl", 4);
+        let id = failed(&fixture, &transcript);
+        discard_job(&fixture, &id).unwrap();
+        fail(&fixture.queue, &id);
+        assert_eq!(discard_job(&fixture, &id).unwrap(), Some(Discarded::Batch { after_line: 2, end_line: 4 }));
+        let job = fixture.queue.get(&id).unwrap().unwrap();
+        assert_eq!((job.status, job.cursor_line), (Status::Done, 4));
+    }
+
+    #[test]
+    fn a_transcript_that_cannot_be_read_drops_the_whole_session() {
+        let fixture = fixture();
+        let missing = failed(&fixture, &fixture.dir.path().join("missing.jsonl"));
+        let broken_path = fixture.dir.path().join("broken.jsonl");
+        fs::write(&broken_path, "not json\n").unwrap();
+        let broken = failed(&fixture, &broken_path);
+        let changed = fixture.queue.enqueue(Provider::Claude, &session(&fixture, "changed.jsonl", 4), 100).unwrap();
+        fixture.queue.finish(&changed, 2, "stale", true, 100).unwrap();
+        fail(&fixture.queue, &changed);
+
+        for (id, cause) in [(missing, "원문 파일이 없습니다"), (broken, "JSON 형식이 올바르지 않습니다"), (changed, "이미 처리한 원문 앞부분이 바뀌었습니다")] {
+            match discard_job(&fixture, &id).unwrap() {
+                Some(Discarded::Session { reason }) => assert!(reason.contains(cause), "{reason}"),
+                other => panic!("{id}: {other:?}"),
+            }
+            let job = fixture.queue.get(&id).unwrap().unwrap();
+            assert_eq!(job.status, Status::Skipped);
+        }
+    }
+
+    #[test]
+    fn a_transcript_that_fails_to_decompress_leaves_the_job_failed() {
+        let fixture = fixture();
+        let path = fixture.dir.path().join("packed.jsonl");
+        fs::write(compressed_path(&path), "not zstd").unwrap();
+        let id = failed(&fixture, &path);
+        assert_eq!(discard_job(&fixture, &id).unwrap_err().failure, Failure::Transient);
+        assert_eq!(fixture.queue.get(&id).unwrap().unwrap().status, Status::Failed);
+    }
+
+    #[test]
+    fn only_failed_jobs_are_discarded() {
+        let fixture = fixture();
+        let id = fixture.queue.enqueue(Provider::Claude, &session(&fixture, "a.jsonl", 4), 100).unwrap();
+        assert_eq!(discard_job(&fixture, &id).unwrap(), None);
+        let job = fixture.queue.get(&id).unwrap().unwrap();
+        assert_eq!((job.status, job.cursor_line), (Status::Pending, 0));
+        assert_eq!(discard_job(&fixture, "unknown").unwrap(), None);
+    }
 }
