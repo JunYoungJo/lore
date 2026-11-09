@@ -1,11 +1,14 @@
 pub mod batch;
 pub mod copy;
+pub mod diagnostics;
 pub mod error;
 pub mod hook;
 pub mod hooks;
 pub mod migrate;
 pub mod notes;
 pub mod pipeline;
+pub mod platform;
+pub mod portable;
 pub mod project;
 pub mod proposal;
 pub mod qmd;

@@ -11,9 +11,22 @@ const host = execFileSync("rustc", ["-vV"], { encoding: "utf8" })
   .trim();
 if (!host) throw new Error("rustc 대상 플랫폼을 알 수 없습니다.");
 
-execFileSync("cargo", ["build", "--release", "-p", "qmd-memory-cli"], { cwd: root, stdio: "inherit" });
-
-const extension = host.includes("windows") ? ".exe" : "";
+// Tauri exports the requested target to beforeBuildCommand. Build the sidecar
+// for that target as well (including the two halves of a universal macOS app).
+const target = process.env.TAURI_ENV_TARGET_TRIPLE || host;
+const targets = target === "universal-apple-darwin"
+  ? ["aarch64-apple-darwin", "x86_64-apple-darwin"] : [target];
 const binaries = join(root, "src-tauri", "binaries");
 mkdirSync(binaries, { recursive: true });
-copyFileSync(join(root, "target", "release", `qmd-memory-cli${extension}`), join(binaries, `qmd-memory-cli-${host}${extension}`));
+
+for (const triple of targets) {
+  const args = ["build", "--release", "-p", "qmd-memory-cli"];
+  if (triple !== host) args.push("--target", triple);
+  execFileSync("cargo", args, { cwd: root, stdio: "inherit" });
+  const extension = triple.includes("windows") ? ".exe" : "";
+  const source = triple === host ? join(root, "target", "release") : join(root, "target", triple, "release");
+  copyFileSync(join(source, `qmd-memory-cli${extension}`), join(binaries, `qmd-memory-cli-${triple}${extension}`));
+}
+if (target === "universal-apple-darwin") {
+  execFileSync("lipo", ["-create", ...targets.map((triple) => join(binaries, `qmd-memory-cli-${triple}`)), "-output", join(binaries, `qmd-memory-cli-${target}`)]);
+}

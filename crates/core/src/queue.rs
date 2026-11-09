@@ -124,7 +124,8 @@ fn job_from_row(row: &Row) -> rusqlite::Result<Job> {
 }
 
 pub fn job_id(provider: Provider, transcript: &Path) -> String {
-    let key = transcript.to_string_lossy().replace('/', "\\").to_lowercase();
+    let key = transcript.to_string_lossy().to_string();
+    let key = if cfg!(windows) { key.replace('/', "\\").to_lowercase() } else { key };
     digest(format!("{}:{key}", provider.as_str()).as_bytes())[..16].to_string()
 }
 
@@ -458,15 +459,16 @@ mod tests {
     }
 
     #[test]
-    fn same_transcript_maps_to_one_job_regardless_of_case_separator_or_compression() {
+    fn compression_is_one_job_but_case_folding_is_windows_only() {
         let (dir, queue) = queue();
         let lower = dir.path().join("Session.jsonl");
         let first = queue.enqueue(Provider::Codex, &lower, 100).unwrap();
         let upper = std::path::PathBuf::from(lower.to_string_lossy().to_uppercase().replace(".JSONL", ".jsonl"));
-        assert_eq!(queue.enqueue(Provider::Codex, &upper, 100).unwrap(), first);
+        let upper_id = queue.enqueue(Provider::Codex, &upper, 100).unwrap();
+        assert_eq!(upper_id == first, cfg!(windows));
         assert_eq!(queue.enqueue(Provider::Codex, &crate::transcript::compressed_path(&lower), 100).unwrap(), first);
         assert_ne!(queue.enqueue(Provider::Claude, &lower, 100).unwrap(), first);
-        assert_eq!(queue.counts(100, None).unwrap().ready, 2);
+        assert_eq!(queue.counts(100, None).unwrap().ready, if cfg!(windows) { 2 } else { 3 });
     }
 
     #[test]

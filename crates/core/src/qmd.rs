@@ -66,6 +66,34 @@ impl Qmd {
         Ok(run::run(&full, &self.workdir, &env, None, limit)?.stdout)
     }
 
+    pub fn available(&self) -> bool {
+        crate::diagnostics::command_available(&self.command)
+    }
+
+    // Each PC has its own config and index. Reconstruct collections from the
+    // shared Markdown tree rather than copying another PC's absolute paths.
+    pub fn ensure_index(&self, root: &Path) -> Result<()> {
+        std::fs::create_dir_all(root.join("common"))?;
+        self.ensure_named_collection("common", &root.join("common"), "여러 프로젝트에 공통으로 적용되는 결정과 경험.")?;
+        let projects = root.join("projects");
+        let entries = match std::fs::read_dir(projects) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(error.into()),
+        };
+        let mut folders = Vec::new();
+        for entry in entries {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if crate::project::is_valid_name(&name) { folders.push((name, entry.path())); }
+            }
+        }
+        folders.sort();
+        for (name, folder) in folders { self.ensure_collection(&name, &folder)?; }
+        Ok(())
+    }
+
     pub fn refresh(&self) -> Result<()> {
         self.run(&["update"], self.limit.as_ref())?;
         self.run(&["embed"], self.limit.as_ref())?;
@@ -98,13 +126,17 @@ impl Qmd {
 
     pub fn ensure_collection(&self, project: &str, folder: &Path) -> Result<()> {
         let name = collection_name(project);
-        if has_collection(&self.configured_collections()?, &name) {
+        let description = format!("{project} 프로젝트의 결정·문제·해결 및 변경 이력. 사용자 지시와 당시 에이전트 보고를 구분.");
+        self.ensure_named_collection(&name, folder, &description)
+    }
+
+    fn ensure_named_collection(&self, name: &str, folder: &Path, description: &str) -> Result<()> {
+        if has_collection(&self.configured_collections()?, name) {
             return Ok(());
         }
         let folder = folder.to_string_lossy().replace('\\', "/");
-        self.run(&["collection", "add", &folder, "--name", &name, "--mask", "**/*.md"], self.limit.as_ref())?;
-        let description = format!("{project} 프로젝트의 결정·문제·해결 및 변경 이력. 사용자 지시와 당시 에이전트 보고를 구분.");
-        self.run(&["context", "add", &format!("qmd://{name}"), &description], &|| CONTEXT_LIMIT)?;
+        self.run(&["collection", "add", &folder, "--name", name, "--mask", "**/*.md"], self.limit.as_ref())?;
+        self.run(&["context", "add", &format!("qmd://{name}"), description], &|| CONTEXT_LIMIT)?;
         Ok(())
     }
 }
@@ -129,5 +161,38 @@ mod tests {
         let results = parse_results(output).unwrap();
         assert_eq!(results[0]["file"], "qmd://project-demo/a.md");
         assert!(parse_results("no results\n").is_err());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_fresh_pc_registers_common_and_every_project_in_its_local_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("shared knowledge");
+        std::fs::create_dir_all(root.join("projects/demo")).unwrap();
+        let script = dir.path().join("qmd-fixture.sh");
+        let log = dir.path().join("calls.txt");
+        std::fs::write(&script, r#"log=$1
+shift
+printf '%s|%s|%s\n' "$QMD_CONFIG_DIR" "$XDG_CACHE_HOME" "$*" >> "$log"
+shift 2
+if [ "$1:$2" = 'collection:add' ]; then
+  mkdir -p "$QMD_CONFIG_DIR"
+  printf '  %s:\n    path: %s\n' "$5" "$3" >> "$QMD_CONFIG_DIR/index.yml"
+fi
+"#).unwrap();
+        let qmd = Qmd {
+            command: vec!["/bin/sh".into(), script.to_string_lossy().to_string(), log.to_string_lossy().to_string()],
+            config_dir: dir.path().join("local/config"), cache_dir: dir.path().join("local/cache"),
+            workdir: dir.path().join("worker"), index: "index".into(), limit: run::fixed(5),
+        };
+        qmd.ensure_index(&root).unwrap();
+        qmd.ensure_index(&root).unwrap();
+        qmd.refresh().unwrap();
+        let calls = std::fs::read_to_string(log).unwrap();
+        assert_eq!(calls.matches("collection add").count(), 2);
+        assert!(calls.contains("--name common") && calls.contains("--name project-demo"));
+        assert!(calls.contains("--index index update") && calls.contains("--index index embed"));
+        assert!(calls.lines().all(|line| line.starts_with(qmd.config_dir.to_str().unwrap())));
+        assert!(!root.join(".qmd").exists());
     }
 }

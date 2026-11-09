@@ -11,3 +11,6 @@ path = "src/main.rs"
 [dependencies]
 qmd-memory-core = { path = "../core" }
 serde_json.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

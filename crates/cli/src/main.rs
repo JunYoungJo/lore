@@ -21,6 +21,11 @@ const USAGE: &str = "사용법: qmd-memory-cli <명령>
   scan                             훅이 놓친 세션을 찾아 큐에 등록
   work [--once]                    큐의 작업을 처리 (트레이 앱이 실행 중이면 거부)
   status                           큐 상태와 실패한 작업 출력
+  doctor                           이 PC의 경로·CLI·qmd 설정 진단 (읽기 전용)
+  index                            기억 문서의 컬렉션 등록과 이 PC의 qmd 색인 갱신
+  project                          현재 git 저장소의 기억 프로젝트 ID 확인
+  portable-links [--apply]         옛 절대 경로 근거를 상대 경로·발언 앵커로 이전
+                                   (기본은 미리보기, 적용 전 사본과 문서 백업)
   retry <작업 ID>                   실패하거나 건너뛴 작업을 다시 대기열에 넣음
   discard <작업 ID>                 실패한 작업의 실패한 구간을 기록하지 않고 넘어감
                                    (원문을 읽을 수 없으면 그 세션을 더 기록하지 않음)
@@ -58,6 +63,33 @@ fn run(args: &[String]) -> Result<()> {
     let paths = Paths::standard();
     let command = args.first().map(String::as_str).unwrap_or("");
     match command {
+        "doctor" => {
+            let report = qmd_memory_core::diagnostics::inspect(&paths, &std::env::current_exe()?);
+            println!("{}", serde_json::to_string_pretty(&report)?);
+        }
+        "project" => {
+            let repository = qmd_memory_core::project::resolve_checked(&std::env::current_dir()?)?.ok_or_else(|| Error::permanent("현재 폴더의 git 저장소 또는 프로젝트 ID를 찾지 못했습니다."))?;
+            println!("{}", serde_json::json!({"project": repository.name, "repository": repository.root}));
+        }
+        "index" | "portable-links" => {
+            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
+                return Err(Error::transient("트레이 앱 또는 다른 처리 작업이 실행 중입니다."));
+            };
+            let settings = settings::load_or_init(&paths.settings(), worker::now())?;
+            settings.validate()?;
+            if command == "index" {
+                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+                if !qmd.available() { return Err(Error::permanent("qmd 실행 경로를 찾지 못했습니다. doctor로 확인하십시오.")); }
+                qmd.ensure_index(&settings.knowledge_root())?;
+                qmd.refresh()?;
+                println!("이 PC의 qmd 색인을 갱신했습니다.");
+            } else {
+                let apply = args.iter().any(|arg| arg == "--apply");
+                let report = qmd_memory_core::portable::migrate(&settings.knowledge_root(), &paths.root.join("migration/portable-links.pending.json"), apply)?;
+                println!("{}", serde_json::to_string_pretty(&report)?);
+                if !apply { println!("미리보기입니다. 반영하려면 --apply를 붙이십시오."); }
+            }
+        }
         "hook" => {
             if std::env::var_os(RECORDER_MARK).is_some() {
                 return Ok(());

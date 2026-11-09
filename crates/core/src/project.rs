@@ -1,4 +1,13 @@
 use std::path::{Component, Path, PathBuf};
+use crate::error::{Error, Result};
+
+pub const ID_FILE: &str = ".qmd-memory.json";
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+struct Identity {
+    project: String,
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Repository {
@@ -67,16 +76,34 @@ fn repository_root(worktree: &Path) -> Option<PathBuf> {
 }
 
 pub fn resolve(cwd: &Path) -> Option<Repository> {
+    resolve_checked(cwd).ok().flatten()
+}
+
+pub fn resolve_checked(cwd: &Path) -> Result<Option<Repository>> {
     if cwd.as_os_str().is_empty() {
-        return None;
+        return Ok(None);
     }
     for candidate in cwd.ancestors() {
         if let Some(root) = repository_root(candidate) {
-            let name = project_name(root.file_name()?.to_str()?)?;
-            return Some(Repository { root, name });
+            let identity_path = root.join(ID_FILE);
+            let name = match std::fs::read_to_string(&identity_path) {
+                Ok(text) => {
+                    let identity: Identity = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("{}: 프로젝트 ID를 읽지 못했습니다: {error}", identity_path.display())))?;
+                    if !is_valid_name(&identity.project) || identity.project.len() > 100 {
+                        return Err(Error::permanent(format!("{}: project는 소문자 영문·숫자로 시작하는 100자 이하의 영문·숫자·-·_ ID여야 합니다.", identity_path.display())));
+                    }
+                    identity.project
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                    let Some(name) = root.file_name().and_then(|name| name.to_str()).and_then(project_name) else { return Ok(None) };
+                    name
+                }
+                Err(error) => return Err(Error::permanent(format!("{}: {error}", identity_path.display()))),
+            };
+            return Ok(Some(Repository { root, name }));
         }
     }
-    None
+    Ok(None)
 }
 
 #[cfg(test)]
@@ -91,6 +118,22 @@ mod tests {
         assert_eq!(project_name("my project").as_deref(), Some("my-project"));
         assert_eq!(project_name("_hidden").as_deref(), Some("hidden"));
         assert_eq!(project_name("한글"), None);
+    }
+
+    #[test]
+    fn explicit_identity_survives_a_different_clone_folder_and_invalid_ids_fail() {
+        let dir = tempfile::tempdir().unwrap();
+        for folder in ["demoengine", "renamed-clone"] {
+            let repo = dir.path().join(folder);
+            fs::create_dir_all(repo.join(".git")).unwrap();
+            fs::write(repo.join(ID_FILE), r#"{"project":"demoengine"}"#).unwrap();
+            assert_eq!(resolve_checked(&repo).unwrap().unwrap().name, "demoengine");
+        }
+        let repo = dir.path().join("demoengine");
+        fs::write(repo.join(ID_FILE), r#"{"project":"../other"}"#).unwrap();
+        assert_eq!(resolve_checked(&repo).unwrap_err().failure, crate::error::Failure::Permanent);
+        fs::write(repo.join(ID_FILE), "not json").unwrap();
+        assert!(resolve_checked(&repo).is_err());
     }
 
     #[test]
@@ -116,6 +159,8 @@ mod tests {
         let found = resolve(&worktree).unwrap();
         assert_eq!(found.name, "demoengine");
         assert_eq!(found.root, normalize(&main));
+        fs::write(main.join(ID_FILE), r#"{"project":"shared-project"}"#).unwrap();
+        assert_eq!(resolve_checked(&worktree).unwrap().unwrap().name, "shared-project");
     }
 
     #[test]

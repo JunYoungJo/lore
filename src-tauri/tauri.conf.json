@@ -6,7 +6,7 @@
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1460",
-    "beforeDevCommand": "pnpm dev",
+    "beforeDevCommand": "pnpm build:cli && pnpm dev",
     "beforeBuildCommand": "pnpm build"
   },
   "app": {
@@ -18,8 +18,8 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico"],
+    "targets": "all",
+    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.icns"],
     "externalBin": ["binaries/qmd-memory-cli"],
     "resources": [],
     "windows": {

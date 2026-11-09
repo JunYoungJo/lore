@@ -39,7 +39,13 @@ pub fn config_path(provider: Provider) -> PathBuf {
 
 pub fn command(cli: &Path, provider: Provider) -> String {
     let path = cli.to_string_lossy().replace('\\', "/");
-    let program = if path.contains(' ') { format!("\"{path}\"") } else { path };
+    // POSIX shells expand $, backticks and command substitutions inside double
+    // quotes. Keep paths literal, including installations with apostrophes.
+    let program = if cfg!(windows) {
+        if path.contains(' ') { format!("\"{path}\"") } else { path }
+    } else {
+        format!("'{}'", path.replace('\'', "'\"'\"'"))
+    };
     format!("{program} hook {}", provider.as_str())
 }
 
@@ -216,9 +222,28 @@ mod tests {
     }
 
     #[test]
-    fn commands_quote_paths_with_spaces_only() {
-        assert_eq!(wanted(Provider::Claude), "C:/Apps/qmd-memory/qmd-memory-cli.exe hook claude");
-        assert_eq!(command(Path::new("C:\\Program Files\\q\\qmd-memory-cli.exe"), Provider::Codex), "\"C:/Program Files/q/qmd-memory-cli.exe\" hook codex");
+    fn hook_commands_use_platform_appropriate_quoting() {
+        if cfg!(windows) {
+            assert_eq!(wanted(Provider::Claude), "C:/Apps/qmd-memory/qmd-memory-cli.exe hook claude");
+            assert_eq!(command(Path::new("C:\\Program Files\\q\\qmd-memory-cli.exe"), Provider::Codex), "\"C:/Program Files/q/qmd-memory-cli.exe\" hook codex");
+        } else {
+            assert_eq!(wanted(Provider::Claude), "'C:/Apps/qmd-memory/qmd-memory-cli.exe' hook claude");
+            assert_eq!(command(Path::new("/Users/it's $me/`apps`/qmd-memory-cli"), Provider::Codex), "'/Users/it'\"'\"'s $me/`apps`/qmd-memory-cli' hook codex");
+        }
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn posix_hook_executes_a_literal_path_with_shell_metacharacters() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cli = dir.path().join("it's $HOME `date`").join("qmd-memory-cli");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
+        std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let output = std::process::Command::new("/bin/sh").args(["-c", &command(&cli, Provider::Claude)]).output().unwrap();
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8(output.stdout).unwrap(), "hook\nclaude\n");
     }
 
     #[test]

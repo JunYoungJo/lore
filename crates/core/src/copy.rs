@@ -41,6 +41,18 @@ fn provider_label(provider: Provider) -> &'static str {
     }
 }
 
+fn quoted_turn_text(text: &str) -> String {
+    // A conversation about this app can itself contain examples of our turn
+    // headings and anchors. Keep those examples from becoming source markers.
+    text.replace("\r\n", "\n").replace("<a id=\"L", "&lt;a id=\"L").split('\n').map(|line| {
+        if let Some(rest) = line.strip_prefix("## L") {
+            let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+            if !digits.is_empty() && rest[digits.len()..].starts_with(" · ") { return format!("\\{line}"); }
+        }
+        line.to_string()
+    }).collect::<Vec<_>>().join("\n")
+}
+
 pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: usize) -> DialogueCopy {
     let mut text = format!(
         "# {} 세션 {}\n\n- 원본: `{}`\n- 작업 폴더: `{}`\n\n기억 문서의 근거를 확인하기 위한 대화 사본입니다. 사용자·어시스턴트 발언과 다른 에이전트가 보낸 메시지를 원본 줄 번호(L)와 함께 담았습니다. 시각은 UTC입니다. 도구 실행 결과는 들어 있지 않습니다.\n",
@@ -52,10 +64,11 @@ pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: 
     let mut lines = BTreeMap::new();
     for turn in parsed.turns.iter().filter(|turn| turn.line <= end_line) {
         text.push('\n');
+        text.push_str(&format!("<a id=\"L{}\"></a>\n", turn.line));
         lines.insert(turn.line, text.matches('\n').count() + 1);
         let stamp = if turn.timestamp.is_empty() { String::new() } else { format!(" · {}", turn.timestamp) };
         text.push_str(&format!("## L{} · {}{}\n\n", turn.line, speaker(&turn.role, turn.origin), stamp));
-        let body = turn.text.replace("\r\n", "\n");
+        let body = quoted_turn_text(&turn.text);
         text.push_str(body.trim_end());
         text.push('\n');
     }
@@ -64,6 +77,14 @@ pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: 
 
 pub fn link_target(copy_file: &Path, copy_line: usize) -> String {
     format!("<{}:{}>", copy_file.to_string_lossy().replace('\\', "/"), copy_line)
+}
+
+// Notes are read through qmd, so the path is relative to the note file (also
+// valid when opened in a Markdown viewer). The fragment uses the original turn
+// number, never a physical line in a copy that may later grow.
+pub fn portable_link(note: &str, provider: Provider, session_id: &str, fallback: &str, reference: &str) -> String {
+    let parents = "../".repeat(note.split('/').count().saturating_sub(1));
+    format!("<{parents}{SOURCES_DIR}/{}/{}.md#{reference}>", provider.as_str(), file_stem(session_id, fallback))
 }
 
 pub fn line_moves(old_copy: &str, new_lines: &BTreeMap<usize, usize>) -> BTreeMap<usize, usize> {
@@ -199,5 +220,27 @@ mod tests {
         assert_eq!(copy_path(root, Provider::Codex, "01a1-..:x", "job"), root.join("sources").join("codex").join("01a1-x.md"));
         assert_eq!(copy_path(root, Provider::Claude, "", "job1"), root.join("sources").join("claude").join("job1.md"));
         assert_eq!(link_target(Path::new("D:\\doc\\knowledge\\sources\\claude\\a.md"), 12), "<D:/doc/knowledge/sources/claude/a.md:12>");
+    }
+
+    #[test]
+    fn portable_links_use_original_turns_and_the_notes_relative_location() {
+        assert_eq!(portable_link("common/a.md", Provider::Claude, "abc-123", "job", "L5"), "<../sources/claude/abc-123.md#L5>");
+        assert_eq!(portable_link("projects/demo/a.md", Provider::Codex, "abc-123", "job", "L5"), "<../../sources/codex/abc-123.md#L5>");
+        let before = render(&parsed(), Provider::Claude, Path::new("/old/s.jsonl"), 9);
+        let mut changed = parsed();
+        changed.turns[0].text.push_str("\n여러 줄\n추가");
+        let after = render(&changed, Provider::Claude, Path::new("/new/s.jsonl"), 9);
+        assert_ne!(before.lines[&5], after.lines[&5]);
+        for text in [&before.text, &after.text] { assert!(text.contains("<a id=\"L5\"></a>\n## L5 · 어시스턴트")); }
+    }
+
+    #[test]
+    fn examples_inside_a_conversation_do_not_duplicate_turn_markers() {
+        let mut input = parsed();
+        input.turns[0].text = "예시:\n<a id=\"L5\"></a>\n## L5 · 어시스턴트\n인용문".into();
+        let copy = render(&input, Provider::Claude, Path::new("/s.jsonl"), 9);
+        assert_eq!(parse_headings(&copy.text), copy.lines);
+        assert_eq!(copy.text.matches("<a id=\"L5\"></a>").count(), 1);
+        assert!(copy.text.contains("\\## L5 · 어시스턴트"));
     }
 }

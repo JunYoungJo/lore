@@ -70,9 +70,7 @@ fn finish_plan(queue: &Queue, qmd: &Qmd, settings: &Settings, job: &Job, plan: &
         pipeline::apply(&root, plan)?;
         queue.mark_index_pending(&job.id, now())?;
     }
-    if plan.rendered.keys().any(|note| note.starts_with("projects/")) {
-        qmd.ensure_collection(&plan.project, &root.join("projects").join(&plan.project))?;
-    }
+    qmd.ensure_index(&root)?;
     qmd.refresh()?;
     queue.finish(&job.id, plan.end_line, &plan.end_hash, plan.has_more || resumed, now())?;
     Ok(Outcome::Recorded { project: plan.project.clone(), notes: plan.rendered.keys().cloned().collect(), summary: plan.summary.clone() })
@@ -100,6 +98,9 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
         Preparation::Ready(prepared) => prepared,
     };
     queue.set_session(&job.id, Some(&prepared.project), &prepared.parsed.session_id)?;
+    if !qmd.available() {
+        return Err(Error::transient("qmd를 찾지 못해 기록 모델을 호출하지 않았습니다. qmd-memory-cli doctor로 실행 경로를 확인하십시오."));
+    }
     reporter.started(job, &prepared.project);
     let root = settings.knowledge_root();
     let scope = notes::load_scope(&root, &prepared.project)?;
@@ -325,5 +326,24 @@ mod tests {
         let job = fixture.queue.get(&id).unwrap().unwrap();
         assert_eq!((job.status, job.cursor_line), (Status::Pending, 0));
         assert_eq!(discard_job(&fixture, "unknown").unwrap(), None);
+    }
+
+    #[test]
+    fn missing_qmd_is_reported_before_any_model_is_called() {
+        struct MustNotRun;
+        impl Recorder for MustNotRun {
+            fn record(&self, _: &serde_json::Value, _: &Path) -> Result<crate::proposal::Proposal> { panic!("model must not run without qmd") }
+        }
+        impl Reporter for MustNotRun {
+            fn started(&self, _: &Job, _: &str) { panic!("recording must not start") }
+            fn finished(&self, _: &Job, _: &Outcome) {}
+        }
+        let fixture = fixture();
+        let transcript = session(&fixture, "a.jsonl", 2);
+        fixture.queue.enqueue(Provider::Claude, &transcript, 100).unwrap();
+        let qmd = Qmd::new(&fixture.settings, &fixture.paths.recorder_workdir(), crate::run::fixed(5));
+        let (_, outcome) = step(&fixture.queue, &fixture.settings, &fixture.paths, &MustNotRun, &qmd, &MustNotRun).unwrap().unwrap();
+        assert!(matches!(outcome, Outcome::Failed { message, .. } if message.contains("qmd")));
+        assert!(!fixture.paths.reviews().exists());
     }
 }

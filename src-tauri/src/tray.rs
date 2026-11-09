@@ -41,25 +41,25 @@ fn pick_monitor(window: &WebviewWindow, cursor: Option<PhysicalPosition<f64>>) -
         .or_else(|| window.primary_monitor().ok().flatten())
 }
 
-fn anchor_bottom_right(window: &WebviewWindow, monitor: &Monitor, width: i32, height: i32) {
+fn anchor_popover(window: &WebviewWindow, monitor: &Monitor, width: i32, height: i32) {
     let area = monitor.work_area();
     let right = area.position.x + area.size.width as i32;
     let bottom = area.position.y + area.size.height as i32;
     let x = (right - width - 2).max(area.position.x);
-    let y = (bottom - height - 2).max(area.position.y);
+    let y = if cfg!(target_os = "macos") { area.position.y + 2 } else { (bottom - height - 2).max(area.position.y) };
     let _ = window.set_position(PhysicalPosition::new(x, y));
 }
 
 fn show_popover(window: &WebviewWindow, cursor: Option<PhysicalPosition<f64>>) {
     if let Some(monitor) = pick_monitor(window, cursor) {
         let scale = monitor.scale_factor();
-        anchor_bottom_right(window, &monitor, (POPOVER_W * scale).round() as i32, (POPOVER_H * scale).round() as i32);
+        anchor_popover(window, &monitor, (POPOVER_W * scale).round() as i32, (POPOVER_H * scale).round() as i32);
     }
     LAST_SHOWN_MS.store(now_ms(), Ordering::Relaxed);
     let _ = window.show();
     // outer_size() only reflects the monitor's DPI after the first show, so anchor again.
     if let (Some(monitor), Ok(size)) = (pick_monitor(window, cursor), window.outer_size()) {
-        anchor_bottom_right(window, &monitor, size.width as i32, size.height as i32);
+        anchor_popover(window, &monitor, size.width as i32, size.height as i32);
     }
     let _ = window.set_focus();
     let _ = window.emit("popover-shown", ());
@@ -171,7 +171,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     }
     builder
         .menu(&menu)
-        .show_menu_on_left_click(false)
+        .show_menu_on_left_click(cfg!(target_os = "linux"))
         .on_menu_event(move |app, event| match event.id().as_ref() {
             "open" => open_popover(app),
             PAUSE_ITEM => {

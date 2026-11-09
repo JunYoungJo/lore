@@ -37,7 +37,15 @@ fn error(value: impl std::fmt::Display) -> String {
 }
 
 fn cli_path() -> PathBuf {
-    std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join("qmd-memory-cli.exe"))).unwrap_or_else(|| PathBuf::from("qmd-memory-cli.exe"))
+    let name = qmd_memory_core::platform::CLI_FILENAME;
+    let sibling = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(name))).unwrap_or_else(|| PathBuf::from(name));
+    #[cfg(debug_assertions)]
+    if !sibling.is_file() {
+        let extension = if cfg!(windows) { ".exe" } else { "" };
+        let built = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("qmd-memory-cli-{}{extension}", env!("TAURI_ENV_TARGET_TRIPLE")));
+        if built.is_file() { return built; }
+    }
+    sibling
 }
 
 fn hook_statuses() -> Vec<HookStatus> {
@@ -49,7 +57,7 @@ fn hook_statuses() -> Vec<HookStatus> {
 pub fn connect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
     let provider = Provider::parse(&provider).ok_or("알 수 없는 도구입니다.")?;
     let cli = cli_path();
-    if !cli.is_file() {
+    if !qmd_memory_core::platform::is_executable(&cli) {
         return Err(format!("훅이 실행할 CLI를 찾지 못했습니다: {}", cli.display()));
     }
     let config = hooks::config_path(provider);

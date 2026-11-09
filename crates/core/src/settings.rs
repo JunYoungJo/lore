@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
+pub use crate::platform::{home, which};
 
 pub const APP_IDENTIFIER: &str = "dev.jyjo.qmd-memory";
 
@@ -13,8 +14,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn standard() -> Self {
-        let base = std::env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(|| home().join("AppData").join("Local"));
-        Self { root: base.join(APP_IDENTIFIER) }
+        Self { root: crate::platform::data_root() }
     }
 
     pub fn database(&self) -> PathBuf {
@@ -40,10 +40,6 @@ impl Paths {
     pub fn log(&self) -> PathBuf {
         self.root.join("qmd-memory.log")
     }
-}
-
-pub fn home() -> PathBuf {
-    std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")).map(PathBuf::from).unwrap_or_default()
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -109,7 +105,7 @@ impl Default for Settings {
     fn default() -> Self {
         let home = home();
         Self {
-            knowledge_root: "D:/doc/knowledge".into(),
+            knowledge_root: slash(home.join("Documents").join("knowledge")),
             backend: "codex".into(),
             models: Models::default(),
             single_model: None,
@@ -134,11 +130,17 @@ impl Settings {
     }
 
     pub fn qmd_config_dir(&self) -> PathBuf {
-        self.knowledge_root().join(".qmd").join("config")
+        self.qmd_local_dir().join("config")
     }
 
     pub fn qmd_cache_dir(&self) -> PathBuf {
-        self.knowledge_root().join(".qmd").join("cache")
+        self.qmd_local_dir().join("cache")
+    }
+
+    fn qmd_local_dir(&self) -> PathBuf {
+        let mut key = slash(self.knowledge_root()).trim_end_matches('/').to_string();
+        if cfg!(windows) { key = key.to_lowercase(); }
+        Paths::standard().root.join("qmd").join(&crate::transcript::digest(key.as_bytes())[..16])
     }
 
     pub fn validate(&self) -> Result<()> {
@@ -147,6 +149,9 @@ impl Settings {
         }
         if self.knowledge_root.trim().is_empty() {
             return Err(Error::permanent("기억 저장소 위치가 비어 있습니다."));
+        }
+        if !self.knowledge_root().is_absolute() {
+            return Err(Error::permanent("기억 저장소 위치는 이 PC의 절대 경로여야 합니다."));
         }
         if self.max_chars < 1_000 || self.notes_budget < 1_000 {
             return Err(Error::permanent("입력 한도가 너무 작습니다."));
@@ -197,23 +202,10 @@ impl Settings {
     }
 }
 
-pub fn which(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    for folder in std::env::split_paths(&path) {
-        for extension in [".exe", ".cmd", ".ps1", ".bat"] {
-            let candidate = folder.join(format!("{name}{extension}"));
-            if candidate.is_file() {
-                return Some(candidate);
-            }
-        }
-    }
-    None
-}
-
 fn detect_command(name: &str, package_script: &str) -> Vec<String> {
     let Some(found) = which(name) else { return Vec::new() };
     let is_exe = found.extension().map(|ext| ext.eq_ignore_ascii_case("exe")).unwrap_or(false);
-    if is_exe {
+    if !cfg!(windows) || is_exe {
         return vec![found.to_string_lossy().to_string()];
     }
     let Some(node) = which("node") else { return Vec::new() };
@@ -299,7 +291,7 @@ mod tests {
         let parsed: Settings = serde_json::from_str(r#"{"knowledgeRoot": "E:/notes", "backend": "claude"}"#).unwrap();
         assert_eq!(parsed.knowledge_root, "E:/notes");
         assert_eq!(parsed.max_chars, 30_000);
-        parsed.validate().unwrap();
+        Settings { knowledge_root: home().join("notes").to_string_lossy().to_string(), ..parsed }.validate().unwrap();
         let wrong = Settings { backend: "gpt".into(), ..Settings::default() };
         assert!(wrong.validate().is_err());
     }
@@ -381,6 +373,19 @@ mod tests {
             assert!(settings.validate().is_err());
         }
         Settings { model_timeout_secs: 1, qmd_timeout_secs: 1, ..Settings::default() }.validate().unwrap();
+    }
+
+    #[test]
+    fn new_defaults_are_native_and_existing_locations_remain_explicit() {
+        let defaults = Settings::default();
+        assert!(defaults.knowledge_root().is_absolute());
+        assert!(!defaults.qmd_config_dir().starts_with(defaults.knowledge_root()));
+        let relative = Settings { knowledge_root: "relative/notes".into(), ..defaults.clone() };
+        assert!(relative.validate().is_err());
+        let kept: Settings = serde_json::from_str(r#"{"knowledgeRoot":"D:/doc/knowledge"}"#).unwrap();
+        assert_eq!(kept.knowledge_root, "D:/doc/knowledge");
+        let other = Settings { knowledge_root: home().join("other-knowledge").to_string_lossy().to_string(), ..defaults.clone() };
+        assert_ne!(defaults.qmd_config_dir(), other.qmd_config_dir());
     }
 
     #[test]

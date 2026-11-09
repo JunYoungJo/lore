@@ -26,6 +26,8 @@ pub fn run() {
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .manage(app_state)
         .setup(|app| {
+            #[cfg(target_os = "macos")]
+            app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle().clone();
             tray::setup_tray(&handle)?;
             tray::create_popover(&handle);

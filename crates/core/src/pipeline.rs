@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use chrono::{DateTime, Local, TimeZone};
@@ -55,7 +55,7 @@ pub fn prepare(job: &Job, max_chars: usize, recorder_workdir: &Path) -> Result<P
     if !parsed.cwd.is_empty() && cwd.starts_with(recorder_workdir) {
         return Ok(Preparation::Skip("기록 모델이 실행한 세션입니다.".into()));
     }
-    let Some(repository) = project::resolve(&cwd) else {
+    let Some(repository) = project::resolve_checked(&cwd)? else {
         return Ok(Preparation::Skip(format!("git 저장소 밖에서 진행한 세션입니다: {}", parsed.cwd)));
     };
     let batch = make_batch(&parsed, job.cursor_line, max_chars);
@@ -192,11 +192,10 @@ pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowled
             }
         }
     }
-    let lines_by_ref: HashMap<&str, usize> = turns.iter().filter_map(|turn| dialogue.lines.get(&turn.line).map(|line| (turn.reference.as_str(), *line))).collect();
-    let link = |evidence: &crate::proposal::Evidence| copy::link_target(&copy_file, lines_by_ref.get(evidence.reference.as_str()).copied().unwrap_or(1));
     for change in &proposal.changes {
         let change = relinked_change(change, &copy_file, &moves);
         let old = relinked.get(&change.path).or_else(|| request.base.get(&change.path)).map(String::as_str);
+        let link = |evidence: &crate::proposal::Evidence| copy::portable_link(&change.path, prepared.provider, &prepared.parsed.session_id, fallback_name, &evidence.reference);
         result.rendered.insert(change.path.clone(), render_note(&change, &prepared.project, &link, old)?);
     }
     for (note, text) in relinked {
@@ -429,9 +428,9 @@ mod tests {
         let copy_file = PathBuf::from(plan.copy_file.as_ref().unwrap());
         assert_eq!(copy_file, fixture.knowledge.join("sources").join("claude").join("sess-1.md"));
         let copy_text = plan.copy_text.as_ref().unwrap();
-        let heading_line = copy_text.lines().position(|line| line.starts_with("## L1 · 사용자")).unwrap() + 1;
+        assert!(copy_text.contains("<a id=\"L1\"></a>\n## L1 · 사용자"));
         let note = &plan.rendered["projects/demo/bg.md"];
-        let expected = format!("- [L1]({}) — 로그만 남기십시오", copy::link_target(&copy_file, heading_line));
+        let expected = "- [L1](<../../sources/claude/sess-1.md#L1>) — 로그만 남기십시오";
         assert!(note.contains(&expected), "{note}");
         assert!(!plan.has_more);
 
@@ -499,7 +498,7 @@ mod tests {
         let lines = copy::parse_headings(new_copy);
         assert!(lines[&3] > old_copy.lines[&3]);
         let moved = copy::link_target(&copy_file, lines[&3]);
-        let added = copy::link_target(&copy_file, lines[&2]);
+        let added = copy::portable_link("projects/demo/bg.md", Provider::Claude, "sess-1", "job", "L2");
         let edited = &planned.rendered["projects/demo/bg.md"];
         assert!(edited.contains(&format!("경고 없이 로그만 남깁니다. ([근거]({moved}))\n\n보관 기간도 정합니다.")), "{edited}");
         assert!(edited.contains(&format!("- [L3]({moved}) — 그렇게 하겠습니다.\n- [L2]({added}) — 보관 기간도 정하십시오.")), "{edited}");
