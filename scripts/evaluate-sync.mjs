@@ -12,7 +12,7 @@ const backend = option("--backend", "codex");
 if (!["codex", "claude"].includes(backend)) throw new Error("backend는 codex 또는 claude여야 합니다.");
 if (existsSync(output)) throw new Error(`기존 평가 폴더를 덮어쓰지 않습니다: ${output}`);
 mkdirSync(output, { recursive: true });
-const cli = join(root, "target/release", `qmd-memory-cli${process.platform === "win32" ? ".exe" : ""}`);
+const cli = join(root, "target/release", `lore-cli${process.platform === "win32" ? ".exe" : ""}`);
 function run(program, argv, cwd, env) {
   const result = spawnSync(program, argv, { cwd, env, encoding: "utf8", timeout: 360000, maxBuffer: 16 * 1024 * 1024 });
   if (result.error || result.status !== 0) throw new Error(result.error?.message || result.stderr || result.stdout);
@@ -41,7 +41,7 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   write(other, note, remoteText); commit(other); git(other, "push");
   const data = join(folder, "app"); mkdirSync(data);
   writeFileSync(join(data, "settings.json"), JSON.stringify({ knowledgeRoot: local, backend, modelTimeoutSecs: 240, commands: { qmd: [process.execPath, join(root, "scripts/evaluation-index-fixture.mjs")] } }, null, 2));
-  const env = { ...process.env, QMD_MEMORY_HOME: data };
+  const env = { ...process.env, LORE_HOME: data };
   const command = (...argv) => JSON.parse(run(cli, ["sync", ...argv], local, env));
   const before = git(local, "rev-parse", "HEAD"); const beforeText = readFileSync(join(local, note), "utf8");
   const prepared = command("check");

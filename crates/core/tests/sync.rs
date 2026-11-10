@@ -1,4 +1,4 @@
-use qmd_memory_core::sync::{self, Analysis, Choice, Edit, Evidence, Issue, OptionPlan};
+use lore_core::sync::{self, Analysis, Choice, Edit, Evidence, Issue, OptionPlan};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -239,7 +239,7 @@ fn fast_forward_reindexes_and_resumes_index_failure_without_reapplying() {
     let plan = sync::prepare(&f.local, &f.journal).unwrap();
     assert_eq!(plan.phase, "applying");
     let pending = sync::finish(&f.local, &f.journal, || {
-        Err(qmd_memory_core::error::Error::transient(
+        Err(lore_core::error::Error::transient(
             "index fixture failed",
         ))
     })

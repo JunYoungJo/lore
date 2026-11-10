@@ -1,5 +1,5 @@
-use qmd_memory_core::settings::{self, Paths};
-use qmd_memory_core::worker;
+use lore_core::settings::{self, Paths};
+use lore_core::worker;
 use tauri_plugin_notification::NotificationExt;
 
 mod background;

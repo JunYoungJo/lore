@@ -111,7 +111,7 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
           <HookRow key={hook.provider} hook={hook} />
         ))}
         <div className="help">
-          Connecting adds qmd-memory-cli to session-end and pre-compaction hooks. Disconnecting removes only Lore’s hooks. Existing hooks are kept, and the settings file is backed up before changes.
+          Connecting adds lore-cli to session-end and pre-compaction hooks. Disconnecting removes only Lore’s hooks. Existing hooks are kept, and the settings file is backed up before changes.
           <br />
           In Codex, trust the new hooks in /hooks after connecting.
         </div>

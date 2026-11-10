@@ -244,7 +244,7 @@ pub fn commit_notes(root: &Path, notes: &[String], message: &str) -> Result<Stri
     let paths = commit_paths(&changes, notes)?;
     // The message already uses stdin, and a long path list can pass the Windows command-line limit,
     // so the paths go through a file. `commit` with paths leaves anything else staged out of the commit.
-    let list = std::env::temp_dir().join(format!("qmd-memory-commit-{}-{}.txt", std::process::id(), chrono::Utc::now().timestamp_micros()));
+    let list = std::env::temp_dir().join(format!("lore-commit-{}-{}.txt", std::process::id(), chrono::Utc::now().timestamp_micros()));
     std::fs::write(&list, paths.join("\0"))?;
     let from = format!("--pathspec-from-file={}", list.display());
     let result = git(root, &["--literal-pathspecs", "add", &from, "--pathspec-file-nul"], None).and_then(|_| git(root, &["--literal-pathspecs", "commit", "-q", "-F", "-", &from, "--pathspec-file-nul"], Some(message)));

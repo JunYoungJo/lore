@@ -1,11 +1,11 @@
 use crate::state::AppState;
-use qmd_memory_core::error::{Error, Result};
-use qmd_memory_core::qmd::Qmd;
-use qmd_memory_core::queue::{Queue, Status};
-use qmd_memory_core::recorder::CliRecorder;
-use qmd_memory_core::run;
-use qmd_memory_core::settings::{self, Paths, Settings};
-use qmd_memory_core::sync::{self, Choice, Plan, Summary};
+use lore_core::error::{Error, Result};
+use lore_core::qmd::Qmd;
+use lore_core::queue::{Queue, Status};
+use lore_core::recorder::CliRecorder;
+use lore_core::run;
+use lore_core::settings::{self, Paths, Settings};
+use lore_core::sync::{self, Choice, Plan, Summary};
 use serde::Serialize;
 use std::collections::BTreeMap;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -184,7 +184,7 @@ pub struct Preview {
     token: String,
 }
 fn preview_token(id: &str, files: &BTreeMap<String, String>) -> Result<String> {
-    Ok(qmd_memory_core::transcript::digest(
+    Ok(lore_core::transcript::digest(
         format!("{id}:{}", serde_json::to_string(files)?).as_bytes(),
     ))
 }

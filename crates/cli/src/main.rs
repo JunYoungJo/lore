@@ -2,48 +2,49 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use qmd_memory_core::error::{Error, Result};
-use qmd_memory_core::hook;
-use qmd_memory_core::hooks;
-use qmd_memory_core::migrate;
-use qmd_memory_core::qmd::Qmd;
-use qmd_memory_core::queue::{Job, Queue, Status};
-use qmd_memory_core::recorder::CliRecorder;
-use qmd_memory_core::run::{fixed, RECORDER_MARK};
-use qmd_memory_core::scan;
-use qmd_memory_core::settings::{self, Paths};
-use qmd_memory_core::transcript::Provider;
-use qmd_memory_core::worker::{self, Discarded, Outcome, Reporter, WorkerLock};
+use lore_core::error::{Error, Result};
+use lore_core::hook;
+use lore_core::hooks;
+use lore_core::migrate;
+use lore_core::qmd::Qmd;
+use lore_core::queue::{Job, Queue, Status};
+use lore_core::recorder::CliRecorder;
+use lore_core::run::{fixed, RECORDER_MARK};
+use lore_core::scan;
+use lore_core::settings::{self, Paths};
+use lore_core::transcript::Provider;
+use lore_core::worker::{self, Discarded, Outcome, Reporter, WorkerLock};
 
-const USAGE: &str = "사용법: qmd-memory-cli <명령>
-  hook <claude|codex>              세션 종료·압축 직전 훅 입력(표준입력 JSON)을 큐에 등록
-  enqueue <claude|codex> <원문>     원문 파일을 큐에 등록
-  scan                             훅이 놓친 세션을 찾아 큐에 등록
-  work [--once]                    큐의 작업을 처리 (트레이 앱이 실행 중이면 거부)
-  status                           큐 상태와 실패한 작업 출력
+const USAGE: &str = "Usage: lore-cli <command>
+  hook <claude|codex>              Queue session-end / pre-compaction hook input (JSON on stdin)
+  enqueue <claude|codex> <file>     Queue a transcript file
+  scan                            Find sessions missed by hooks and queue them
+  work [--once]                   Process queued jobs (tray app must be closed)
+  status                          Show queue counts and failed jobs
   sync <check|status|analyze|preview|apply|resume>
-                                   공유 저장소 확인·모델 비교·최종 문구 반영
-  doctor                           이 PC의 경로·CLI·qmd 설정 진단 (읽기 전용)
-  index                            기억 문서의 컬렉션 등록과 이 PC의 qmd 색인 갱신
-  project                          현재 git 저장소의 기억 프로젝트 ID 확인
-  portable-links [--apply]         옛 절대 경로 근거를 상대 경로·발언 앵커로 이전
-                                   (기본은 미리보기, 적용 전 사본과 문서 백업)
-  retry <작업 ID>                   실패하거나 건너뛴 작업을 다시 대기열에 넣음
-  discard <작업 ID>                 실패한 작업의 실패한 구간을 기록하지 않고 넘어감
-                                   (원문을 읽을 수 없으면 그 세션을 더 기록하지 않음)
-  hooks                            Claude·Codex 훅 연결 상태 출력
-  connect <claude|codex>           전역 훅 설정에 이 CLI를 추가 (이전 설정은 백업)
-  disconnect <claude|codex>        전역 훅 설정에서 qmd-memory 훅을 제거 (이전 설정은 백업)
-  migrate-links [--apply] [--backup <폴더>]
-                                   기억 문서의 원본 세션 링크를 대화 사본으로 옮김 (기본은 미리보기)
-  refresh-copies [--apply]         큐에 있는 세션의 대화 사본을 지금의 읽기 방식으로 다시 만들고
-                                   기억 문서의 사본 링크를 옮김 (기본은 미리보기, 트레이 앱이 실행 중이면 거부)";
+                                  Check upstream, compare, preview, and apply memory changes
+  doctor                          Diagnose this PC's paths, CLIs, and qmd setup (read-only)
+  index                           Register memory collections and refresh this PC's qmd index
+  project                         Show the current Git repository's memory project ID
+  portable-links [--apply]         Convert old absolute source links to relative links and anchors
+                                  Defaults to preview; apply preserves backups and recovery state
+  retry <job-id>                  Requeue a failed or skipped job
+  discard <job-id>                Skip a failed segment, or stop an unreadable session
+  hooks                           Show Claude / Codex hook connection status
+  connect <claude|codex>          Add this CLI to hook settings (backs up the previous file)
+  disconnect <claude|codex>       Remove only Lore hooks (backs up the previous file)
+  migrate-links [--apply] [--backup <folder>]
+                                  Move original-session links to conversation copies (preview by default)
+  refresh-copies [--apply]        Rebuild queued conversation copies and update note links
+                                  Defaults to preview; tray app must be closed
+  --help, -h                     Show this help
+  --version, -V                  Show the CLI version";
 
 struct PrintReporter;
 
 impl Reporter for PrintReporter {
     fn started(&self, job: &Job, project: &str) {
-        println!("기록 시작: {project} ({})", job.id);
+        println!("Recording started: {project} ({})", job.id);
     }
 
     fn finished(&self, job: &Job, outcome: &Outcome) {
@@ -52,7 +53,7 @@ impl Reporter for PrintReporter {
 }
 
 fn provider(value: Option<&String>) -> Result<Provider> {
-    value.and_then(|value| Provider::parse(value)).ok_or_else(|| Error::permanent("원문 종류는 claude 또는 codex여야 합니다."))
+    value.and_then(|value| Provider::parse(value)).ok_or_else(|| Error::permanent("The transcript provider must be claude or codex."))
 }
 
 fn open(paths: &Paths) -> Result<(settings::Settings, Queue)> {
@@ -64,79 +65,87 @@ fn open(paths: &Paths) -> Result<(settings::Settings, Queue)> {
 fn run(args: &[String]) -> Result<()> {
     let paths = Paths::standard();
     let command = args.first().map(String::as_str).unwrap_or("");
+    if matches!(command, "--help" | "-h" | "help") {
+        println!("{USAGE}");
+        return Ok(());
+    }
+    if matches!(command, "--version" | "-V") {
+        println!("lore-cli {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
     match command {
         "sync" => {
             let mode = args.get(1).map(String::as_str).unwrap_or("status");
-            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else { return Err(Error::transient("트레이 앱을 종료한 뒤 CLI 동기화를 실행하십시오.")); };
+            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else { return Err(Error::transient("Close the tray app before using CLI sync.")); };
             let settings = settings::load_or_init(&paths.settings(), worker::now())?;
             settings.validate()?;
             if !matches!(mode, "status" | "preview") {
                 let queue = Queue::open(&paths.database())?;
                 if !queue.jobs_with_status(&[Status::Applying, Status::IndexPending], 1)?.is_empty() {
-                    return Err(Error::permanent("중단된 기록 반영·검색 갱신을 먼저 work 명령으로 완료하십시오."));
+                    return Err(Error::permanent("Finish the interrupted recording or index update with work first."));
                 }
             }
             let root = settings.knowledge_root();
-            let path = qmd_memory_core::sync::journal(&paths, &root);
-            let finish = || qmd_memory_core::sync::finish(&root, &path, || {
+            let path = lore_core::sync::journal(&paths, &root);
+            let finish = || lore_core::sync::finish(&root, &path, || {
                 let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
-                if !qmd.available() { return Err(Error::transient("qmd를 찾지 못했습니다.")); }
+                if !qmd.available() { return Err(Error::transient("qmd was not found.")); }
                 qmd.ensure_index(&root)?; qmd.refresh()
             });
-            let read_choices = |index: usize| -> Result<Vec<qmd_memory_core::sync::Choice>> {
-                let file = args.get(index).ok_or_else(|| Error::permanent("선택 내용을 담은 JSON 파일 경로가 필요합니다."))?;
+            let read_choices = |index: usize| -> Result<Vec<lore_core::sync::Choice>> {
+                let file = args.get(index).ok_or_else(|| Error::permanent("A JSON choices file is required."))?;
                 Ok(serde_json::from_slice(&std::fs::read(file)?)?)
             };
             match mode {
                 "status" => {},
                 "check" => {
-                    let plan = qmd_memory_core::sync::prepare(&root, &path)?;
+                    let plan = lore_core::sync::prepare(&root, &path)?;
                     if plan.phase != "review" { finish()?; }
                 }
                 "analyze" => {
                     let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
-                    qmd_memory_core::sync::analyze(&root, &path, &recorder, &path.parent().unwrap().join("model-review"))?;
+                    lore_core::sync::analyze(&root, &path, &recorder, &path.parent().unwrap().join("model-review"))?;
                 }
                 "preview" => {
-                    let plan = qmd_memory_core::sync::load(&path)?.ok_or_else(|| Error::permanent("검토 계획이 없습니다."))?;
-                    println!("{}", serde_json::to_string_pretty(&qmd_memory_core::sync::preview(&plan, &read_choices(2)?)?)?);
+                    let plan = lore_core::sync::load(&path)?.ok_or_else(|| Error::permanent("No review plan is available."))?;
+                    println!("{}", serde_json::to_string_pretty(&lore_core::sync::preview(&plan, &read_choices(2)?)?)?);
                     return Ok(());
                 }
                 "apply" => {
-                    let id = args.get(2).ok_or_else(|| Error::permanent("확인한 검토 계획 ID가 필요합니다."))?;
-                    qmd_memory_core::sync::approve(&root, &path, id, &read_choices(3)?)?;
+                    let id = args.get(2).ok_or_else(|| Error::permanent("The reviewed plan ID is required."))?;
+                    lore_core::sync::approve(&root, &path, id, &read_choices(3)?)?;
                     finish()?;
                 }
                 "resume" => { finish()?; }
-                _ => return Err(Error::permanent("sync 명령은 check, status, analyze, preview <선택.json>, apply <계획 ID> <선택.json>, resume 중 하나입니다.")),
+                _ => return Err(Error::permanent("Use sync check, status, analyze, preview <choices.json>, apply <plan-id> <choices.json>, or resume.")),
             }
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"summary": qmd_memory_core::sync::summary(&path), "plan": qmd_memory_core::sync::load(&path)?}))?);
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"summary": lore_core::sync::summary(&path), "plan": lore_core::sync::load(&path)?}))?);
         }
         "doctor" => {
-            let report = qmd_memory_core::diagnostics::inspect(&paths, &std::env::current_exe()?);
+            let report = lore_core::diagnostics::inspect(&paths, &std::env::current_exe()?);
             println!("{}", serde_json::to_string_pretty(&report)?);
         }
         "project" => {
-            let repository = qmd_memory_core::project::resolve_checked(&std::env::current_dir()?)?.ok_or_else(|| Error::permanent("현재 폴더의 git 저장소 또는 프로젝트 ID를 찾지 못했습니다."))?;
+            let repository = lore_core::project::resolve_checked(&std::env::current_dir()?)?.ok_or_else(|| Error::permanent("No Git repository or valid project ID was found in the current folder."))?;
             println!("{}", serde_json::json!({"project": repository.name, "repository": repository.root}));
         }
         "index" | "portable-links" => {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
-                return Err(Error::transient("트레이 앱 또는 다른 처리 작업이 실행 중입니다."));
+                return Err(Error::transient("The tray app or another worker is running."));
             };
             let settings = settings::load_or_init(&paths.settings(), worker::now())?;
             settings.validate()?;
             if command == "index" {
                 let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
-                if !qmd.available() { return Err(Error::permanent("qmd 실행 경로를 찾지 못했습니다. doctor로 확인하십시오.")); }
+                if !qmd.available() { return Err(Error::permanent("qmd was not found. Run doctor to check the executable path.")); }
                 qmd.ensure_index(&settings.knowledge_root())?;
                 qmd.refresh()?;
-                println!("이 PC의 qmd 색인을 갱신했습니다.");
+                println!("This PC’s qmd index was refreshed.");
             } else {
                 let apply = args.iter().any(|arg| arg == "--apply");
-                let report = qmd_memory_core::portable::migrate(&settings.knowledge_root(), &paths.root.join("migration/portable-links.pending.json"), apply)?;
+                let report = lore_core::portable::migrate(&settings.knowledge_root(), &paths.root.join("migration/portable-links.pending.json"), apply)?;
                 println!("{}", serde_json::to_string_pretty(&report)?);
-                if !apply { println!("미리보기입니다. 반영하려면 --apply를 붙이십시오."); }
+                if !apply { println!("Preview only. Add --apply to write the changes."); }
             }
         }
         "hook" => {
@@ -153,17 +162,17 @@ fn run(args: &[String]) -> Result<()> {
         }
         "enqueue" => {
             let provider = provider(args.get(1))?;
-            let transcript = args.get(2).ok_or_else(|| Error::permanent("원문 경로가 필요합니다."))?;
+            let transcript = args.get(2).ok_or_else(|| Error::permanent("A transcript path is required."))?;
             let (_, queue) = open(&paths)?;
             println!("{}", queue.enqueue(provider, Path::new(transcript), worker::now())?);
         }
         "scan" => {
             let (settings, queue) = open(&paths)?;
-            println!("등록한 세션: {}", scan::scan(&queue, &settings, worker::now())?);
+            println!("Sessions queued: {}", scan::scan(&queue, &settings, worker::now())?);
         }
         "work" => {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
-                return Err(Error::transient("트레이 앱 또는 다른 처리 작업이 실행 중입니다."));
+                return Err(Error::transient("The tray app or another worker is running."));
             };
             let (settings, queue) = open(&paths)?;
             settings.validate()?;
@@ -173,7 +182,7 @@ fn run(args: &[String]) -> Result<()> {
             loop {
                 match worker::step(&queue, &settings, &paths, &recorder, &qmd, &PrintReporter)? {
                     None => {
-                        println!("처리할 작업이 없습니다.");
+                        println!("No jobs to process.");
                         break;
                     }
                     Some(_) if once => break,
@@ -190,20 +199,20 @@ fn run(args: &[String]) -> Result<()> {
             }
         }
         "retry" => {
-            let id = args.get(1).ok_or_else(|| Error::permanent("작업 ID가 필요합니다."))?;
+            let id = args.get(1).ok_or_else(|| Error::permanent("A job ID is required."))?;
             let (_, queue) = open(&paths)?;
             if !queue.retry(id, worker::now())? {
-                return Err(Error::permanent("실패했거나 건너뛴 작업만 다시 넣을 수 있습니다."));
+                return Err(Error::permanent("Only failed or skipped jobs can be requeued."));
             }
-            println!("다시 대기열에 넣었습니다: {id}");
+            println!("Requeued: {id}");
         }
         "discard" => {
-            let id = args.get(1).ok_or_else(|| Error::permanent("작업 ID가 필요합니다."))?;
+            let id = args.get(1).ok_or_else(|| Error::permanent("A job ID is required."))?;
             let (settings, queue) = open(&paths)?;
             match worker::discard(&queue, &settings, &paths, id, worker::now())? {
-                None => return Err(Error::permanent("실패한 작업만 버릴 수 있습니다.")),
-                Some(Discarded::Batch { after_line, end_line }) => println!("원문 {}~{end_line}번째 줄을 기록하지 않고 넘어갑니다: {id}", after_line + 1),
-                Some(Discarded::Session { reason }) => println!("원문을 읽을 수 없어 이 세션을 더 기록하지 않습니다: {id} ({reason})"),
+                None => return Err(Error::permanent("Only failed jobs can be skipped.")),
+                Some(Discarded::Batch { after_line, end_line }) => println!("Skipping transcript lines {}–{end_line}: {id}", after_line + 1),
+                Some(Discarded::Session { reason }) => println!("Recording stopped for unreadable session: {id} ({reason})"),
             }
         }
         "hooks" => {
@@ -216,17 +225,17 @@ fn run(args: &[String]) -> Result<()> {
             let cli = std::env::current_exe()?;
             let config = hooks::config_path(provider);
             let backup = hooks::register_at(&config, provider, &cli, worker::now())?;
-            println!("{} 훅을 연결했습니다: {}", provider.as_str(), config.display());
+            println!("Connected {} hooks: {}", provider.as_str(), config.display());
             if let Some(backup) = backup {
-                println!("이전 설정 백업: {}", backup.display());
+                println!("Previous settings backup: {}", backup.display());
             }
         }
         "disconnect" => {
             let provider = provider(args.get(1))?;
             let config = hooks::config_path(provider);
             match hooks::unregister_at(&config, provider, worker::now())? {
-                0 => println!("{}에 연결된 qmd-memory 훅이 없습니다: {}", provider.as_str(), config.display()),
-                removed => println!("{} 훅 {removed}개를 해제했습니다: {} (이전 설정은 같은 폴더에 백업)", provider.as_str(), config.display()),
+                0 => println!("No Lore hooks connected for {}: {}", provider.as_str(), config.display()),
+                removed => println!("Disconnected {removed} {} hooks: {} (previous settings backed up in the same folder)", provider.as_str(), config.display()),
             }
         }
         "migrate-links" => {
@@ -236,12 +245,12 @@ fn run(args: &[String]) -> Result<()> {
             let report = migrate::migrate_links(&settings.knowledge_root(), backup.as_deref(), apply)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !apply {
-                println!("미리보기입니다. 반영하려면 --apply를 붙이십시오.");
+                println!("Preview only. Add --apply to write the changes.");
             }
         }
         "refresh-copies" => {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
-                return Err(Error::transient("트레이 앱 또는 다른 처리 작업이 실행 중입니다."));
+                return Err(Error::transient("The tray app or another worker is running."));
             };
             let (settings, queue) = open(&paths)?;
             let apply = args.iter().any(|arg| arg == "--apply");
@@ -250,13 +259,13 @@ fn run(args: &[String]) -> Result<()> {
             let report = migrate::refresh_copies(&settings.knowledge_root(), &jobs, apply)?;
             println!("{}", serde_json::to_string_pretty(&report)?);
             if !apply {
-                println!("미리보기입니다. 반영하려면 --apply를 붙이십시오.");
+                println!("Preview only. Add --apply to write the changes.");
             }
         }
         _ => {
             println!("{USAGE}");
             if !command.is_empty() {
-                return Err(Error::permanent(format!("알 수 없는 명령입니다: {command}")));
+                return Err(Error::permanent(format!("Unknown command: {command}")));
             }
         }
     }
@@ -268,7 +277,7 @@ fn main() -> ExitCode {
     match run(&args) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            eprintln!("오류: {error}");
+            eprintln!("Error: {error}");
             ExitCode::FAILURE
         }
     }

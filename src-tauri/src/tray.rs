@@ -7,7 +7,7 @@ use tauri::{AppHandle, Emitter, Manager, Monitor, PhysicalPosition, WebviewUrl, 
 
 use crate::state::AppState;
 
-pub const TRAY_ID: &str = "qmd-memory";
+pub const TRAY_ID: &str = "lore";
 pub const POPOVER: &str = "tray";
 const PAUSE_ITEM: &str = "pause";
 const POPOVER_W: f64 = 400.0;
@@ -130,7 +130,7 @@ pub fn set_paused(app: &AppHandle, paused: bool) -> Result<(), String> {
     let state = app.state::<AppState>();
     let mut settings = state.settings();
     settings.paused = paused;
-    qmd_memory_core::settings::save(&state.paths.settings(), &settings).map_err(|error| error.to_string())?;
+    lore_core::settings::save(&state.paths.settings(), &settings).map_err(|error| error.to_string())?;
     state.replace_settings(settings);
     show_paused(app, paused);
     refresh_tooltip(app);
@@ -146,7 +146,7 @@ pub fn show_paused(app: &AppHandle, paused: bool) {
 
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &state.settings().knowledge_root()));
+    let pending = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &state.settings().knowledge_root()));
     let text = if state.syncing() { "Lore · Syncing".into() } else if pending.blocked { "Lore · Sync review needed · Recording on hold".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
         (Some(current), _, _) => format!("Lore · Recording: {}", current.project),
         (None, true, _) => "Lore · Recording paused for review".to_string(),

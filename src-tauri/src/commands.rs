@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
-use qmd_memory_core::hooks::{self, HookStatus};
-use qmd_memory_core::pipeline;
-use qmd_memory_core::queue::{Activity, Counts, Job, Queue, Status};
-use qmd_memory_core::review;
-use qmd_memory_core::settings::{self, EditableSettings, Settings};
-use qmd_memory_core::transcript::Provider;
-use qmd_memory_core::worker;
+use lore_core::hooks::{self, HookStatus};
+use lore_core::pipeline;
+use lore_core::queue::{Activity, Counts, Job, Queue, Status};
+use lore_core::review;
+use lore_core::settings::{self, EditableSettings, Settings};
+use lore_core::transcript::Provider;
+use lore_core::worker;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
@@ -30,7 +30,7 @@ pub struct Snapshot {
     pub review: Option<usize>,
     pub reviewing: bool,
     pub version: &'static str,
-    pub sync: qmd_memory_core::sync::Summary,
+    pub sync: lore_core::sync::Summary,
     pub syncing: bool,
 }
 
@@ -39,12 +39,12 @@ fn error(value: impl std::fmt::Display) -> String {
 }
 
 fn cli_path() -> PathBuf {
-    let name = qmd_memory_core::platform::CLI_FILENAME;
+    let name = lore_core::platform::CLI_FILENAME;
     let sibling = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(name))).unwrap_or_else(|| PathBuf::from(name));
     #[cfg(debug_assertions)]
     if !sibling.is_file() {
         let extension = if cfg!(windows) { ".exe" } else { "" };
-        let built = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("qmd-memory-cli-{}{extension}", env!("TAURI_ENV_TARGET_TRIPLE")));
+        let built = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("binaries").join(format!("lore-cli-{}{extension}", env!("TAURI_ENV_TARGET_TRIPLE")));
         if built.is_file() { return built; }
     }
     sibling
@@ -59,7 +59,7 @@ fn hook_statuses() -> Vec<HookStatus> {
 pub fn connect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
     let provider = Provider::parse(&provider).ok_or("Unknown provider.")?;
     let cli = cli_path();
-    if !qmd_memory_core::platform::is_executable(&cli) {
+    if !lore_core::platform::is_executable(&cli) {
         return Err(format!("Hook CLI not found: {}", cli.display()));
     }
     let config = hooks::config_path(provider);
@@ -84,7 +84,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let settings = state.settings();
     let current = state.current();
     let reviewing = state.reviewing();
-    let sync = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &settings.knowledge_root()));
+    let sync = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &settings.knowledge_root()));
     let syncing = state.syncing();
     let label = if current.is_some() {
         "working"

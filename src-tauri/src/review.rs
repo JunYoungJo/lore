@@ -1,6 +1,6 @@
-use qmd_memory_core::queue::Queue;
-use qmd_memory_core::review::{self, ChangeKind, DiffRow, FileChange};
-use qmd_memory_core::transcript::Provider;
+use lore_core::queue::Queue;
+use lore_core::review::{self, ChangeKind, DiffRow, FileChange};
+use lore_core::transcript::Provider;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
 
@@ -131,7 +131,7 @@ pub async fn commit_review(app: AppHandle, message: String, notes: Vec<String>) 
         let state = handle.state::<AppState>();
         let _operation = state.operation();
         let settings = state.settings();
-        let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &settings.knowledge_root()));
+        let pending = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &settings.knowledge_root()));
         if pending.blocked && pending.phase != "review" { return Err("Finish the interrupted sync apply or index update first.".to_string()); }
         review::commit_notes(&settings.knowledge_root(), &notes, &message).map_err(error)
     }).await.map_err(error)??;

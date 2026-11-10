@@ -99,7 +99,7 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
     };
     queue.set_session(&job.id, Some(&prepared.project), &prepared.parsed.session_id)?;
     if !qmd.available() {
-        return Err(Error::transient("qmd was not found, so the recording model was not called. Run qmd-memory-cli doctor to check the executable path."));
+        return Err(Error::transient("qmd was not found, so the recording model was not called. Run lore-cli doctor to check the executable path."));
     }
     reporter.started(job, &prepared.project);
     let root = settings.knowledge_root();

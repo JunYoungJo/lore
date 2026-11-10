@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use qmd_memory_core::settings;
+use lore_core::settings;
 use tauri::{AppHandle, Emitter, Manager};
 
 use crate::state::AppState;

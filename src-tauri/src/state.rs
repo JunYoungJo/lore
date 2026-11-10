@@ -2,8 +2,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
-use qmd_memory_core::settings::{Paths, Settings};
-use qmd_memory_core::transcript::Provider;
+use lore_core::settings::{Paths, Settings};
+use lore_core::transcript::Provider;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]

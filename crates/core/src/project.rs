@@ -1,7 +1,7 @@
 use std::path::{Component, Path, PathBuf};
 use crate::error::{Error, Result};
 
-pub const ID_FILE: &str = ".qmd-memory.json";
+pub const ID_FILE: &str = ".lore.json";
 
 #[derive(serde::Deserialize)]
 #[serde(deny_unknown_fields)]

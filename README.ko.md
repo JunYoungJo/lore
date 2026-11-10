@@ -85,25 +85,25 @@ pnpm tauri dev                  # 개발용 실행, 화면 변경 시 새로고�
 pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
 ```
 
-훅 CLI는 빌드·패키징에 함께 포함됩니다. 제품 이름은 **Lore**로 정했으며, 현재 실행 파일·CLI·데이터 식별자는 기존 **`qmd-memory`**를 사용합니다. 아래 명령도 현재 실행 파일 이름을 기준으로 합니다. CLI가 셸 PATH에 자동 등록되지는 않으므로 필요하면 전체 경로로 실행합니다. macOS 번들에서는 `Lore.app/Contents/MacOS/qmd-memory-cli`, Windows에서는 앱과 같은 폴더의 `qmd-memory-cli.exe`입니다.
+앱 실행 파일은 `lore`(Windows는 `lore.exe`), 훅 CLI는 `lore-cli`(Windows는 `lore-cli.exe`), 앱 식별자는 `io.github.junyoungjo.lore`입니다. CLI는 빌드·패키징에 함께 포함됩니다. 셸 PATH에 자동 등록되지는 않으므로 필요하면 전체 경로로 실행합니다. macOS 번들에서는 `Lore.app/Contents/MacOS/lore-cli`, Windows에서는 앱과 같은 폴더의 `lore-cli.exe`입니다.
 
 ### 기억 저장소 연결
 
-1. 앱 설정에서 기억 저장소와 기록 CLI·모델을 지정합니다. 새 기억 저장소 기본 위치는 `~/Documents/knowledge`입니다.
+1. 앱 설정에서 기억 저장소와 기록 CLI·모델을 지정합니다. 새 기억 저장소 기본 위치는 `~/Documents/lore-memory`입니다.
 2. 트레이 앱을 완전히 종료하고 포함된 CLI로 의존성과 색인을 확인합니다.
 
    ```sh
-   qmd-memory-cli doctor
-   qmd-memory-cli index
+   lore-cli doctor
+   lore-cli index
    ```
 
 3. 기억을 읽을 코딩 도구에 qmd MCP를 연결합니다. `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`, 색인 이름을 `doctor`가 보여 준 경로·값에 맞추고, 에이전트에게 필요할 때 프로젝트 기억을 검색하라는 지침을 줍니다.
 4. 앱을 다시 켜고 **Settings → Hook connections**에서 Claude Code 또는 Codex를 연결합니다. Codex에서는 필요한 경우 `/hooks`에서 새 훅을 신뢰로 표시합니다.
 5. Git 프로젝트에서 작업한 세션이 종료되거나 압축되면 트레이에서 기록 결과를 확인합니다.
 
-앱이 꺼져 있어도 훅은 큐에 등록하며, 앱을 다시 켜면 처리합니다. 훅이 실행되지 않은 세션은 자동으로 찾지 않습니다. 필요하면 `qmd-memory-cli scan`으로 직접 큐에 넣습니다.
+앱이 꺼져 있어도 훅은 큐에 등록하며, 앱을 다시 켜면 처리합니다. 훅이 실행되지 않은 세션은 자동으로 찾지 않습니다. 필요하면 `lore-cli scan`으로 직접 큐에 넣습니다.
 
-기존 Windows 설치나 절대 경로 근거 링크를 옮길 때는 먼저 [이전 안내](docs/multiplatform.md#기존-windows-기억-가져오기)를 따릅니다.
+다른 PC의 기존 기억 문서를 가져올 때는 먼저 [이전 안내](docs/multiplatform.md#기존-windows-기억-가져오기)를 따릅니다.
 
 ## 여러 PC에서 공유
 
@@ -131,7 +131,7 @@ pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
 ## 데이터와 공유 범위
 
 ```text
-knowledge/
+lore-memory/
 ├── common/                  # 공통 기억
 ├── projects/<project-id>/   # 프로젝트별 기억
 └── sources/<provider>/      # 근거 대화 사본

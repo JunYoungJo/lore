@@ -1,23 +1,23 @@
 [package]
-name = "qmd-memory-app"
+name = "lore-app"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "qmd-memory tray recorder"
+description = "lore tray recorder"
 
 [lib]
-name = "qmd_memory_app_lib"
+name = "lore_app_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [[bin]]
-name = "qmd-memory"
+name = "lore"
 path = "src/main.rs"
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-qmd-memory-core = { path = "../crates/core" }
+lore-core = { path = "../crates/core" }
 tauri = { version = "2", features = ["tray-icon", "image-png"] }
 tauri-plugin-single-instance = "2"
 tauri-plugin-notification = "2"

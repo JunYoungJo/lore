@@ -85,25 +85,25 @@ pnpm tauri dev                 # Development app with frontend hot reload
 pnpm tauri build               # Desktop bundle for the current platform
 ```
 
-The build includes the hook CLI as a sidecar. The product name is now **Lore**; the executable, CLI, and data identifiers still use **`qmd-memory`**. Commands below use those existing names. The CLI is not automatically added to your shell's PATH; use its full path when needed. In a macOS bundle it is `Lore.app/Contents/MacOS/qmd-memory-cli`; on Windows it is `qmd-memory-cli.exe` beside the app.
+The build includes `lore-cli` as a sidecar. The app executable is `lore` (`lore.exe` on Windows), and its application identifier is `io.github.junyoungjo.lore`. The CLI is not automatically added to your shell’s PATH; use its full path when needed. In a macOS bundle it is `Lore.app/Contents/MacOS/lore-cli`; on Windows it is `lore-cli.exe` beside the app.
 
 ### Set up your memory
 
-1. Open the app's settings. Choose a memory folder—the default is `~/Documents/knowledge`—and select the recording CLI and model.
+1. Open the app's settings. Choose a memory folder—the default is `~/Documents/lore-memory`—and select the recording CLI and model.
 2. Quit the tray app, then run the bundled CLI to check dependencies and initialize this PC's index:
 
    ```sh
-   qmd-memory-cli doctor
-   qmd-memory-cli index
+   lore-cli doctor
+   lore-cli index
    ```
 
 3. Configure qmd MCP in the coding tools that should read the memory. Match `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`, and the index name to the paths and values reported by `doctor`. Give those agents instructions to search the memory when relevant.
 4. Reopen the app and explicitly connect Claude Code and/or Codex in **Settings → Hook connections**. Trust the new hooks in Codex's `/hooks` interface when required.
 5. Work in a Git project. When a connected session ends or compacts, check the tray app for the recording result.
 
-Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `qmd-memory-cli scan` is available for manual recovery.
+Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `lore-cli scan` is available for manual recovery.
 
-For an existing Windows installation or older absolute source links, follow the [migration guide](docs/multiplatform.md#기존-windows-기억-가져오기) before recording on another PC.
+To bring existing memory documents from another PC, follow the [portability guide](docs/multiplatform.md#기존-windows-기억-가져오기) before recording on another PC.
 
 ## Sync across PCs
 
@@ -131,7 +131,7 @@ See the [sync review guide](docs/sync-review.md) for retrying, deferring, and ha
 ## Data and privacy
 
 ```text
-knowledge/
+lore-memory/
 ├── common/                  # Shared notes
 ├── projects/<project-id>/   # Project notes
 └── sources/<provider>/      # Conversation copies referenced by notes

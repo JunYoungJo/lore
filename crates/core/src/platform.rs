@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-pub const CLI_FILENAME: &str = if cfg!(windows) { "qmd-memory-cli.exe" } else { "qmd-memory-cli" };
+pub const CLI_FILENAME: &str = if cfg!(windows) { "lore-cli.exe" } else { "lore-cli" };
 
 pub fn home() -> PathBuf {
     let value = if cfg!(windows) {
@@ -12,7 +12,7 @@ pub fn home() -> PathBuf {
 }
 
 pub fn data_root() -> PathBuf {
-    if let Some(root) = std::env::var_os("QMD_MEMORY_HOME").filter(|value| !value.is_empty()) {
+    if let Some(root) = std::env::var_os("LORE_HOME").filter(|value| !value.is_empty()) {
         return PathBuf::from(root);
     }
     let home = home();

@@ -1,11 +1,11 @@
 [package]
-name = "qmd-memory-core"
+name = "lore-core"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [lib]
-name = "qmd_memory_core"
+name = "lore_core"
 
 [dependencies]
 chrono = { version = "0.4.45", default-features = false, features = ["clock", "std"] }

@@ -2,13 +2,13 @@ use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
 
-use qmd_memory_core::error::Failure;
-use qmd_memory_core::qmd::Qmd;
-use qmd_memory_core::queue::{Job, Queue};
-use qmd_memory_core::recorder::CliRecorder;
-use qmd_memory_core::run::Limit;
-use qmd_memory_core::settings::Settings;
-use qmd_memory_core::worker::{self, Outcome, Reporter, WorkerLock};
+use lore_core::error::Failure;
+use lore_core::qmd::Qmd;
+use lore_core::queue::{Job, Queue};
+use lore_core::recorder::CliRecorder;
+use lore_core::run::Limit;
+use lore_core::settings::Settings;
+use lore_core::worker::{self, Outcome, Reporter, WorkerLock};
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
@@ -75,7 +75,7 @@ pub fn spawn(app: AppHandle) {
         let _lock = match WorkerLock::try_acquire(&paths.lock()) {
             Ok(Some(lock)) => lock,
             Ok(None) => {
-                state.set_problem(Some("Another worker (qmd-memory-cli work) is running. Restart the app after it finishes.".into()));
+                state.set_problem(Some("Another worker (lore-cli work) is running. Restart the app after it finishes.".into()));
                 changed(&app);
                 return;
             }
@@ -103,7 +103,7 @@ pub fn spawn(app: AppHandle) {
                 last_sync = Instant::now();
                 crate::sync::automatic(&app);
             }
-            if settings.paused || state.reviewing() || state.syncing() || qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
+            if settings.paused || state.reviewing() || state.syncing() || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
                 state.wait(ERROR_WAIT);
                 continue;
             }
@@ -117,7 +117,7 @@ pub fn spawn(app: AppHandle) {
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.
-            if state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
+            if state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
             drop(operation);
             changed(&app);

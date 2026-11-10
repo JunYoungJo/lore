@@ -2108,6 +2108,47 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
+name = "lore-app"
+version = "0.1.0"
+dependencies = [
+ "lore-core",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-autostart",
+ "tauri-plugin-notification",
+ "tauri-plugin-opener",
+ "tauri-plugin-single-instance",
+ "webview2-com 0.38.2",
+ "windows 0.61.3",
+]
+
+[[package]]
+name = "lore-cli"
+version = "0.1.0"
+dependencies = [
+ "lore-core",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
+name = "lore-core"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "libc",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha2",
+ "similar",
+ "tempfile",
+ "zstd",
+]
+
+[[package]]
 name = "mac-notification-sys"
 version = "0.6.15"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2862,47 +2903,6 @@ name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d55d956fa96f5ec02be2e13af0e20391a5aa83d6a074e3ad368959d0fab299ea"
-
-[[package]]
-name = "qmd-memory-app"
-version = "0.1.0"
-dependencies = [
- "qmd-memory-core",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-plugin-autostart",
- "tauri-plugin-notification",
- "tauri-plugin-opener",
- "tauri-plugin-single-instance",
- "webview2-com 0.38.2",
- "windows 0.61.3",
-]
-
-[[package]]
-name = "qmd-memory-cli"
-version = "0.1.0"
-dependencies = [
- "qmd-memory-core",
- "serde_json",
- "tempfile",
-]
-
-[[package]]
-name = "qmd-memory-core"
-version = "0.1.0"
-dependencies = [
- "chrono",
- "libc",
- "rusqlite",
- "serde",
- "serde_json",
- "sha2",
- "similar",
- "tempfile",
- "zstd",
-]
 
 [[package]]
 name = "quick-xml"

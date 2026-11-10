@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 
 export type Theme = "light" | "dark";
 
-const KEY = "qmd-memory.theme";
+const KEY = "lore.theme";
 
 function initialTheme(): Theme {
   try {

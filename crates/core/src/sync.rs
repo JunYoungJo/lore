@@ -859,7 +859,7 @@ pub fn approve(root: &Path, path: &Path, id: &str, choices: &[Choice]) -> Result
         root,
         &[
             "update-ref",
-            &format!("refs/qmd-memory/sync/{}", plan.id),
+            &format!("refs/lore/sync/{}", plan.id),
             &commit,
         ],
     )?;

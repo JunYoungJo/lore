@@ -50,7 +50,7 @@ pub fn command(cli: &Path, provider: Provider) -> String {
 }
 
 fn is_ours(command: &str, provider: Provider) -> bool {
-    command.to_ascii_lowercase().contains("qmd-memory-cli") && command.trim_end().ends_with(&format!("hook {}", provider.as_str()))
+    command.to_ascii_lowercase().contains("lore-cli") && command.trim_end().ends_with(&format!("hook {}", provider.as_str()))
 }
 
 fn parse(text: Option<&str>) -> Result<Value> {
@@ -159,7 +159,7 @@ fn write_backup(config: &Path, text: &str, now: i64) -> Result<PathBuf> {
     let mut suffix = 0;
     loop {
         let mut name = config.as_os_str().to_owned();
-        name.push(if suffix == 0 { format!(".qmd-memory-backup-{now}") } else { format!(".qmd-memory-backup-{now}-{suffix}") });
+        name.push(if suffix == 0 { format!(".lore-backup-{now}") } else { format!(".lore-backup-{now}-{suffix}") });
         let path = PathBuf::from(name);
         match std::fs::OpenOptions::new().write(true).create_new(true).open(&path) {
             Ok(mut file) => {
@@ -215,7 +215,7 @@ pub fn register_at(config: &Path, provider: Provider, cli: &Path, now: i64) -> R
 mod tests {
     use super::*;
 
-    const CLI: &str = "C:/Apps/qmd-memory/qmd-memory-cli.exe";
+    const CLI: &str = "C:/Apps/lore/lore-cli.exe";
 
     fn wanted(provider: Provider) -> String {
         command(Path::new(CLI), provider)
@@ -224,11 +224,11 @@ mod tests {
     #[test]
     fn hook_commands_use_platform_appropriate_quoting() {
         if cfg!(windows) {
-            assert_eq!(wanted(Provider::Claude), "C:/Apps/qmd-memory/qmd-memory-cli.exe hook claude");
-            assert_eq!(command(Path::new("C:\\Program Files\\q\\qmd-memory-cli.exe"), Provider::Codex), "\"C:/Program Files/q/qmd-memory-cli.exe\" hook codex");
+            assert_eq!(wanted(Provider::Claude), "C:/Apps/lore/lore-cli.exe hook claude");
+            assert_eq!(command(Path::new("C:\\Program Files\\q\\lore-cli.exe"), Provider::Codex), "\"C:/Program Files/q/lore-cli.exe\" hook codex");
         } else {
-            assert_eq!(wanted(Provider::Claude), "'C:/Apps/qmd-memory/qmd-memory-cli.exe' hook claude");
-            assert_eq!(command(Path::new("/Users/it's $me/`apps`/qmd-memory-cli"), Provider::Codex), "'/Users/it'\"'\"'s $me/`apps`/qmd-memory-cli' hook codex");
+            assert_eq!(wanted(Provider::Claude), "'C:/Apps/lore/lore-cli.exe' hook claude");
+            assert_eq!(command(Path::new("/Users/it's $me/`apps`/lore-cli"), Provider::Codex), "'/Users/it'\"'\"'s $me/`apps`/lore-cli' hook codex");
         }
     }
 
@@ -237,7 +237,7 @@ mod tests {
     fn posix_hook_executes_a_literal_path_with_shell_metacharacters() {
         use std::os::unix::fs::PermissionsExt;
         let dir = tempfile::tempdir().unwrap();
-        let cli = dir.path().join("it's $HOME `date`").join("qmd-memory-cli");
+        let cli = dir.path().join("it's $HOME `date`").join("lore-cli");
         std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
         std::fs::write(&cli, "#!/bin/sh\nprintf '%s\\n' \"$@\"\n").unwrap();
         std::fs::set_permissions(&cli, std::fs::Permissions::from_mode(0o755)).unwrap();
@@ -282,8 +282,8 @@ mod tests {
 
     #[test]
     fn stale_install_path_is_replaced_not_duplicated() {
-        let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/qmd-memory-cli.exe hook codex", "timeout": 10}]}]}}"#;
-        assert_eq!(inspect(Some(stale), Provider::Codex, &wanted(Provider::Codex)).unwrap(), (HookState::OtherPath, Some("D:/old/qmd-memory-cli.exe hook codex".into())));
+        let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/lore-cli.exe hook codex", "timeout": 10}]}]}}"#;
+        assert_eq!(inspect(Some(stale), Provider::Codex, &wanted(Provider::Codex)).unwrap(), (HookState::OtherPath, Some("D:/old/lore-cli.exe hook codex".into())));
         let updated = add_hooks(Some(stale), Provider::Codex, &wanted(Provider::Codex)).unwrap();
         let value: Value = serde_json::from_str(&updated).unwrap();
         assert_eq!(event_commands(&value, "SessionEnd"), vec![wanted(Provider::Codex)]);
@@ -322,7 +322,7 @@ mod tests {
         let (text, removed) = remove_hooks(Some(&both), Provider::Codex).unwrap();
         assert_eq!(removed, 2);
         assert_eq!(inspect(Some(&text), Provider::Claude, &wanted(Provider::Claude)).unwrap().0, HookState::Connected);
-        let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/qmd-memory-cli.exe hook codex"}]}]}}"#;
+        let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/lore-cli.exe hook codex"}]}]}}"#;
         assert_eq!(remove_hooks(Some(stale), Provider::Codex).unwrap().1, 1);
     }
 
@@ -334,10 +334,10 @@ mod tests {
         register_at(&config, Provider::Codex, Path::new(CLI), 2).unwrap();
         let connected = std::fs::read_to_string(&config).unwrap();
         assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), 2);
-        assert_eq!(std::fs::read_to_string(dir.path().join("hooks.json.qmd-memory-backup-3")).unwrap(), connected);
+        assert_eq!(std::fs::read_to_string(dir.path().join("hooks.json.lore-backup-3")).unwrap(), connected);
         assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Missing);
         assert_eq!(unregister_at(&config, Provider::Codex, 4).unwrap(), 0);
-        assert!(!dir.path().join("hooks.json.qmd-memory-backup-4").exists());
+        assert!(!dir.path().join("hooks.json.lore-backup-4").exists());
     }
 
     #[test]
@@ -349,7 +349,7 @@ mod tests {
         let connected = std::fs::read_to_string(&config).unwrap();
         unregister_at(&config, Provider::Claude, 9).unwrap();
         assert_eq!(std::fs::read_to_string(&first).unwrap(), "{\"model\": \"opus\"}\n");
-        assert_eq!(std::fs::read_to_string(dir.path().join("settings.json.qmd-memory-backup-9-1")).unwrap(), connected);
+        assert_eq!(std::fs::read_to_string(dir.path().join("settings.json.lore-backup-9-1")).unwrap(), connected);
     }
 
     #[test]

@@ -17,7 +17,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 #[cfg(windows)]
 const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
 
-pub const RECORDER_MARK: &str = "QMD_MEMORY_RECORDER";
+pub const RECORDER_MARK: &str = "LORE_RECORDER";
 
 pub type Limit = Arc<dyn Fn() -> Duration + Send + Sync>;
 

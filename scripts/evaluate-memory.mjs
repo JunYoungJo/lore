@@ -9,7 +9,7 @@ const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name)
 const output = resolve(option("--output", join(root, "work-evaluation", new Date().toISOString().replaceAll(":", "-"))));
 const backend = option("--backend", "codex");
 if (!["codex", "claude"].includes(backend)) throw new Error("--backend는 codex 또는 claude여야 합니다.");
-const cli = join(root, "target", "release", `qmd-memory-cli${process.platform === "win32" ? ".exe" : ""}`);
+const cli = join(root, "target", "release", `lore-cli${process.platform === "win32" ? ".exe" : ""}`);
 if (!existsSync(cli)) throw new Error("먼저 pnpm build:cli를 실행하십시오.");
 const cases = JSON.parse(readFileSync(join(root, "examples/evaluation/cases.json"), "utf8"));
 const reports = [];
@@ -47,7 +47,7 @@ for (const fixture of cases) {
   const model = option("--model", undefined);
   if (model) settings.models[backend] = model;
   writeFileSync(join(data, "settings.json"), JSON.stringify(settings, null, 2));
-  const env = { ...process.env, QMD_MEMORY_HOME: data };
+  const env = { ...process.env, LORE_HOME: data };
   // The evaluator can itself be started from a recorder-marked environment;
   // enqueue is explicit and doesn't execute or register a global hook.
   process.stdout.write(`${fixture.id} ... `);

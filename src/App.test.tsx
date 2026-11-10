@@ -28,7 +28,7 @@ vi.mock("@/ipc/api", () => api);
 import { App } from "@/App";
 import { useAppStore } from "@/store/appStore";
 
-const CLI = "C:/app/qmd-memory-cli.exe";
+const CLI = "C:/app/lore-cli.exe";
 
 function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   return {

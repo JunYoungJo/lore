@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::error::{Error, Result};
 pub use crate::platform::{home, which};
 
-pub const APP_IDENTIFIER: &str = "dev.jyjo.qmd-memory";
+pub const APP_IDENTIFIER: &str = "io.github.junyoungjo.lore";
 
 #[derive(Debug, Clone)]
 pub struct Paths {
@@ -38,7 +38,7 @@ impl Paths {
     }
 
     pub fn log(&self) -> PathBuf {
-        self.root.join("qmd-memory.log")
+        self.root.join("lore.log")
     }
 }
 
@@ -106,7 +106,7 @@ impl Default for Settings {
     fn default() -> Self {
         let home = home();
         Self {
-            knowledge_root: slash(home.join("Documents").join("knowledge")),
+            knowledge_root: slash(home.join("Documents").join("lore-memory")),
             backend: "codex".into(),
             models: Models::default(),
             single_model: None,

@@ -4,25 +4,26 @@
 
 | 항목 | Windows | macOS | Linux |
 |---|---|---|---|
-| 앱 데이터 | `%LOCALAPPDATA%\dev.jyjo.qmd-memory` | `~/Library/Application Support/dev.jyjo.qmd-memory` | `$XDG_DATA_HOME/dev.jyjo.qmd-memory` 또는 `~/.local/share/dev.jyjo.qmd-memory` |
-| 훅 CLI | `qmd-memory-cli.exe` | `qmd-memory-cli` | `qmd-memory-cli` |
+| 앱 데이터 | `%LOCALAPPDATA%\io.github.junyoungjo.lore` | `~/Library/Application Support/io.github.junyoungjo.lore` | `$XDG_DATA_HOME/io.github.junyoungjo.lore` 또는 `~/.local/share/io.github.junyoungjo.lore` |
+| 앱 실행 파일 | `lore.exe` | `lore` | `lore` |
+| 훅 CLI | `lore-cli.exe` | `lore-cli` | `lore-cli` |
 | 설치 형식 | NSIS | app, dmg | deb, AppImage |
 | 팝오버 | 화면 오른쪽 아래 | 메뉴 막대 아래 오른쪽 | 트레이 메뉴의 ‘열기’ |
 
 Tauri의 [플랫폼 설정 병합](https://v2.tauri.app/develop/configuration-files/)을 사용합니다. Linux는 [트레이 클릭 이벤트를 지원하지 않기 때문에](https://v2.tauri.app/learn/system-tray/) 메뉴의 ‘열기’를 사용합니다. Linux 데스크톱에 트레이/AppIndicator 지원이 필요합니다.
 
-`QMD_MEMORY_HOME`은 앱 데이터 폴더 전체를 바꾸는 선택 환경 변수입니다. 격리 시험이나 비표준 설치에 사용합니다. 앱에만 이 변수를 주고 Claude·Codex에는 주지 않으면 서로 다른 큐를 사용하므로, 실제 사용에서는 훅을 호출하는 프로세스에도 같은 값을 설정해야 합니다.
+`LORE_HOME`은 앱 데이터 폴더 전체를 바꾸는 선택 환경 변수입니다. 격리 시험이나 비표준 설치에 사용합니다. 앱에만 이 변수를 주고 Claude·Codex에는 주지 않으면 서로 다른 큐를 사용하므로, 실제 사용에서는 훅을 호출하는 프로세스에도 같은 값을 설정해야 합니다.
 
 macOS Finder·로그인 실행에서는 터미널의 PATH가 전달되지 않을 수 있습니다. 기본 PATH 외에 `~/.local/bin`, `~/.bun/bin`, `~/.cargo/bin`, `~/.npm-global/bin`, Homebrew와 nvm의 Node 설치 디렉터리를 찾습니다. 그 밖의 설치 방식은 로컬 `settings.json`의 `commands` 배열에 실행 파일과 인수를 지정합니다. 셸 초기화 파일을 실행해서 경로를 얻지는 않습니다.
 
 ## 기존 Windows 기억 가져오기
 
-1. 앱 소스와 기억 저장소를 각각 옮깁니다. Git bundle에 포함된 소스만으로 `D:\doc\knowledge`나 `%LOCALAPPDATA%`의 운영 데이터가 복원되지는 않습니다.
+1. 앱 소스와 기억 저장소를 각각 옮깁니다. Git bundle에 포함된 소스만으로 `D:\doc\lore-memory`나 `%LOCALAPPDATA%`의 운영 데이터가 복원되지는 않습니다.
 2. 기억 저장소의 `common/`, `projects/`, `sources/`와 Git 이력을 함께 가져옵니다. `sources/`에는 근거 대화가 있으므로 문서만 가져오면 근거를 확인할 수 없습니다.
-3. 새 PC의 `settings.json`에 그 PC의 기억 저장소 **절대 경로**를 지정합니다. 새 설치 기본값은 `~/Documents/knowledge`입니다. Windows 경로를 Mac에 그대로 지정하면 거부합니다.
-4. `qmd-memory-cli doctor`로 Codex·Claude·qmd 탐색 결과와 qmd 설정 위치를 확인합니다. 이 명령은 설정·DB·훅을 변경하지 않습니다. 설치된 CLI가 PATH에 없으면 설치 폴더의 실행 파일을 절대 경로로 실행합니다. macOS 앱 안의 CLI는 `Lore.app/Contents/MacOS/qmd-memory-cli`입니다.
-5. 트레이 앱을 끈 상태에서 `qmd-memory-cli portable-links`로 이전 계획을 봅니다. `--apply`를 붙이면 이전합니다. 원본 세션 파일이나 Windows 드라이브가 없어도 가져온 대화 사본으로 정확한 발언을 찾습니다. 사본이나 정확한 줄을 찾을 수 없으면 보고하고 그 사본의 링크는 모두 보존합니다.
-6. `qmd-memory-cli index`로 새 PC의 qmd 컬렉션과 색인을 만듭니다. `common`과 가져온 모든 유효한 프로젝트 폴더를 등록합니다. 실제 qmd 설치와 모델 다운로드가 필요한 단계입니다.
+3. 새 PC의 `settings.json`에 그 PC의 기억 저장소 **절대 경로**를 지정합니다. 새 설치 기본값은 `~/Documents/lore-memory`입니다. Windows 경로를 Mac에 그대로 지정하면 거부합니다.
+4. `lore-cli doctor`로 Codex·Claude·qmd 탐색 결과와 qmd 설정 위치를 확인합니다. 이 명령은 설정·DB·훅을 변경하지 않습니다. 설치된 CLI가 PATH에 없으면 설치 폴더의 실행 파일을 절대 경로로 실행합니다. macOS 앱 안의 CLI는 `Lore.app/Contents/MacOS/lore-cli`입니다.
+5. 트레이 앱을 끈 상태에서 `lore-cli portable-links`로 이전 계획을 봅니다. `--apply`를 붙이면 이전합니다. 원본 세션 파일이나 Windows 드라이브가 없어도 가져온 대화 사본으로 정확한 발언을 찾습니다. 사본이나 정확한 줄을 찾을 수 없으면 보고하고 그 사본의 링크는 모두 보존합니다.
+6. `lore-cli index`로 새 PC의 qmd 컬렉션과 색인을 만듭니다. `common`과 가져온 모든 유효한 프로젝트 폴더를 등록합니다. 실제 qmd 설치와 모델 다운로드가 필요한 단계입니다.
 7. Codex·Claude가 사용하는 qmd MCP의 `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`을 `doctor`의 `qmdConfigDir`, `qmdCacheDir`에 맞춥니다. 인덱스 이름도 `qmdIndex`와 맞춥니다. `.qmd/config`를 가리키던 이전 연결은 갱신해야 새 기록을 검색합니다.
 8. 앱을 실행하고 원하는 제공자의 훅을 명시적으로 연결합니다. Codex의 신뢰 설정도 확인합니다.
 
@@ -38,7 +39,7 @@ macOS Finder·로그인 실행에서는 터미널의 PATH가 전달되지 않을
 
 이름은 소문자 영문·숫자로 시작하고 영문·숫자·`-`·`_`만 쓰는 100자 이하 ID입니다. 기존 `projects/demoengine/` 기억을 계속 쓰려면 같은 ID를 지정합니다. 서로 다른 프로젝트에는 서로 다른 ID를 정합니다. 앱이 ID의 전역 유일성을 자동으로 판단하지는 않습니다.
 
-파일이 없으면 기존 폴더명 식별을 유지합니다. 잘못된 ID 파일은 기록 실패로 표시합니다. worktree는 원래 저장소의 ID를 사용합니다. `qmd-memory-cli project`로 현재 저장소가 사용할 ID를 확인할 수 있습니다. 기존 기억 폴더의 자동 재명명·병합은 하지 않습니다.
+파일이 없으면 기존 폴더명 식별을 유지합니다. 잘못된 ID 파일은 기록 실패로 표시합니다. worktree는 원래 저장소의 ID를 사용합니다. `lore-cli project`로 현재 저장소가 사용할 ID를 확인할 수 있습니다. 기존 기억 폴더의 자동 재명명·병합은 하지 않습니다.
 
 ## 근거 링크와 이전 복구
 
