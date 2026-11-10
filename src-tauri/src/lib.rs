@@ -6,6 +6,7 @@ mod background;
 mod commands;
 mod review;
 mod state;
+mod sync;
 mod tray;
 mod watch;
 
@@ -57,6 +58,15 @@ pub fn run() {
             review::get_review,
             review::review_diff,
             review::commit_review,
+            sync::open_sync,
+            sync::get_sync,
+            sync::set_sync_enabled,
+            sync::prepare_sync,
+            sync::analyze_sync,
+            sync::preview_sync,
+            sync::apply_sync,
+            sync::resume_sync,
+            sync::defer_sync,
         ])
         .build(tauri::generate_context!())
         .expect("qmd-memory를 시작하지 못했습니다")

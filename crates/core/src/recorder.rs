@@ -75,13 +75,18 @@ impl CliRecorder {
         Self { backend: settings.backend.clone(), model: settings.model().map(str::to_string), command, workdir: workdir.to_path_buf(), limit }
     }
 
+    #[cfg(test)]
     fn arguments(&self, schema_path: &Path, response_path: &Path) -> Vec<String> {
+        self.arguments_for_schema(schema_path, response_path, &schema())
+    }
+
+    fn arguments_for_schema(&self, schema_path: &Path, response_path: &Path, schema: &Value) -> Vec<String> {
         let schema_file = schema_path.to_string_lossy().to_string();
         let response_file = response_path.to_string_lossy().to_string();
         let mut command = self.command.clone();
         if self.backend == "claude" {
             let model = self.model.clone().unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into());
-            let schema_text = schema().to_string();
+            let schema_text = schema.to_string();
             command.extend(
                 [
                     "--safe-mode",
@@ -95,7 +100,7 @@ impl CliRecorder {
                     r#"{"mcpServers":{}}"#,
                     "--no-session-persistence",
                     "--system-prompt",
-                    "제공된 데이터만 읽어 한국어 기억 문서 변경안을 JSON으로 작성하십시오. 도구를 사용하지 마십시오.",
+                    "제공된 데이터와 지침만 읽어 한국어 결과를 지정된 JSON Schema에 맞게 작성하십시오. 도구를 사용하지 마십시오.",
                     "--json-schema",
                     schema_text.as_str(),
                     "--output-format",
@@ -135,6 +140,26 @@ impl CliRecorder {
         }
         command
     }
+
+    pub fn request_json(&self, prompt: &str, schema: &Value, artifacts: &Path) -> Result<Value> {
+        std::fs::create_dir_all(artifacts)?;
+        atomic_write(&artifacts.join("prompt.txt"), prompt.as_bytes())?;
+        let schema_path = artifacts.join("schema.json");
+        atomic_write(&schema_path, serde_json::to_string_pretty(schema)?.as_bytes())?;
+        let response_path = artifacts.join("response.json");
+        let _ = std::fs::remove_file(&response_path);
+        let command = self.arguments_for_schema(&schema_path, &response_path, schema);
+        let output = run::run(&command, &self.workdir, &[], Some(prompt), self.limit.as_ref())?;
+        atomic_write(&artifacts.join("model-stderr.txt"), output.stderr.as_bytes())?;
+        let text = if self.backend == "claude" {
+            let text = claude_result(&output.stdout)?;
+            atomic_write(&response_path, text.as_bytes())?;
+            text
+        } else {
+            std::fs::read_to_string(&response_path).map_err(|_| Error::rejected("Codex가 응답 파일을 남기지 않았습니다."))?
+        };
+        serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("모델 응답 형식이 올바르지 않습니다: {error}")))
+    }
 }
 
 fn claude_result(stdout: &str) -> Result<String> {
@@ -155,24 +180,8 @@ pub fn parse_proposal(text: &str) -> Result<Proposal> {
 
 impl Recorder for CliRecorder {
     fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal> {
-        std::fs::create_dir_all(artifacts)?;
         let prompt = build_prompt(payload);
-        atomic_write(&artifacts.join("prompt.txt"), prompt.as_bytes())?;
-        let schema_path = artifacts.join("schema.json");
-        atomic_write(&schema_path, serde_json::to_string_pretty(&schema())?.as_bytes())?;
-        let response_path = artifacts.join("response.json");
-        let _ = std::fs::remove_file(&response_path);
-        let command = self.arguments(&schema_path, &response_path);
-        let output = run::run(&command, &self.workdir, &[], Some(&prompt), self.limit.as_ref())?;
-        atomic_write(&artifacts.join("model-stderr.txt"), output.stderr.as_bytes())?;
-        let text = if self.backend == "claude" {
-            let text = claude_result(&output.stdout)?;
-            atomic_write(&response_path, text.as_bytes())?;
-            text
-        } else {
-            std::fs::read_to_string(&response_path).map_err(|_| Error::rejected("Codex가 응답 파일을 남기지 않았습니다."))?
-        };
-        parse_proposal(&text)
+        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("모델 응답 형식이 올바르지 않습니다: {error}")))
     }
 }
 

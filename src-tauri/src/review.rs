@@ -91,7 +91,7 @@ pub fn end_review(app: AppHandle) {
 #[tauri::command]
 pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> {
     let root = state.settings().knowledge_root();
-    let waiting = state.current().is_some();
+    let waiting = state.current().is_some() || state.operation_busy();
     let mut snapshot = ReviewSnapshot { repository: review::is_repository(&root), waiting, root: root.to_string_lossy().replace('\\', "/"), files: Vec::new(), others: Vec::new(), message: String::new() };
     if waiting || !snapshot.repository {
         return Ok(snapshot);
@@ -125,11 +125,16 @@ pub fn review_diff(state: State<'_, AppState>, path: String) -> Result<Vec<DiffR
 }
 
 #[tauri::command]
-pub fn commit_review(app: AppHandle, state: State<'_, AppState>, message: String, notes: Vec<String>) -> Result<String, String> {
-    if state.current().is_some() {
-        return Err("기록 중에는 커밋할 수 없습니다. 기록이 끝난 뒤 다시 시도하십시오.".into());
-    }
-    let hash = review::commit_notes(&state.settings().knowledge_root(), &notes, &message).map_err(error)?;
+pub async fn commit_review(app: AppHandle, message: String, notes: Vec<String>) -> Result<String, String> {
+    let handle = app.clone();
+    let hash = tauri::async_runtime::spawn_blocking(move || {
+        let state = handle.state::<AppState>();
+        let _operation = state.operation();
+        let settings = state.settings();
+        let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &settings.knowledge_root()));
+        if pending.blocked && pending.phase != "review" { return Err("중단된 동기화 반영·검색 갱신을 먼저 마쳐야 합니다.".to_string()); }
+        review::commit_notes(&settings.knowledge_root(), &notes, &message).map_err(error)
+    }).await.map_err(error)??;
     changed(&app);
     Ok(hash)
 }

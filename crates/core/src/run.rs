@@ -28,6 +28,7 @@ pub fn fixed(seconds: u64) -> Limit {
 pub struct Output {
     pub stdout: String,
     pub stderr: String,
+    pub code: Option<i32>,
 }
 
 fn tail(text: &str, limit: usize) -> String {
@@ -52,6 +53,10 @@ fn kill_tree(pid: u32) {
 }
 
 pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option<&str>, limit: &dyn Fn() -> Duration) -> Result<Output> {
+    run_allow(command, cwd, env, stdin, limit, &[0])
+}
+
+pub fn run_allow(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option<&str>, limit: &dyn Fn() -> Duration, accepted: &[i32]) -> Result<Output> {
     let (program, args) = command.split_first().ok_or_else(|| Error::transient("실행할 명령이 설정되지 않았습니다."))?;
     std::fs::create_dir_all(cwd)?;
     let mut builder = Command::new(program);
@@ -116,11 +121,11 @@ pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option
     }
     let stdout = String::from_utf8_lossy(&stdout_reader.join().unwrap_or_default()).to_string();
     let stderr = String::from_utf8_lossy(&stderr_reader.join().unwrap_or_default()).to_string();
-    if !status.success() {
+    if !status.code().map(|code| accepted.contains(&code)).unwrap_or(false) {
         let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
         return Err(Error::transient(format!("{program} 실행 실패(종료 코드 {:?}): {}", status.code(), tail(detail.trim(), 1500))));
     }
-    Ok(Output { stdout, stderr })
+    Ok(Output { stdout, stderr, code: status.code() })
 }
 
 #[cfg(all(test, unix))]

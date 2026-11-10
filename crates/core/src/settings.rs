@@ -83,6 +83,7 @@ pub struct Settings {
     pub notes_budget: usize,
     pub qmd_index: String,
     pub commands: Commands,
+    pub sync_enabled: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -120,6 +121,7 @@ impl Default for Settings {
             notes_budget: 60_000,
             qmd_index: "index".into(),
             commands: Commands::default(),
+            sync_enabled: false,
         }
     }
 }

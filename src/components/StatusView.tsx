@@ -53,6 +53,10 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     );
   }
 
+  if (snapshot.syncing || snapshot.sync?.blocked) {
+    return <section className="now paused" aria-label="진행 중"><IconChip glyph={GitCompare} tint="amber" /><div className="now-main"><div className="now-title">{snapshot.syncing ? "동기화 작업 중" : "동기화 확인이 필요합니다"}</div><div className="now-sub">기억 기록만 대기합니다. 동기화 창을 닫아도 미해결 변경과 큐는 보존됩니다.</div></div><button type="button" className="pill primary" onClick={() => void api.openSync()}>동기화</button></section>;
+  }
+
   if (snapshot.reviewing) {
     return (
       <section className="now paused" aria-label="진행 중">
@@ -217,6 +221,7 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
       <NowCard snapshot={snapshot} now={now} />
       <HookCallout snapshot={snapshot} />
       <Stats snapshot={snapshot} />
+      {!snapshot.syncing && !snapshot.sync?.blocked && <section className="card" aria-label="기억 동기화"><div className="sync-toolbar"><span className="grow">{snapshot.sync?.phase === "push_pending" ? "공유 대기" : "여러 PC 기억 공유"}</span><button className="pill" onClick={() => void api.openSync()}>동기화</button></div></section>}
 
       {snapshot.attention.length > 0 && (
         <section aria-label="확인 필요">

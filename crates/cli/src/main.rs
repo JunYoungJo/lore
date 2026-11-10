@@ -21,6 +21,8 @@ const USAGE: &str = "사용법: qmd-memory-cli <명령>
   scan                             훅이 놓친 세션을 찾아 큐에 등록
   work [--once]                    큐의 작업을 처리 (트레이 앱이 실행 중이면 거부)
   status                           큐 상태와 실패한 작업 출력
+  sync <check|status|analyze|preview|apply|resume>
+                                   공유 저장소 확인·모델 비교·최종 문구 반영
   doctor                           이 PC의 경로·CLI·qmd 설정 진단 (읽기 전용)
   index                            기억 문서의 컬렉션 등록과 이 PC의 qmd 색인 갱신
   project                          현재 git 저장소의 기억 프로젝트 ID 확인
@@ -63,6 +65,53 @@ fn run(args: &[String]) -> Result<()> {
     let paths = Paths::standard();
     let command = args.first().map(String::as_str).unwrap_or("");
     match command {
+        "sync" => {
+            let mode = args.get(1).map(String::as_str).unwrap_or("status");
+            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else { return Err(Error::transient("트레이 앱을 종료한 뒤 CLI 동기화를 실행하십시오.")); };
+            let settings = settings::load_or_init(&paths.settings(), worker::now())?;
+            settings.validate()?;
+            if !matches!(mode, "status" | "preview") {
+                let queue = Queue::open(&paths.database())?;
+                if !queue.jobs_with_status(&[Status::Applying, Status::IndexPending], 1)?.is_empty() {
+                    return Err(Error::permanent("중단된 기록 반영·검색 갱신을 먼저 work 명령으로 완료하십시오."));
+                }
+            }
+            let root = settings.knowledge_root();
+            let path = qmd_memory_core::sync::journal(&paths, &root);
+            let finish = || qmd_memory_core::sync::finish(&root, &path, || {
+                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+                if !qmd.available() { return Err(Error::transient("qmd를 찾지 못했습니다.")); }
+                qmd.ensure_index(&root)?; qmd.refresh()
+            });
+            let read_choices = |index: usize| -> Result<Vec<qmd_memory_core::sync::Choice>> {
+                let file = args.get(index).ok_or_else(|| Error::permanent("선택 내용을 담은 JSON 파일 경로가 필요합니다."))?;
+                Ok(serde_json::from_slice(&std::fs::read(file)?)?)
+            };
+            match mode {
+                "status" => {},
+                "check" => {
+                    let plan = qmd_memory_core::sync::prepare(&root, &path)?;
+                    if plan.phase != "review" { finish()?; }
+                }
+                "analyze" => {
+                    let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
+                    qmd_memory_core::sync::analyze(&root, &path, &recorder, &path.parent().unwrap().join("model-review"))?;
+                }
+                "preview" => {
+                    let plan = qmd_memory_core::sync::load(&path)?.ok_or_else(|| Error::permanent("검토 계획이 없습니다."))?;
+                    println!("{}", serde_json::to_string_pretty(&qmd_memory_core::sync::preview(&plan, &read_choices(2)?)?)?);
+                    return Ok(());
+                }
+                "apply" => {
+                    let id = args.get(2).ok_or_else(|| Error::permanent("확인한 검토 계획 ID가 필요합니다."))?;
+                    qmd_memory_core::sync::approve(&root, &path, id, &read_choices(3)?)?;
+                    finish()?;
+                }
+                "resume" => { finish()?; }
+                _ => return Err(Error::permanent("sync 명령은 check, status, analyze, preview <선택.json>, apply <계획 ID> <선택.json>, resume 중 하나입니다.")),
+            }
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"summary": qmd_memory_core::sync::summary(&path), "plan": qmd_memory_core::sync::load(&path)?}))?);
+        }
         "doctor" => {
             let report = qmd_memory_core::diagnostics::inspect(&paths, &std::env::current_exe()?);
             println!("{}", serde_json::to_string_pretty(&report)?);

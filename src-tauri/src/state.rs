@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
@@ -22,10 +23,14 @@ pub struct AppState {
     reviewing: Mutex<bool>,
     wake: Mutex<bool>,
     signal: Condvar,
+    operation: Mutex<()>,
+    syncing: AtomicBool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
-    mutex.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    mutex
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
 impl AppState {
@@ -38,11 +43,32 @@ impl AppState {
             reviewing: Mutex::new(false),
             wake: Mutex::new(false),
             signal: Condvar::new(),
+            operation: Mutex::new(()),
+            syncing: AtomicBool::new(false),
         }
     }
 
     pub fn reviewing(&self) -> bool {
         *lock(&self.reviewing)
+    }
+
+    pub fn operation(&self) -> MutexGuard<'_, ()> {
+        lock(&self.operation)
+    }
+
+    pub fn operation_busy(&self) -> bool {
+        self.operation.try_lock().is_err()
+    }
+
+    pub fn syncing(&self) -> bool {
+        self.syncing.load(Ordering::SeqCst)
+    }
+
+    pub fn begin_sync(&self) -> Option<SyncGuard<'_>> {
+        self.syncing
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .ok()
+            .map(|_| SyncGuard(self))
     }
 
     pub fn set_reviewing(&self, reviewing: bool) {
@@ -86,7 +112,65 @@ impl AppState {
 
     pub fn wait(&self, timeout: Duration) {
         let guard = lock(&self.wake);
-        let (mut guard, _) = self.signal.wait_timeout_while(guard, timeout, |woken| !*woken).unwrap_or_else(|poisoned| poisoned.into_inner());
+        let (mut guard, _) = self
+            .signal
+            .wait_timeout_while(guard, timeout, |woken| !*woken)
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = false;
+    }
+}
+
+pub struct SyncGuard<'a>(&'a AppState);
+impl Drop for SyncGuard<'_> {
+    fn drop(&mut self) {
+        self.0.syncing.store(false, Ordering::SeqCst);
+        self.0.wake();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn sync_guard_is_exclusive_and_preserves_user_pause_and_review() {
+        let state = AppState::new(
+            Paths {
+                root: "unused".into(),
+            },
+            Settings {
+                paused: true,
+                ..Settings::default()
+            },
+        );
+        state.set_reviewing(true);
+        let guard = state.begin_sync().unwrap();
+        assert!(state.syncing());
+        assert!(state.begin_sync().is_none());
+        drop(guard);
+        assert!(!state.syncing());
+        assert!(state.settings().paused);
+        assert!(state.reviewing());
+        assert!(state.begin_sync().is_some());
+    }
+
+    #[test]
+    fn recording_and_sync_share_the_operation_gate() {
+        let state = AppState::new(
+            Paths {
+                root: "unused".into(),
+            },
+            Settings::default(),
+        );
+        let recording = state.operation();
+        assert!(state.operation_busy());
+        assert!(state.operation.try_lock().is_err());
+        drop(recording);
+        let sync = state.begin_sync().unwrap();
+        let applying = state.operation();
+        assert!(state.operation_busy());
+        drop(applying);
+        drop(sync);
+        assert!(!state.operation_busy());
     }
 }

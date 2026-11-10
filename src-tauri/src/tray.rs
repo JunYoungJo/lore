@@ -146,12 +146,13 @@ pub fn show_paused(app: &AppHandle, paused: bool) {
 
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let text = match (state.current(), state.reviewing(), state.settings().paused) {
+    let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &state.settings().knowledge_root()));
+    let text = if state.syncing() { "qmd-memory · 동기화 작업 중".into() } else if pending.blocked { "qmd-memory · 동기화 확인 필요 · 기록 대기".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
         (Some(current), _, _) => format!("qmd-memory · 기록 중: {}", current.project),
         (None, true, _) => "qmd-memory · 검토 중이라 기록을 멈춤".to_string(),
         (None, false, true) => "qmd-memory · 일시 중지".to_string(),
         (None, false, false) => "qmd-memory · 대기 중".to_string(),
-    };
+    }};
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(text));
     }

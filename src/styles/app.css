@@ -1204,3 +1204,39 @@ svg.kind-deleted {
   opacity: 0.5;
   cursor: default;
 }
+
+/* Model-assisted synchronization review uses the same tokens as local review. */
+.sync-window { min-width: 0; }
+.sync-scroll { overflow-y: auto; min-height: 0; padding: 18px 22px; }
+.sync-toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.sync-toolbar .btn { width: auto; }
+.sync-toolbar .help { flex: 1; min-width: 240px; }
+.sync-meta, .sync-path { overflow-wrap: anywhere; margin: 14px 0; font-size: 12px; color: var(--text2); }
+.sync-hold { padding: 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--surface2); color: var(--text2); font-size: 13px; }
+.sync-empty { padding: 40px 12px; text-align: center; color: var(--text2); font-size: 13px; }
+.sync-progress, .sync-notice { display: flex; gap: 8px; align-items: center; padding: 12px 0; font-size: 13px; }
+.sync-notice { color: var(--ok); }
+.sync-issue { margin: 16px 0; padding: 18px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+.sync-issue p, .sync-analysis { font-size: 13px; line-height: 1.7; }
+.sync-issue-title { font-size: 15px; font-weight: 600; }
+.sync-two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 12px; }
+.sync-two > * { min-width: 0; }
+.sync-evidence { padding: 12px; border-radius: 8px; background: var(--surface2); overflow-wrap: anywhere; }
+.sync-evidence .eyebrow { font-size: 11px; }
+.sync-evidence blockquote { margin: 8px 0; font-size: 13px; line-height: 1.65; white-space: pre-wrap; }
+.sync-document { white-space: pre-wrap; overflow-wrap: anywhere; font-family: inherit; line-height: 1.7; font-size: 12px; background: var(--surface2); border: 1px solid var(--line); border-radius: 7px; padding: 12px; }
+.sync-choices { padding: 0; margin: 18px 0 8px; border: 0; }
+.sync-choices legend { font-size: 13px; font-weight: 600; }
+.sync-option { display: flex; gap: 8px; align-items: flex-start; font-size: 13px; padding: 8px 0; cursor: pointer; }
+.sync-option input { margin: 3px 0 0; accent-color: var(--accent); }
+.sync-option strong { font-weight: 600; }
+.sync-option-detail { display: block; color: var(--text2); margin-top: 3px; line-height: 1.6; }
+.sync-custom { display: block; font-size: 12px; color: var(--text2); }
+.sync-custom textarea { display: block; width: 100%; margin-top: 6px; resize: vertical; }
+.sync-comparison { margin-top: 14px; }
+.sync-comparison summary, .sync-evidence summary, .sync-final summary { font-size: 12px; color: var(--accent); cursor: pointer; padding: 8px 0; overflow-wrap: anywhere; }
+.sync-final { margin-top: 20px; padding: 16px; border: 1px solid var(--line2); border-radius: 10px; }
+.sync-final h2 { margin: 0 0 8px; font-size: 14px; }
+.sync-footer { display: flex; gap: 10px; justify-content: flex-end; padding: 16px 0; }
+.sync-footer .btn { width: auto; }
+@media (max-width: 800px) { .sync-two { grid-template-columns: 1fr; } .sync-scroll { padding: 12px; } }

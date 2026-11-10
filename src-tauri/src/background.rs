@@ -1,5 +1,6 @@
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 
 use qmd_memory_core::error::Failure;
 use qmd_memory_core::qmd::Qmd;
@@ -95,9 +96,14 @@ pub fn spawn(app: AppHandle) {
         let reporter = AppReporter { app: app.clone() };
         let model_limit = live_limit(&app, |settings| settings.model_timeout_secs);
         let qmd_limit = live_limit(&app, |settings| settings.qmd_timeout_secs);
+        let mut last_sync = Instant::now().checked_sub(Duration::from_secs(300)).unwrap_or_else(Instant::now);
         loop {
             let settings = state.settings();
-            if settings.paused || state.reviewing() {
+            if settings.sync_enabled && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= Duration::from_secs(300) {
+                last_sync = Instant::now();
+                crate::sync::automatic(&app);
+            }
+            if settings.paused || state.reviewing() || state.syncing() || qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
                 state.wait(ERROR_WAIT);
                 continue;
             }
@@ -109,7 +115,12 @@ pub fn spawn(app: AppHandle) {
             }
             let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone());
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
+            let operation = state.operation();
+            // Re-check under the same gate used by sync and review commits.
+            if state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
+            drop(operation);
+            changed(&app);
             match result {
                 Ok(Ok(Some(_))) => state.set_problem(None),
                 Ok(Ok(None)) => state.wait(IDLE_WAIT),

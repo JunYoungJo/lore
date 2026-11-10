@@ -12,6 +12,8 @@ import { BrandMark } from "@/ui/BrandMark";
 
 function statusLine(snapshot: Snapshot): string {
   if (snapshot.current) return `기록 중 · ${snapshot.current.project}`;
+  if (snapshot.syncing) return "동기화 작업 중";
+  if (snapshot.sync?.blocked) return "동기화 확인 필요 · 기록 대기";
   if (snapshot.reviewing) return "검토 중이라 기록을 멈춤";
   if (snapshot.settings.paused) return "일시 중지됨";
   if (snapshot.counts.ready > 0) return `대기 ${snapshot.counts.ready}건`;

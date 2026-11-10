@@ -27,3 +27,13 @@ export const hideWindow = (): Promise<void> => invoke("hide_window");
 
 export const onStateChanged = (handler: () => void): Promise<UnlistenFn> => listen("state-changed", handler);
 export const onPopoverShown = (handler: () => void): Promise<UnlistenFn> => listen("popover-shown", handler);
+
+export const openSync = (): Promise<void> => invoke("open_sync");
+export const getSync = (): Promise<import("./contract").SyncSnapshot> => invoke("get_sync");
+export const setSyncEnabled = (enabled: boolean): Promise<void> => invoke("set_sync_enabled", { enabled });
+export const prepareSync = (): Promise<void> => invoke("prepare_sync");
+export const analyzeSync = (): Promise<void> => invoke("analyze_sync");
+export const previewSync = (id: string, choices: import("./contract").SyncChoice[]): Promise<import("./contract").SyncPreview> => invoke("preview_sync", { id, choices });
+export const applySync = (id: string, choices: import("./contract").SyncChoice[], token: string): Promise<void> => invoke("apply_sync", { id, choices, token });
+export const resumeSync = (): Promise<void> => invoke("resume_sync");
+export const deferSync = (): Promise<void> => invoke("defer_sync");

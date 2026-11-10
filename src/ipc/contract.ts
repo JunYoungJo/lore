@@ -129,6 +129,8 @@ export interface DiffRow {
 }
 
 export interface Snapshot {
+  sync?: SyncSummary;
+  syncing?: boolean;
   state: "idle" | "working" | "paused" | "reviewing";
   current: Current | null;
   counts: Counts;
@@ -142,3 +144,20 @@ export interface Snapshot {
   reviewing: boolean;
   version: string;
 }
+
+export interface SyncSummary { phase: string; message: string | null; issues: number; blocked: boolean }
+export interface SyncFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; textConflict: boolean }
+export interface SyncSource { id: string; side: string; path: string; text: string }
+export interface SyncEdit { path: string; find: string; text: string }
+export interface SyncOption { label: string; description: string; edits: SyncEdit[] }
+export interface SyncIssue { title: string; explanation: string; evidence: { source: string; quote: string }[]; options: SyncOption[] }
+export interface SyncAnalysis { summary: string; issues: SyncIssue[] }
+export interface SyncPlan {
+  id: string; root: string; branch: string; remoteName: string; remoteRef: string;
+  local: string; remote: string; base: string; tree: string; phase: string;
+  files: SyncFile[]; sources: SyncSource[]; unsupported: string[]; otherFiles: string[];
+  analysis: SyncAnalysis | null; approved: string | null; message: string | null;
+}
+export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null }
+export interface SyncChoice { issue: number; option: number; customText: string | null }
+export interface SyncPreview { files: Record<string, string>; token: string }

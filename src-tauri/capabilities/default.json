@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the tray popover and the review window",
-  "windows": ["tray", "review"],
+  "windows": ["tray", "review", "sync"],
   "permissions": ["core:default", "notification:default"]
 }

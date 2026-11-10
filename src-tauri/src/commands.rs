@@ -30,6 +30,8 @@ pub struct Snapshot {
     pub review: Option<usize>,
     pub reviewing: bool,
     pub version: &'static str,
+    pub sync: qmd_memory_core::sync::Summary,
+    pub syncing: bool,
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -82,9 +84,11 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let settings = state.settings();
     let current = state.current();
     let reviewing = state.reviewing();
+    let sync = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &settings.knowledge_root()));
+    let syncing = state.syncing();
     let label = if current.is_some() {
         "working"
-    } else if reviewing {
+    } else if reviewing || syncing || sync.blocked {
         "reviewing"
     } else if settings.paused {
         "paused"
@@ -111,6 +115,8 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         review,
         reviewing,
         version: env!("CARGO_PKG_VERSION"),
+        sync,
+        syncing,
     })
 }
 
@@ -166,6 +172,9 @@ pub fn clear_activity(app: AppHandle, state: State<'_, AppState>) -> Result<usiz
 #[tauri::command]
 pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: EditableSettings) -> Result<(), String> {
     let mut merged = state.settings().edited(settings);
+    if merged.knowledge_root != state.settings().knowledge_root && state.operation_busy() {
+        return Err("기록 또는 동기화 작업 중에는 기억 저장소 위치를 바꿀 수 없습니다.".into());
+    }
     merged.validate().map_err(error)?;
     merged.fill_missing_commands();
     settings::save(&state.paths.settings(), &merged).map_err(error)?;
