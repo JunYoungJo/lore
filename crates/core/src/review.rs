@@ -194,11 +194,11 @@ pub fn local_date() -> String {
 }
 
 pub fn default_message(date: &str) -> String {
-    format!("기억 기록 검토 ({date})")
+    format!("Review memory notes ({date})")
 }
 
 fn git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String> {
-    let program = which("git").ok_or_else(|| Error::permanent("git을 찾지 못했습니다. Git을 설치하고 PATH에 넣으십시오."))?;
+    let program = which("git").ok_or_else(|| Error::permanent("Git was not found. Install Git and add it to PATH."))?;
     let mut command = vec![program.to_string_lossy().to_string(), "-c".to_string(), "core.quotepath=false".to_string()];
     command.extend(args.iter().map(|arg| arg.to_string()));
     Ok(run::run(&command, root, &[], stdin, &|| GIT_LIMIT)?.stdout)
@@ -227,20 +227,20 @@ pub fn file_diff(root: &Path, path: &str) -> Result<Vec<DiffRow>> {
 
 pub fn commit_paths(changes: &WorkingChanges, notes: &[String]) -> Result<Vec<String>> {
     if let Some(stray) = notes.iter().find(|note| !changes.notes.iter().any(|change| &change.path == *note)) {
-        return Err(Error::permanent(format!("마지막 커밋 이후 바뀐 기억 문서가 아닙니다: {stray}. 검토 창을 닫고 다시 여십시오.")));
+        return Err(Error::permanent(format!("This note has not changed since the last commit: {stray}. Close and reopen the review window.")));
     }
     let paths: Vec<String> = changes.notes.iter().filter(|change| notes.contains(&change.path)).chain(&changes.others).map(|change| change.path.clone()).collect();
     if paths.is_empty() {
-        return Err(Error::permanent("커밋할 파일이 없습니다."));
+        return Err(Error::permanent("No files to commit."));
     }
     Ok(paths)
 }
 
 pub fn commit_notes(root: &Path, notes: &[String], message: &str) -> Result<String> {
     if message.trim().is_empty() {
-        return Err(Error::permanent("커밋 메시지가 비어 있습니다."));
+        return Err(Error::permanent("The commit message is empty."));
     }
-    let changes = working_changes(root)?.ok_or_else(|| Error::permanent("기억 저장소가 git 저장소가 아닙니다."))?;
+    let changes = working_changes(root)?.ok_or_else(|| Error::permanent("The memory folder is not a Git repository."))?;
     let paths = commit_paths(&changes, notes)?;
     // The message already uses stdin, and a long path list can pass the Windows command-line limit,
     // so the paths go through a file. `commit` with paths leaves anything else staged out of the commit.
@@ -400,7 +400,7 @@ mod tests {
 
     #[test]
     fn default_message_is_only_the_dated_title() {
-        assert_eq!(default_message("2026-11-05"), "기억 기록 검토 (2026-11-05)");
+        assert_eq!(default_message("2026-11-05"), "Review memory notes (2026-11-05)");
     }
 
     #[test]

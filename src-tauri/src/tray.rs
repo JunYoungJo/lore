@@ -101,7 +101,7 @@ fn harden_webview(_window: &WebviewWindow) {}
 // and the popover should already hold the current status when it is first opened.
 pub fn create_popover(app: &AppHandle) {
     let built = WebviewWindowBuilder::new(app, POPOVER, WebviewUrl::App("index.html".into()))
-        .title("qmd-memory")
+        .title("Lore")
         .decorations(false)
         .resizable(false)
         .always_on_top(true)
@@ -122,7 +122,7 @@ pub fn create_popover(app: &AppHandle) {
                 }
             });
         }
-        Err(error) => eprintln!("트레이 창을 만들지 못했습니다: {error}"),
+        Err(error) => eprintln!("Could not create the tray window: {error}"),
     }
 }
 
@@ -147,11 +147,11 @@ pub fn show_paused(app: &AppHandle, paused: bool) {
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
     let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &state.settings().knowledge_root()));
-    let text = if state.syncing() { "qmd-memory · 동기화 작업 중".into() } else if pending.blocked { "qmd-memory · 동기화 확인 필요 · 기록 대기".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
-        (Some(current), _, _) => format!("qmd-memory · 기록 중: {}", current.project),
-        (None, true, _) => "qmd-memory · 검토 중이라 기록을 멈춤".to_string(),
-        (None, false, true) => "qmd-memory · 일시 중지".to_string(),
-        (None, false, false) => "qmd-memory · 대기 중".to_string(),
+    let text = if state.syncing() { "Lore · Syncing".into() } else if pending.blocked { "Lore · Sync review needed · Recording on hold".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
+        (Some(current), _, _) => format!("Lore · Recording: {}", current.project),
+        (None, true, _) => "Lore · Recording paused for review".to_string(),
+        (None, false, true) => "Lore · Paused".to_string(),
+        (None, false, false) => "Lore · Idle".to_string(),
     }};
     if let Some(tray) = app.tray_by_id(TRAY_ID) {
         let _ = tray.set_tooltip(Some(text));
@@ -160,15 +160,21 @@ pub fn refresh_tooltip(app: &AppHandle) {
 
 pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let paused = app.state::<AppState>().settings().paused;
-    let open = MenuItem::with_id(app, "open", "열기", true, None::<&str>)?;
-    let pause = CheckMenuItem::with_id(app, PAUSE_ITEM, "일시 중지", true, paused, None::<&str>)?;
-    let quit = MenuItem::with_id(app, "quit", "종료", true, None::<&str>)?;
+    let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
+    let pause = CheckMenuItem::with_id(app, PAUSE_ITEM, "Pause", true, paused, None::<&str>)?;
+    let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
     let pause_item = pause.clone();
     app.manage(PauseItem(pause));
-    let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("qmd-memory");
+    let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("Lore");
     if let Some(icon) = app.default_window_icon().cloned() {
         builder = builder.icon(icon);
+    }
+    #[cfg(target_os = "macos")]
+    {
+        builder = builder
+            .icon(tauri::image::Image::from_bytes(include_bytes!("../icons/tray.png"))?)
+            .icon_as_template(true);
     }
     builder
         .menu(&menu)
@@ -178,7 +184,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
             PAUSE_ITEM => {
                 let paused = pause_item.is_checked().unwrap_or(false);
                 if let Err(error) = set_paused(app, paused) {
-                    eprintln!("일시 중지 설정을 저장하지 못했습니다: {error}");
+                    eprintln!("Could not save the pause setting: {error}");
                 }
             }
             "quit" => app.exit(0),

@@ -17,9 +17,10 @@ Markdown으로 보관하고, qmd로 찾고, Git으로 다른 PC에서도 이어 
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
-<img src="docs/screenshots/sync-review.png" alt="양쪽 근거 대화를 확인하고 앞으로 적용할 방침을 선택하는 동기화 검토 화면" width="900" />
+<img src="docs/screenshots/main.png" alt="기록 상태·큐·최근 기억 문서가 보이는 영어 메인 화면, 다크 테마" width="400" />
+<img src="docs/screenshots/main-light.png" alt="같은 영어 메인 화면의 라이트 테마" width="400" />
 
-<sub>실제 구현 화면에 시험용 예제와 저장된 모델 응답을 표시했습니다. 현재 앱 UI는 한국어입니다.</sub>
+<sub>실제 메인 트레이 화면의 다크·라이트 테마입니다. 시험용 데이터를 사용했으며 앱 UI는 영어입니다.</sub>
 
 </div>
 
@@ -39,6 +40,14 @@ Lore는 프로젝트의 결정과 이유, 기억할 문제, 실패와 해결 경
 - **여러 PC의 충돌 검토** — 양쪽 이력이 갈라지면 근거 대화와 선택지를 확인하고, 최종 문서를 미리 본 뒤 반영·공유합니다.
 - **중단 후 복구** — 대기·실패 작업을 확인하고 다시 시도하거나 실패한 기록 구간을 넘길 수 있습니다. 동기화의 검색 갱신·전송 실패도 상태를 보존합니다.
 - **트레이에서 제어** — 일시 중지, 모델·훅 설정, 라이트·다크 테마를 지원합니다.
+
+<details>
+<summary>설정과 세션 큐 화면</summary>
+
+<img src="docs/screenshots/settings.png" alt="영어로 표시되는 기록 모델·훅 설정" width="400" />
+<img src="docs/screenshots/queue.png" alt="기록 중·대기 중인 세션을 보여 주는 영어 큐 화면" width="400" />
+
+</details>
 
 ## 동작 흐름
 
@@ -76,7 +85,7 @@ pnpm tauri dev                  # 개발용 실행, 화면 변경 시 새로고�
 pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
 ```
 
-훅 CLI는 빌드·패키징에 함께 포함됩니다. 제품 이름은 **Lore**로 정했으며, 현재 앱 번들·CLI·데이터 식별자는 기존 **`qmd-memory`**를 사용합니다. 아래 명령도 현재 실행 파일 이름을 기준으로 합니다. CLI가 셸 PATH에 자동 등록되지는 않으므로 필요하면 전체 경로로 실행합니다. macOS 번들에서는 `qmd-memory.app/Contents/MacOS/qmd-memory-cli`, Windows에서는 앱과 같은 폴더의 `qmd-memory-cli.exe`입니다.
+훅 CLI는 빌드·패키징에 함께 포함됩니다. 제품 이름은 **Lore**로 정했으며, 현재 실행 파일·CLI·데이터 식별자는 기존 **`qmd-memory`**를 사용합니다. 아래 명령도 현재 실행 파일 이름을 기준으로 합니다. CLI가 셸 PATH에 자동 등록되지는 않으므로 필요하면 전체 경로로 실행합니다. macOS 번들에서는 `Lore.app/Contents/MacOS/qmd-memory-cli`, Windows에서는 앱과 같은 폴더의 `qmd-memory-cli.exe`입니다.
 
 ### 기억 저장소 연결
 
@@ -89,7 +98,7 @@ pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
    ```
 
 3. 기억을 읽을 코딩 도구에 qmd MCP를 연결합니다. `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`, 색인 이름을 `doctor`가 보여 준 경로·값에 맞추고, 에이전트에게 필요할 때 프로젝트 기억을 검색하라는 지침을 줍니다.
-4. 앱을 다시 켜고 **설정 → 훅 연결**에서 Claude Code 또는 Codex를 연결합니다. Codex에서는 필요한 경우 `/hooks`에서 새 훅을 신뢰로 표시합니다.
+4. 앱을 다시 켜고 **Settings → Hook connections**에서 Claude Code 또는 Codex를 연결합니다. Codex에서는 필요한 경우 `/hooks`에서 새 훅을 신뢰로 표시합니다.
 5. Git 프로젝트에서 작업한 세션이 종료되거나 압축되면 트레이에서 기록 결과를 확인합니다.
 
 앱이 꺼져 있어도 훅은 큐에 등록하며, 앱을 다시 켜면 처리합니다. 훅이 실행되지 않은 세션은 자동으로 찾지 않습니다. 필요하면 `qmd-memory-cli scan`으로 직접 큐에 넣습니다.
@@ -101,10 +110,12 @@ pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
 각 PC에 같은 **기억 Git 저장소**를 clone하고 앱에 그 PC의 경로를 지정합니다. 소스 프로젝트의 체크아웃 이름이 다르면 [고정 프로젝트 ID](docs/multiplatform.md#고정-프로젝트-id)를 사용합니다.
 
 1. 로컬에서 기록된 문서를 검토하고 커밋합니다.
-2. **동기화 → 공유 저장소 확인**으로 현재 브랜치의 upstream을 확인합니다.
+2. **Sync → Check remote**으로 현재 브랜치의 upstream을 확인합니다.
 3. 한쪽에만 새 커밋이 있으면 가져오기·전송과 이 PC의 검색 갱신을 처리합니다.
 4. 양쪽 이력이 갈라지면 비교 자료를 준비합니다. 같은 프로젝트나 공통 기억의 변경은 Git 줄 충돌이 없어도 모델로 비교합니다.
 5. 근거를 읽고 항목마다 선택한 뒤, 최종 문서 미리보기를 확인하고 반영합니다. 앱이 병합 커밋·검색 갱신·push를 처리하며 강제 push는 하지 않습니다.
+
+<img src="docs/screenshots/sync-review.png" alt="영어 동기화 검토 화면의 근거 대화와 선택지" width="900" />
 
 **선택지를 고르면 처리할 수 있고, 문서를 직접 수정하는 것은 선택 사항입니다.** 5분마다 자동 동기화는 기본 꺼짐입니다. 켜면 커밋된 이력을 확인하고, 검토가 필요할 때 새 기억 기록을 대기시킵니다. 모델 비교와 최종 반영은 직접 진행합니다. 미커밋 문서를 자동 커밋하거나 stash하지 않습니다.
 

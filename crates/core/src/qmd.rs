@@ -28,11 +28,11 @@ fn parse_results(output: &str) -> Result<Value> {
     let mut offset = 0;
     for line in output.split_inclusive('\n') {
         if line.trim_start().starts_with('[') {
-            return serde_json::from_str(output[offset..].trim()).map_err(|error| Error::transient(format!("qmd 검색 결과를 읽지 못했습니다: {error}")));
+            return serde_json::from_str(output[offset..].trim()).map_err(|error| Error::transient(format!("Could not read qmd search results: {error}")));
         }
         offset += line.len();
     }
-    Err(Error::transient("qmd 검색 결과가 비어 있습니다."))
+    Err(Error::transient("qmd search returned no results."))
 }
 
 pub fn has_collection(config_text: &str, name: &str) -> bool {
@@ -54,7 +54,7 @@ impl Qmd {
 
     fn run(&self, args: &[&str], limit: &dyn Fn() -> Duration) -> Result<String> {
         if self.command.is_empty() {
-            return Err(Error::transient("qmd 실행 경로를 찾지 못했습니다. 설정에서 qmd 명령을 지정하십시오."));
+            return Err(Error::transient("qmd was not found. Set the qmd command in settings."));
         }
         let mut full = self.command.clone();
         full.extend(["--index".to_string(), self.index.clone()]);

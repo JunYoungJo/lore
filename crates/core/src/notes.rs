@@ -25,7 +25,7 @@ fn read_folder(root: &Path, relative: &str, notes: &mut BTreeMap<String, String>
         Err(error) => return Err(error.into()),
     };
     if metadata.file_type().is_symlink() {
-        return Err(Error::permanent(format!("기억 폴더에 심볼릭 링크를 쓸 수 없습니다: {relative}")));
+        return Err(Error::permanent(format!("Symlinks are not allowed in memory folders: {relative}")));
     }
     for entry in std::fs::read_dir(&folder)? {
         let entry = entry?;
@@ -33,7 +33,7 @@ fn read_folder(root: &Path, relative: &str, notes: &mut BTreeMap<String, String>
         let kind = entry.file_type()?;
         if !kind.is_file() || !name.ends_with(".md") {
             if kind.is_symlink() && name.ends_with(".md") {
-                return Err(Error::permanent(format!("기억 문서에 심볼릭 링크를 쓸 수 없습니다: {relative}/{name}")));
+                return Err(Error::permanent(format!("Symlinks are not allowed for memory notes: {relative}/{name}")));
             }
             continue;
         }

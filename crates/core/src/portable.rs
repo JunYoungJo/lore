@@ -40,13 +40,13 @@ struct Link {
 
 fn file_at(root: &Path, relative: &str) -> Result<std::path::PathBuf> {
     if relative.contains('\\') || !relative.ends_with(".md") || Path::new(relative).components().any(|part| !matches!(part, std::path::Component::Normal(_))) {
-        return Err(Error::permanent("링크 이전 계획에 잘못된 경로가 있습니다."));
+        return Err(Error::permanent("The link migration plan contains an invalid path."));
     }
     let mut file = root.to_path_buf();
     for part in Path::new(relative).components() {
         file.push(part);
         match file.symlink_metadata() {
-            Ok(metadata) if metadata.file_type().is_symlink() => return Err(Error::permanent(format!("심볼릭 링크를 통해 이전할 수 없습니다: {relative}"))),
+            Ok(metadata) if metadata.file_type().is_symlink() => return Err(Error::permanent(format!("Cannot migrate through a symlink: {relative}"))),
             Ok(_) => {},
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {},
             Err(error) => return Err(error.into()),
@@ -162,7 +162,7 @@ pub fn migrate(root: &Path, journal: &Path, apply: bool) -> Result<Report> {
     };
     let plan = if let Some(bytes) = &pending { serde_json::from_slice::<Plan>(bytes)? } else { prepare(root)? };
     if plan.root != root.to_string_lossy() {
-        return Err(Error::permanent("중단된 링크 이전의 기억 저장소가 다릅니다. 이전 설정으로 복구한 뒤 다시 실행하십시오."));
+        return Err(Error::permanent("The interrupted link migration uses a different memory folder. Restore the previous setting and retry."));
     }
     let mut report = Report { rewritten: plan.rewritten, unresolved: plan.unresolved.clone(), resuming: pending.is_some(), ..Report::default() };
     for path in plan.writes.keys() {
@@ -173,9 +173,9 @@ pub fn migrate(root: &Path, journal: &Path, apply: bool) -> Result<Report> {
     // partial writes, but refuse to overwrite edits made outside this command.
     for (path, updated) in &plan.writes {
         let current = std::fs::read_to_string(file_at(root, path)?)?;
-        let base = plan.base.get(path).ok_or_else(|| Error::permanent("링크 이전 계획의 원본 백업이 없습니다."))?;
+        let base = plan.base.get(path).ok_or_else(|| Error::permanent("The link migration plan has no original backup."))?;
         if current != *base && current != *updated {
-            return Err(Error::permanent(format!("링크 이전 이후 외부에서 바뀐 파일입니다: {path}")));
+            return Err(Error::permanent(format!("The file was changed externally after link migration: {path}")));
         }
     }
     let bytes = serde_json::to_vec_pretty(&plan)?;
@@ -205,7 +205,7 @@ mod tests {
         let source = root.join("sources/claude/s1.md");
         std::fs::create_dir_all(note.parent().unwrap()).unwrap();
         std::fs::create_dir_all(source.parent().unwrap()).unwrap();
-        let old_source = "# 세션\n\n## L7 · 사용자\n\n로그만 남기십시오.\n";
+        let old_source = "# Session\n\n## L7 · 사용자\n\n로그만 남기십시오.\n";
         let old_note = "- [L7](<D:/doc/knowledge/sources/claude/s1.md:3>) — 로그만 남기십시오.\n";
         std::fs::write(&note, old_note).unwrap();
         std::fs::write(&source, old_source).unwrap();

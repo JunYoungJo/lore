@@ -9,7 +9,7 @@ const KEEP_TAIL = 2;
 
 type Item = { type: "row"; row: DiffRow; key: number } | { type: "fold"; start: number; hidden: number };
 
-const ROW_LABEL: Record<RowKind, string> = { same: "같음", changed: "바뀜", removed: "삭제", added: "추가" };
+const ROW_LABEL: Record<RowKind, string> = { same: "Unchanged", changed: "Changed", removed: "Deleted", added: "Added" };
 
 function Text({ segments }: { segments: Segment[] }) {
   return (
@@ -70,34 +70,34 @@ export function DiffView({ path, rows }: { path: string; rows: DiffRow[] }) {
   const anyFolded = items.some((item) => item.type === "fold");
 
   return (
-    <section className="diff" aria-label={`${path} 변경 내용`}>
+    <section className="diff" aria-label={`Changes in ${path}`}>
       <div className="diff-bar">
         <span className="diff-path mono" title={path}>
           {path}
         </span>
-        <span className="diff-stat del">−{stats.removed}줄</span>
-        <span className="diff-stat add">+{stats.added}줄</span>
+        <span className="diff-stat del">−{stats.removed} lines</span>
+        <span className="diff-stat add">+{stats.added} lines</span>
         <span className="legend">
-          <i className="sw del" /> 지운 글 <i className="sw add" /> 넣은 글
+          <i className="sw del" /> Removed <i className="sw add" /> Added
         </span>
         {(anyFolded || showAll) && (
           <button type="button" className="link-btn diff-toggle" onClick={() => setShowAll(!showAll)}>
-            {showAll ? "긴 부분 접기" : "모두 펼치기"}
+            {showAll ? "Fold unchanged lines" : "Expand all"}
           </button>
         )}
       </div>
       <div className="diff-head">
-        <div>마지막 커밋</div>
-        <div>지금</div>
+        <div>Last commit</div>
+        <div>Current</div>
       </div>
-      <div className="diff-rows" role="table" aria-label="나란히 보기">
+      <div className="diff-rows" role="table" aria-label="Side-by-side diff">
         {items.map((item) =>
           item.type === "fold" ? (
-            <button key={`fold-${item.start}`} type="button" className="diff-fold" aria-label={`같은 줄 ${item.hidden}개 펼치기`} onClick={() => setOpened(new Set(opened).add(item.start))}>
-              ⋯ 같은 줄 {item.hidden}개 펼치기 ⋯
+            <button key={`fold-${item.start}`} type="button" className="diff-fold" aria-label={`Expand ${item.hidden} unchanged lines`} onClick={() => setOpened(new Set(opened).add(item.start))}>
+              ⋯ Expand {item.hidden} unchanged lines ⋯
             </button>
           ) : (
-            <div key={item.key} role="row" aria-label={`${item.row.rightNo ?? item.row.leftNo}줄 ${ROW_LABEL[item.row.kind]}`} className={`drow ${item.row.kind}`}>
+            <div key={item.key} role="row" aria-label={`Line ${item.row.rightNo ?? item.row.leftNo}: ${ROW_LABEL[item.row.kind]}`} className={`drow ${item.row.kind}`}>
               <Cell no={item.row.leftNo} segments={item.row.left} side="left" />
               <Cell no={item.row.rightNo} segments={item.row.right} side="right" />
             </div>

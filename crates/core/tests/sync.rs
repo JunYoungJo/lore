@@ -406,7 +406,7 @@ fn missing_anchors_and_removing_existing_evidence_are_rejected() {
     assert!(sync::approve(&f.local, &f.journal, &plan.id, &choices)
         .unwrap_err()
         .message
-        .contains("앵커"));
+        .contains("anchor"));
 }
 
 #[test]

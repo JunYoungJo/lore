@@ -100,7 +100,7 @@ impl CliRecorder {
                     r#"{"mcpServers":{}}"#,
                     "--no-session-persistence",
                     "--system-prompt",
-                    "제공된 데이터와 지침만 읽어 한국어 결과를 지정된 JSON Schema에 맞게 작성하십시오. 도구를 사용하지 마십시오.",
+                    "Use only the supplied data and instructions. Return the required JSON Schema in the language specified by the task. Do not use tools.",
                     "--json-schema",
                     schema_text.as_str(),
                     "--output-format",
@@ -156,32 +156,32 @@ impl CliRecorder {
             atomic_write(&response_path, text.as_bytes())?;
             text
         } else {
-            std::fs::read_to_string(&response_path).map_err(|_| Error::rejected("Codex가 응답 파일을 남기지 않았습니다."))?
+            std::fs::read_to_string(&response_path).map_err(|_| Error::rejected("Codex did not write a response file."))?
         };
-        serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("모델 응답 형식이 올바르지 않습니다: {error}")))
+        serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
     }
 }
 
 fn claude_result(stdout: &str) -> Result<String> {
-    let envelope: Value = serde_json::from_str(stdout.trim()).map_err(|error| Error::transient(format!("Claude 응답을 읽지 못했습니다: {error}")))?;
+    let envelope: Value = serde_json::from_str(stdout.trim()).map_err(|error| Error::transient(format!("Could not read the Claude response: {error}")))?;
     if envelope.get("is_error").and_then(Value::as_bool).unwrap_or(false) {
-        let message = envelope.get("result").and_then(Value::as_str).unwrap_or("Claude 기록 모델 실행 실패");
+        let message = envelope.get("result").and_then(Value::as_str).unwrap_or("Claude recording model failed");
         return Err(Error::transient(message.to_string()));
     }
     if let Some(structured) = envelope.get("structured_output").filter(|value| !value.is_null()) {
         return Ok(structured.to_string());
     }
-    envelope.get("result").and_then(Value::as_str).map(str::to_string).ok_or_else(|| Error::rejected("Claude 응답에 결과가 없습니다."))
+    envelope.get("result").and_then(Value::as_str).map(str::to_string).ok_or_else(|| Error::rejected("The Claude response contains no result."))
 }
 
 pub fn parse_proposal(text: &str) -> Result<Proposal> {
-    serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("모델 응답 형식이 올바르지 않습니다: {error}")))
+    serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
 }
 
 impl Recorder for CliRecorder {
     fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal> {
         let prompt = build_prompt(payload);
-        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("모델 응답 형식이 올바르지 않습니다: {error}")))
+        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
     }
 }
 

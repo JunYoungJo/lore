@@ -17,9 +17,10 @@ Keep it in Markdown, find it with qmd, and carry it between PCs with Git.
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
-<img src="docs/screenshots/sync-review.png" alt="Lore synchronization review: compare source conversations and choose which policy to keep" width="900" />
+<img src="docs/screenshots/main.png" alt="Lore main tray window in dark mode: recording status, queue counts, and recent memory notes" width="400" />
+<img src="docs/screenshots/main-light.png" alt="Lore main tray window in light mode" width="400" />
 
-<sub>The implemented review UI with synthetic example data and a recorded model response. UI language is currently Korean.</sub>
+<sub>The main tray window in dark and light themes. Screenshots use synthetic example data; the UI is in English.</sub>
 
 </div>
 
@@ -39,6 +40,14 @@ Lore preserves that context as topic-based notes: decisions and their reasons, p
 - **Git sharing with conflict review** — Compare diverged histories, inspect the supporting conversations, choose a proposed resolution, and preview the resulting documents before applying and sharing.
 - **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. Synchronization also retains its state after indexing or push failures.
 - **Tray controls** — Pause recording, configure the model and hooks, and switch between light and dark themes.
+
+<details>
+<summary>Settings and session queue</summary>
+
+<img src="docs/screenshots/settings.png" alt="Recording model and hook connection settings" width="400" />
+<img src="docs/screenshots/queue.png" alt="Session queue with recording and pending groups" width="400" />
+
+</details>
 
 ## How it works
 
@@ -76,7 +85,7 @@ pnpm tauri dev                 # Development app with frontend hot reload
 pnpm tauri build               # Desktop bundle for the current platform
 ```
 
-The build includes the hook CLI as a sidecar. The product name is now **Lore**; the current application bundle, CLI, and data identifiers still use **`qmd-memory`**. Commands below use those existing names. The CLI is not automatically added to your shell's PATH; use its full path when needed. In a macOS bundle it is `qmd-memory.app/Contents/MacOS/qmd-memory-cli`; on Windows it is `qmd-memory-cli.exe` beside the app.
+The build includes the hook CLI as a sidecar. The product name is now **Lore**; the executable, CLI, and data identifiers still use **`qmd-memory`**. Commands below use those existing names. The CLI is not automatically added to your shell's PATH; use its full path when needed. In a macOS bundle it is `Lore.app/Contents/MacOS/qmd-memory-cli`; on Windows it is `qmd-memory-cli.exe` beside the app.
 
 ### Set up your memory
 
@@ -89,7 +98,7 @@ The build includes the hook CLI as a sidecar. The product name is now **Lore**; 
    ```
 
 3. Configure qmd MCP in the coding tools that should read the memory. Match `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`, and the index name to the paths and values reported by `doctor`. Give those agents instructions to search the memory when relevant.
-4. Reopen the app and explicitly connect Claude Code and/or Codex in **Settings → Hook connections** (`설정 → 훅 연결`). Trust the new hooks in Codex's `/hooks` interface when required.
+4. Reopen the app and explicitly connect Claude Code and/or Codex in **Settings → Hook connections**. Trust the new hooks in Codex's `/hooks` interface when required.
 5. Work in a Git project. When a connected session ends or compacts, check the tray app for the recording result.
 
 Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `qmd-memory-cli scan` is available for manual recovery.
@@ -101,10 +110,12 @@ For an existing Windows installation or older absolute source links, follow the 
 Clone the same **memory repository** on each PC and set each app's memory folder to its local checkout. Give source projects a stable [project ID](docs/multiplatform.md#고정-프로젝트-id) when checkout names differ.
 
 1. Review and commit your local notes.
-2. Open **Synchronization** (`동기화`) and check the configured upstream.
+2. Open **Sync** and check the configured upstream.
 3. If only one side has new commits, Lore synchronizes that history and refreshes this PC's index.
 4. If the histories diverge, inspect the comparison. Changes within the same project, or involving shared notes, require a model comparison even when Git reports no line conflict.
 5. Read the evidence, choose a resolution for each issue, inspect the full preview, and apply it. Lore creates a merge commit, refreshes the index, and pushes without force.
+
+<img src="docs/screenshots/sync-review.png" alt="English sync review showing source evidence and resolution options" width="900" />
 
 You can resolve an issue by choosing an option; editing a document by hand is optional. **Sync every five minutes is off by default.** When enabled, it checks committed history and pauses new memory recording when review is needed. Model comparison and final approval remain manual. Uncommitted files are not automatically committed or stashed.
 

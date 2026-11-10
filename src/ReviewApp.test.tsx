@@ -22,7 +22,7 @@ vi.mock("@/ipc/api", () => api);
 
 import { ReviewApp } from "@/ReviewApp";
 
-const DEFAULT_MESSAGE = "기억 기록 검토 (2026-11-05)";
+const DEFAULT_MESSAGE = "Review memory notes (2026-11-05)";
 
 function review(overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot {
   return {
@@ -76,7 +76,7 @@ beforeEach(() => {
   api.beginReview.mockResolvedValue(undefined);
   api.endReview.mockResolvedValue(undefined);
   api.reviewDiff.mockImplementation((path: string) =>
-    Promise.resolve(path === "projects/demo/bg.md" ? bgDiff : [{ kind: "added", leftNo: null, left: null, rightNo: 1, right: [{ kind: "added", text: "새 문서 본문" }] }]),
+    Promise.resolve(path === "projects/demo/bg.md" ? bgDiff : [{ kind: "added", leftNo: null, left: null, rightNo: 1, right: [{ kind: "added", text: "New note 본문" }] }]),
   );
 });
 
@@ -84,26 +84,26 @@ describe("review window", () => {
   it("pauses recording and groups the changed notes by project with common first", async () => {
     api.getReview.mockResolvedValue(review());
     render(<ReviewApp />);
-    const list = await screen.findByRole("list", { name: "바뀐 기억 문서" });
+    const list = await screen.findByRole("list", { name: "Changed memory notes" });
     expect(api.beginReview).toHaveBeenCalledTimes(1);
     const groups = within(list).getAllByRole("list");
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual(["common", "alpha", "demo"]);
     expect(within(groups[0]).getAllByRole("listitem").map((item) => item.textContent)).toEqual([expect.stringContaining("old.md")]);
     expect(within(groups[2]).getAllByRole("listitem").map((item) => item.textContent)).toEqual([expect.stringContaining("bg.md"), expect.stringContaining("new.md")]);
-    expect(within(list).getByText("수정")).toBeInTheDocument();
-    expect(within(list).getAllByText("새 문서")).toHaveLength(2);
-    expect(within(list).getByText("삭제")).toBeInTheDocument();
+    expect(within(list).getByText("Modified")).toBeInTheDocument();
+    expect(within(list).getAllByText("New note")).toHaveLength(2);
+    expect(within(list).getByText("Deleted")).toBeInTheDocument();
     expect(within(list).getByText(/demo · 로그만 남기도록 바꿨습니다\./)).toBeInTheDocument();
     expect(within(list).queryByText("projects/demo")).not.toBeInTheDocument();
-    expect(screen.getByText("함께 커밋되는 다른 파일 2개 (대화 사본, qmd 설정 등)")).toBeInTheDocument();
-    expect(await screen.findByRole("region", { name: "common/old.md 변경 내용" })).toBeInTheDocument();
+    expect(screen.getByText("Other files included: 2 (conversation copies and other repository files)")).toBeInTheDocument();
+    expect(await screen.findByRole("region", { name: "Changes in common/old.md" })).toBeInTheDocument();
     expect(api.reviewDiff).toHaveBeenCalledWith("common/old.md");
   });
 
   it("leaves closing to the window's own title bar", async () => {
     api.getReview.mockResolvedValue(review());
     render(<ReviewApp />);
-    await screen.findByRole("list", { name: "바뀐 기억 문서" });
+    await screen.findByRole("list", { name: "Changed memory notes" });
     expect(screen.queryByRole("button", { name: "닫기" })).not.toBeInTheDocument();
   });
 
@@ -111,18 +111,18 @@ describe("review window", () => {
     api.getReview.mockResolvedValue(review());
     render(<ReviewApp />);
     await userEvent.click(await screen.findByRole("button", { name: /bg\.md/ }));
-    const diff = await screen.findByRole("region", { name: "projects/demo/bg.md 변경 내용" });
+    const diff = await screen.findByRole("region", { name: "Changes in projects/demo/bg.md" });
     expect(api.reviewDiff).toHaveBeenLastCalledWith("projects/demo/bg.md");
-    expect(within(diff).getByText("마지막 커밋")).toBeInTheDocument();
-    expect(within(diff).getByText("지금")).toBeInTheDocument();
-    expect(within(diff).getByText("−1줄")).toBeInTheDocument();
-    expect(within(diff).getByText("+2줄")).toBeInTheDocument();
-    const changed = within(diff).getByRole("row", { name: "3줄 바뀜" });
+    expect(within(diff).getByText("Last commit")).toBeInTheDocument();
+    expect(within(diff).getByText("Current")).toBeInTheDocument();
+    expect(within(diff).getByText("−1 lines")).toBeInTheDocument();
+    expect(within(diff).getByText("+2 lines")).toBeInTheDocument();
+    const changed = within(diff).getByRole("row", { name: "Line 3: Changed" });
     const [left, right] = within(changed).getAllByRole("cell");
     expect(within(left).getByText("팝업을 띄웁니다.").tagName).toBe("DEL");
     expect(within(right).getByText("팝업 없이 로그만 남깁니다.").tagName).toBe("INS");
     expect(within(left).queryByText("팝업 없이 로그만 남깁니다.")).not.toBeInTheDocument();
-    const added = within(diff).getByRole("row", { name: "5줄 추가" });
+    const added = within(diff).getByRole("row", { name: "Line 5: Added" });
     expect(within(added).getAllByRole("cell")[1]).toHaveTextContent("## 변경 이유");
   });
 
@@ -131,16 +131,16 @@ describe("review window", () => {
     api.getReview.mockResolvedValue(review());
     api.reviewDiff.mockResolvedValue(rows);
     render(<ReviewApp />);
-    const diff = await screen.findByRole("region", { name: "common/old.md 변경 내용" });
+    const diff = await screen.findByRole("region", { name: "Changes in common/old.md" });
     expect(diff).toHaveTextContent("같은 줄 2");
     expect(diff).not.toHaveTextContent("같은 줄 5");
     expect(diff).toHaveTextContent("같은 줄 9");
     expect(diff).toHaveTextContent("넣은 줄 5");
-    await userEvent.click(within(diff).getByRole("button", { name: "모두 펼치기" }));
+    await userEvent.click(within(diff).getByRole("button", { name: "Expand all" }));
     expect(diff).toHaveTextContent("같은 줄 5");
-    await userEvent.click(within(diff).getByRole("button", { name: "긴 부분 접기" }));
+    await userEvent.click(within(diff).getByRole("button", { name: "Fold unchanged lines" }));
     expect(diff).not.toHaveTextContent("같은 줄 5");
-    await userEvent.click(within(diff).getByRole("button", { name: "같은 줄 6개 펼치기" }));
+    await userEvent.click(within(diff).getByRole("button", { name: "Expand 6 unchanged lines" }));
     expect(diff).toHaveTextContent("같은 줄 5");
   });
 
@@ -149,93 +149,93 @@ describe("review window", () => {
     api.getReview.mockResolvedValueOnce(review()).mockResolvedValueOnce(review({ files: rest }));
     api.commitReview.mockResolvedValue("abc1234");
     render(<ReviewApp />);
-    await screen.findByRole("list", { name: "바뀐 기억 문서" });
+    await screen.findByRole("list", { name: "Changed memory notes" });
     expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByRole("button", { name: "선택한 문서 0개 커밋" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
 
-    await userEvent.click(checkbox("projects/demo/bg.md 선택"));
-    const message = screen.getByLabelText("커밋 메시지");
+    await userEvent.click(checkbox("Select projects/demo/bg.md"));
+    const message = screen.getByLabelText("Commit message");
     expect(message).toHaveValue(DEFAULT_MESSAGE);
     await userEvent.type(message, " 1차");
-    await userEvent.click(screen.getByRole("button", { name: "선택한 문서 1개 커밋" }));
+    await userEvent.click(screen.getByRole("button", { name: "Commit selected (1)" }));
     expect(api.commitReview).toHaveBeenCalledWith(`${DEFAULT_MESSAGE} 1차`, ["projects/demo/bg.md"]);
-    expect(await screen.findByText("커밋했습니다 (abc1234)")).toBeInTheDocument();
+    expect(await screen.findByText("Committed (abc1234)")).toBeInTheDocument();
 
-    expect(await screen.findByRole("button", { name: "선택한 문서 0개 커밋" })).toBeDisabled();
-    expect(screen.queryByRole("checkbox", { name: "projects/demo/bg.md 선택" })).not.toBeInTheDocument();
-    expect(checkbox("projects/demo/new.md 선택")).not.toBeChecked();
-    expect(screen.getByLabelText("커밋 메시지")).toHaveValue(DEFAULT_MESSAGE);
+    expect(await screen.findByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
+    expect(screen.queryByRole("checkbox", { name: "Select projects/demo/bg.md" })).not.toBeInTheDocument();
+    expect(checkbox("Select projects/demo/new.md")).not.toBeChecked();
+    expect(screen.getByLabelText("Commit message")).toHaveValue(DEFAULT_MESSAGE);
   });
 
   it("checks a whole project or every note at once", async () => {
     api.getReview.mockResolvedValue(review());
     api.commitReview.mockResolvedValue("abc1234");
     render(<ReviewApp />);
-    await screen.findByRole("list", { name: "바뀐 기억 문서" });
+    await screen.findByRole("list", { name: "Changed memory notes" });
 
-    await userEvent.click(checkbox("demo 전체 선택"));
-    expect(checkbox("projects/demo/bg.md 선택")).toBeChecked();
-    expect(checkbox("projects/demo/new.md 선택")).toBeChecked();
-    expect(checkbox("projects/alpha/a.md 선택")).not.toBeChecked();
-    expect(checkbox("demo 전체 선택")).toBeChecked();
-    expect(checkbox("전체 선택")).toHaveProperty("indeterminate", true);
-    expect(screen.getByRole("button", { name: "선택한 문서 2개 커밋" })).toBeEnabled();
+    await userEvent.click(checkbox("Select all in demo"));
+    expect(checkbox("Select projects/demo/bg.md")).toBeChecked();
+    expect(checkbox("Select projects/demo/new.md")).toBeChecked();
+    expect(checkbox("Select projects/alpha/a.md")).not.toBeChecked();
+    expect(checkbox("Select all in demo")).toBeChecked();
+    expect(checkbox("Select all")).toHaveProperty("indeterminate", true);
+    expect(screen.getByRole("button", { name: "Commit selected (2)" })).toBeEnabled();
 
-    await userEvent.click(checkbox("projects/demo/new.md 선택"));
-    expect(checkbox("demo 전체 선택")).not.toBeChecked();
-    expect(checkbox("demo 전체 선택")).toHaveProperty("indeterminate", true);
-    await userEvent.click(checkbox("demo 전체 선택"));
-    expect(checkbox("projects/demo/new.md 선택")).toBeChecked();
+    await userEvent.click(checkbox("Select projects/demo/new.md"));
+    expect(checkbox("Select all in demo")).not.toBeChecked();
+    expect(checkbox("Select all in demo")).toHaveProperty("indeterminate", true);
+    await userEvent.click(checkbox("Select all in demo"));
+    expect(checkbox("Select projects/demo/new.md")).toBeChecked();
 
-    await userEvent.click(checkbox("전체 선택"));
-    expect(checkbox("전체 선택")).toBeChecked();
-    expect(checkbox("전체 선택")).toHaveProperty("indeterminate", false);
-    await userEvent.click(screen.getByRole("button", { name: "선택한 문서 4개 커밋" }));
+    await userEvent.click(checkbox("Select all"));
+    expect(checkbox("Select all")).toBeChecked();
+    expect(checkbox("Select all")).toHaveProperty("indeterminate", false);
+    await userEvent.click(screen.getByRole("button", { name: "Commit selected (4)" }));
     expect(api.commitReview).toHaveBeenCalledWith(DEFAULT_MESSAGE, ["common/old.md", "projects/alpha/a.md", "projects/demo/bg.md", "projects/demo/new.md"]);
   });
 
   it("unchecks every note from the select-all box", async () => {
     api.getReview.mockResolvedValue(review());
     render(<ReviewApp />);
-    await screen.findByRole("list", { name: "바뀐 기억 문서" });
-    await userEvent.click(checkbox("전체 선택"));
-    await userEvent.click(checkbox("전체 선택"));
+    await screen.findByRole("list", { name: "Changed memory notes" });
+    await userEvent.click(checkbox("Select all"));
+    await userEvent.click(checkbox("Select all"));
     expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByRole("button", { name: "선택한 문서 0개 커밋" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
   });
 
   it("commits the other files alone when no note changed", async () => {
     api.getReview.mockResolvedValue(review({ files: [] }));
     api.commitReview.mockResolvedValue("abc1234");
     render(<ReviewApp />);
-    expect(await screen.findByText("마지막 커밋 이후 바뀐 기억 문서가 없습니다.")).toBeInTheDocument();
+    expect(await screen.findByText("No memory notes have changed since the last commit.")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "커밋" }));
+    await userEvent.click(screen.getByRole("button", { name: "Commit" }));
     expect(api.commitReview).toHaveBeenCalledWith(DEFAULT_MESSAGE, []);
   });
 
   it("has nothing to commit when nothing changed", async () => {
     api.getReview.mockResolvedValue(review({ files: [], others: [] }));
     render(<ReviewApp />);
-    expect(await screen.findByText("마지막 커밋 이후 바뀐 기억 문서가 없습니다.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "커밋" })).toBeDisabled();
+    expect(await screen.findByText("No memory notes have changed since the last commit.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Commit" })).toBeDisabled();
   });
 
   it("waits for the recording in progress and starts once it finishes", async () => {
     api.getReview.mockResolvedValueOnce(review({ waiting: true, files: [], others: [], message: "" })).mockResolvedValueOnce(review());
     render(<ReviewApp />);
-    expect(await screen.findByText("지금 기록 중인 세션이 끝나면 검토를 시작합니다.")).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "바뀐 기억 문서" })).not.toBeInTheDocument();
+    expect(await screen.findByText("Review will begin after the current recording finishes.")).toBeInTheDocument();
+    expect(screen.queryByRole("list", { name: "Changed memory notes" })).not.toBeInTheDocument();
     await act(async () => {
       listeners.forEach((listener) => listener());
     });
-    expect(await screen.findByRole("list", { name: "바뀐 기억 문서" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Changed memory notes" })).toBeInTheDocument();
   });
 
   it("explains when the memory store is not a git repository", async () => {
     api.getReview.mockResolvedValue(review({ repository: false, files: [], others: [], message: "" }));
     render(<ReviewApp />);
-    expect(await screen.findByText("D:/doc/knowledge는 git 저장소가 아니어서 검토할 수 없습니다.")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /커밋/ })).not.toBeInTheDocument();
+    expect(await screen.findByText("D:/doc/knowledge is not a Git repository.")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Commit/ })).not.toBeInTheDocument();
   });
 });

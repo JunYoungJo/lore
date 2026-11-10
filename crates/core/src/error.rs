@@ -37,19 +37,19 @@ impl std::error::Error for Error {}
 
 impl From<rusqlite::Error> for Error {
     fn from(error: rusqlite::Error) -> Self {
-        Self::transient(format!("상태 DB 오류: {error}"))
+        Self::transient(format!("State database error: {error}"))
     }
 }
 
 impl From<std::io::Error> for Error {
     fn from(error: std::io::Error) -> Self {
-        Self::transient(format!("파일 오류: {error}"))
+        Self::transient(format!("File error: {error}"))
     }
 }
 
 impl From<serde_json::Error> for Error {
     fn from(error: serde_json::Error) -> Self {
-        Self::transient(format!("JSON 오류: {error}"))
+        Self::transient(format!("JSON error: {error}"))
     }
 }
 

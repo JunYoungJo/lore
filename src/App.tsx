@@ -11,13 +11,13 @@ import { useTheme } from "@/theme";
 import { BrandMark } from "@/ui/BrandMark";
 
 function statusLine(snapshot: Snapshot): string {
-  if (snapshot.current) return `기록 중 · ${snapshot.current.project}`;
-  if (snapshot.syncing) return "동기화 작업 중";
-  if (snapshot.sync?.blocked) return "동기화 확인 필요 · 기록 대기";
-  if (snapshot.reviewing) return "검토 중이라 기록을 멈춤";
-  if (snapshot.settings.paused) return "일시 중지됨";
-  if (snapshot.counts.ready > 0) return `대기 ${snapshot.counts.ready}건`;
-  return "대기 중";
+  if (snapshot.current) return `Recording · ${snapshot.current.project}`;
+  if (snapshot.syncing) return "Syncing";
+  if (snapshot.sync?.blocked) return "Sync review needed · Recording on hold";
+  if (snapshot.reviewing) return "Recording paused for review";
+  if (snapshot.settings.paused) return "Paused";
+  if (snapshot.counts.ready > 0) return `${snapshot.counts.ready} pending`;
+  return "Idle";
 }
 
 export function App() {
@@ -53,7 +53,7 @@ export function App() {
   if (!snapshot) {
     return (
       <main className="pop">
-        <div className="empty">{error ?? "상태를 불러오는 중입니다."}</div>
+        <div className="empty">{error ?? "Loading status…"}</div>
       </main>
     );
   }
@@ -67,21 +67,21 @@ export function App() {
       <header className="head">
         {view === "settings" ? (
           <>
-            <button type="button" className="icon-btn" title="뒤로" aria-label="뒤로" onClick={showStatus}>
+            <button type="button" className="icon-btn" title="Back" aria-label="Back" onClick={showStatus}>
               <ChevronLeft size={18} strokeWidth={1.9} />
             </button>
             <div className="head-text">
-              <div className="head-title">설정</div>
-              <div className="head-sub">qmd-memory {snapshot.version}</div>
+              <div className="head-title">Settings</div>
+              <div className="head-sub">Lore {snapshot.version}</div>
             </div>
           </>
         ) : view === "queue" ? (
           <>
-            <button type="button" className="icon-btn" title="뒤로" aria-label="뒤로" onClick={showStatus}>
+            <button type="button" className="icon-btn" title="Back" aria-label="Back" onClick={showStatus}>
               <ChevronLeft size={18} strokeWidth={1.9} />
             </button>
             <div className="head-text">
-              <div className="head-title">큐</div>
+              <div className="head-title">Queue</div>
               <div className="head-sub" title={status}>
                 <span className={dotClass} />
                 {status}
@@ -92,22 +92,22 @@ export function App() {
           <>
             <BrandMark />
             <div className="head-text">
-              <div className="head-title">qmd-memory</div>
+              <div className="head-title">Lore</div>
               <div className="head-sub" title={status}>
                 <span className={dotClass} />
                 {status}
               </div>
             </div>
-            <button type="button" className="icon-btn" title={paused ? "다시 시작" : "일시 중지"} aria-label={paused ? "다시 시작" : "일시 중지"} onClick={() => void togglePause()}>
+            <button type="button" className="icon-btn" title={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"} onClick={() => void togglePause()}>
               {paused ? <Play size={16} strokeWidth={1.9} /> : <Pause size={16} strokeWidth={1.9} />}
             </button>
           </>
         )}
-        <button type="button" className="icon-btn" title="테마" aria-label="테마 바꾸기" onClick={toggleTheme}>
+        <button type="button" className="icon-btn" title="Theme" aria-label="Toggle theme" onClick={toggleTheme}>
           {theme === "dark" ? <Sun size={16} strokeWidth={1.9} /> : <Moon size={16} strokeWidth={1.9} />}
         </button>
         {view === "status" && (
-          <button type="button" className="icon-btn" title="설정" aria-label="설정" onClick={showSettings}>
+          <button type="button" className="icon-btn" title="Settings" aria-label="Settings" onClick={showSettings}>
             <SettingsIcon size={16} strokeWidth={1.9} />
           </button>
         )}
@@ -134,7 +134,7 @@ export function App() {
         <footer className="foot">
           <button type="button" className="foot-btn" onClick={() => void api.openFolder("knowledge")}>
             <FolderOpen size={14} strokeWidth={1.9} />
-            기억 폴더
+            Memory folder
           </button>
           <span className="foot-path mono" title={snapshot.settings.knowledgeRoot}>
             {snapshot.settings.knowledgeRoot}

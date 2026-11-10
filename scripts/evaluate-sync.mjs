@@ -30,14 +30,14 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   git(folder, "init", "--bare", "--initial-branch=main", "remote.git");
   git(folder, "clone", "remote.git", "local");
   const local = join(folder, "local"); config(local);
-  const base = "# 오류 알림\n\n## 현재 방침\n\n오류 안내 방식은 미정이다.\n\n## 변경하지 않는 사항\n\n장비의 측정 동작은 그대로 유지한다.\n\n모든 모드의 데이터 보존 정책도 유지한다.\n\n새로운 오류 유형을 추가하지 않는다.\n\n기존 문서의 다른 절은 보존한다.\n\n## 현장 운영\n\n현장 안내 방식은 미정이다.\n\n## 원문 근거\n- [Windows L1](<../../sources/claude/windows-session.md#L1>)\n- [Mac L1](<../../sources/codex/mac-session.md#L1>)\n";
+  const base = "# Error notifications\n\n## Current policy\n\nThe error notification policy is undecided.\n\n## Unchanged behavior\n\nKeep the measurement behavior unchanged.\n\nKeep data retention unchanged in every mode.\n\nDo not add new error types.\n\nPreserve the other sections of this document.\n\n## Field operation\n\nThe field notification policy is undecided.\n\n## Sources\n- [Windows L1](<../../sources/claude/windows-session.md#L1>)\n- [Mac L1](<../../sources/codex/mac-session.md#L1>)\n";
   write(local, note, base);
-  write(local, "sources/claude/windows-session.md", '# Windows 예제\n\n<a id="L1"></a>\n## L1 · 사용자 · 2026-11-10T01:00:00Z\n\n오류 팝업은 빼고 로그만 남겨. 현장 작업자의 조작을 방해하면 안 돼.\n');
-  write(local, "sources/codex/mac-session.md", '# Mac 예제\n\n<a id="L1"></a>\n## L1 · 사용자 · 2026-11-10T02:00:00Z\n\n오류를 즉시 알아차려야 해. 오류가 나면 팝업을 띄워.\n');
+  write(local, "sources/claude/windows-session.md", '# Windows example\n\n<a id="L1"></a>\n## L1 · User · 2026-11-10T01:00:00Z\n\nSkip error popups and write to the log only. Do not interrupt the operator.\n');
+  write(local, "sources/codex/mac-session.md", '# Mac example\n\n<a id="L1"></a>\n## L1 · User · 2026-11-10T02:00:00Z\n\nOperators must notice errors immediately. Show a popup when an error occurs.\n');
   commit(local); git(local, "push", "-u", "origin", "main");
   git(folder, "clone", "remote.git", "other"); const other = join(folder, "other"); config(other);
-  write(local, note, base.replace("오류 안내 방식은 미정이다.", "오류 팝업 없이 로그만 남긴다. 현장 조작을 방해하지 않기 위한 방침이다.")); commit(local);
-  const remoteText = kind === "text-conflict" ? base.replace("오류 안내 방식은 미정이다.", "오류가 나면 팝업을 표시한다. 현장에서 즉시 오류를 알아차리기 위한 방침이다.") : base.replace("현장 안내 방식은 미정이다.", "오류가 나면 팝업을 항상 표시한다. 현장에서 즉시 오류를 알아차려야 한다.");
+  write(local, note, base.replace("The error notification policy is undecided.", "Log errors without popups to avoid interrupting field operation.")); commit(local);
+  const remoteText = kind === "text-conflict" ? base.replace("The error notification policy is undecided.", "Show an error popup so operators notice errors immediately.") : base.replace("The field notification policy is undecided.", "Always show an error popup. Operators must notice errors immediately.");
   write(other, note, remoteText); commit(other); git(other, "push");
   const data = join(folder, "app"); mkdirSync(data);
   writeFileSync(join(data, "settings.json"), JSON.stringify({ knowledgeRoot: local, backend, modelTimeoutSecs: 240, commands: { qmd: [process.execPath, join(root, "scripts/evaluation-index-fixture.mjs")] } }, null, 2));
@@ -55,7 +55,7 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   const applied = command("apply", plan.id, choicesPath);
   const finalText = readFileSync(join(local, note), "utf8");
   git(other, "pull", "--ff-only");
-  const checks = { isolatedBeforeApproval: isolated, completed: applied.plan === null, bothHistories: git(local, "show", "-s", "--format=%P").split(/\s+/).length === 2, exactPreview: finalText === preview[note], unchangedParagraph: finalText.includes("장비의 측정 동작은 그대로 유지한다."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
+  const checks = { isolatedBeforeApproval: isolated, completed: applied.plan === null, bothHistories: git(local, "show", "-s", "--format=%P").split(/\s+/).length === 2, exactPreview: finalText === preview[note], unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
   reports.push({ kind, backend, gitTextConflict: prepared.plan.files.some((file) => file.textConflict), analysis: plan.analysis, fixtureOnlyChoices: choices, finalText, checks, actualQmd: false });
   writeFileSync(join(output, "report.json"), JSON.stringify(reports, null, 2));
   process.stdout.write(`${Object.values(checks).every(Boolean) ? "통과" : "확인 필요"} · 모델 검토 ${plan.analysis.issues.length}건\n`);

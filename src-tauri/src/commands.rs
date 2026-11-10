@@ -57,10 +57,10 @@ fn hook_statuses() -> Vec<HookStatus> {
 
 #[tauri::command]
 pub fn connect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
-    let provider = Provider::parse(&provider).ok_or("알 수 없는 도구입니다.")?;
+    let provider = Provider::parse(&provider).ok_or("Unknown provider.")?;
     let cli = cli_path();
     if !qmd_memory_core::platform::is_executable(&cli) {
-        return Err(format!("훅이 실행할 CLI를 찾지 못했습니다: {}", cli.display()));
+        return Err(format!("Hook CLI not found: {}", cli.display()));
     }
     let config = hooks::config_path(provider);
     hooks::register_at(&config, provider, &cli, worker::now()).map_err(error)?;
@@ -70,7 +70,7 @@ pub fn connect_hook(app: AppHandle, provider: String) -> Result<HookStatus, Stri
 
 #[tauri::command]
 pub fn disconnect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
-    let provider = Provider::parse(&provider).ok_or("알 수 없는 도구입니다.")?;
+    let provider = Provider::parse(&provider).ok_or("Unknown provider.")?;
     let config = hooks::config_path(provider);
     hooks::unregister_at(&config, provider, worker::now()).map_err(error)?;
     let _ = app.emit("state-changed", ());
@@ -173,7 +173,7 @@ pub fn clear_activity(app: AppHandle, state: State<'_, AppState>) -> Result<usiz
 pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: EditableSettings) -> Result<(), String> {
     let mut merged = state.settings().edited(settings);
     if merged.knowledge_root != state.settings().knowledge_root && state.operation_busy() {
-        return Err("기록 또는 동기화 작업 중에는 기억 저장소 위치를 바꿀 수 없습니다.".into());
+        return Err("The memory folder cannot be changed while recording or syncing.".into());
     }
     merged.validate().map_err(error)?;
     merged.fill_missing_commands();
@@ -206,7 +206,7 @@ pub fn open_note(app: AppHandle, state: State<'_, AppState>, path: String) -> Re
     let root = state.settings().knowledge_root();
     let target = if Path::new(&path).is_absolute() { PathBuf::from(&path) } else { root.join(&path) };
     if !inside(&root, &target) {
-        return Err("기억 저장소 밖의 파일은 열 수 없습니다.".into());
+        return Err("Files outside the memory repository cannot be opened.".into());
     }
     app.opener().open_path(target.to_string_lossy().to_string(), None::<&str>).map_err(error)
 }
@@ -216,7 +216,7 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>, kind: String) -> 
     let folder = match kind.as_str() {
         "knowledge" => state.settings().knowledge_root(),
         "data" => state.paths.root.clone(),
-        _ => return Err("알 수 없는 폴더입니다.".into()),
+        _ => return Err("Unknown folder.".into()),
     };
     app.opener().open_path(folder.to_string_lossy().to_string(), None::<&str>).map_err(error)
 }

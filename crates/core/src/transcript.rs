@@ -113,7 +113,7 @@ pub fn prefix_hash(data: &[u8], line: usize) -> String {
 
 pub fn check_prefix(data: &[u8], line: usize, hash: &str) -> Result<()> {
     if line > 0 && prefix_hash(data, line) != hash {
-        return Err(Error::permanent("이미 처리한 원문 앞부분이 바뀌었습니다. 같은 원문으로 이어서 기록할 수 없습니다."));
+        return Err(Error::permanent("The previously processed source prefix has changed. Recording cannot resume from this transcript."));
     }
     Ok(())
 }
@@ -135,8 +135,8 @@ pub fn read_transcript(path: &Path) -> Result<Vec<u8>> {
     match std::fs::read(path) {
         Ok(data) => Ok(data),
         Err(error) if error.kind() == ErrorKind::NotFound => match std::fs::File::open(compressed_path(path)) {
-            Ok(file) => zstd::stream::decode_all(file).map_err(|error| Error::transient(format!("압축된 원문을 풀 수 없습니다: {error}"))),
-            Err(error) if error.kind() == ErrorKind::NotFound => Err(Error::permanent(format!("원문 파일이 없습니다: {}", path.display()))),
+            Ok(file) => zstd::stream::decode_all(file).map_err(|error| Error::transient(format!("Could not decompress the transcript: {error}"))),
+            Err(error) if error.kind() == ErrorKind::NotFound => Err(Error::permanent(format!("Transcript file not found: {}", path.display()))),
             Err(error) => Err(error.into()),
         },
         Err(error) => Err(error.into()),
@@ -249,7 +249,7 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
         if number == count && !raw.ends_with(b"\n") {
             break;
         }
-        let invalid = || Error::permanent(format!("원문 L{number}: JSON 형식이 올바르지 않습니다."));
+        let invalid = || Error::permanent(format!("Transcript L{number}: invalid JSON."));
         let line = std::str::from_utf8(raw).map_err(|_| invalid())?.trim_start_matches('\u{feff}');
         if line.trim().is_empty() {
             result.complete_lines = number;

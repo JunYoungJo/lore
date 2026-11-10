@@ -42,7 +42,7 @@ pub fn find_codex_session(root: &Path, session_id: &str) -> Option<PathBuf> {
 }
 
 pub fn transcript_for(provider: Provider, event_json: &str, codex_sessions_dir: &Path) -> Result<Option<PathBuf>> {
-    let event: Event = serde_json::from_str(event_json.trim_start_matches('\u{feff}').trim()).map_err(|error| Error::permanent(format!("훅 입력을 읽지 못했습니다: {error}")))?;
+    let event: Event = serde_json::from_str(event_json.trim_start_matches('\u{feff}').trim()).map_err(|error| Error::permanent(format!("Could not read hook input: {error}")))?;
     if !event.hook_event_name.as_deref().map(|name| EVENTS.contains(&name)).unwrap_or(false) {
         return Ok(None);
     }

@@ -9,9 +9,9 @@ import { useTheme } from "@/theme";
 import { useNow } from "@/useNow";
 
 const KIND: Record<ChangeKind, { label: string; glyph: LucideIcon }> = {
-  modified: { label: "수정", glyph: FilePen },
-  added: { label: "새 문서", glyph: FilePlus },
-  deleted: { label: "삭제", glyph: FileMinus },
+  modified: { label: "Modified", glyph: FilePen },
+  added: { label: "New note", glyph: FilePlus },
+  deleted: { label: "Deleted", glyph: FileMinus },
 };
 
 function folderOf(path: string): string {
@@ -45,7 +45,7 @@ function FileItem({ file, viewing, checked, now, onView, onCheck }: { file: Revi
   const Glyph = kind.glyph;
   return (
     <li className={`review-item ${viewing ? "active" : ""}`}>
-      <Check label={`${file.path} 선택`} checked={checked} onChange={onCheck} />
+      <Check label={`Select ${file.path}`} checked={checked} onChange={onCheck} />
       <button type="button" className="review-item-pick" aria-current={viewing} onClick={onView}>
         <div className="review-item-top">
           <Glyph size={15} strokeWidth={1.9} className={`kind-${file.kind}`} />
@@ -136,7 +136,7 @@ export function ReviewApp() {
     setError(null);
     try {
       const hash = await api.commitReview(message, picked);
-      setNotice(`커밋했습니다 (${hash})`);
+      setNotice(`Committed (${hash})`);
       setChecked(new Set());
       messageLoaded.current = false;
       await load();
@@ -151,12 +151,12 @@ export function ReviewApp() {
     <main className="review">
       <header className="review-head">
         <div className="head-text">
-          <div className="head-title">기억 저장소 검토</div>
+          <div className="head-title">Review memory changes</div>
           <div className="head-sub mono" title={review?.root}>
             {review?.root ?? ""}
           </div>
         </div>
-        {ready && <span className="review-count">바뀐 문서 {files.length}개</span>}
+        {ready && <span className="review-count">Changed notes: {files.length}</span>}
       </header>
 
       {error && (
@@ -167,32 +167,32 @@ export function ReviewApp() {
       )}
 
       {review === null ? (
-        <div className="review-center">검토할 내용을 불러오는 중입니다.</div>
+        <div className="review-center">Loading changes…</div>
       ) : !review.repository ? (
-        <div className="review-center">{review.root}는 git 저장소가 아니어서 검토할 수 없습니다.</div>
+        <div className="review-center">{review.root} is not a Git repository.</div>
       ) : review.waiting ? (
         <div className="review-center">
-          <LoaderCircle size={16} strokeWidth={1.9} className="spin" /> 지금 기록 중인 세션이 끝나면 검토를 시작합니다.
+          <LoaderCircle size={16} strokeWidth={1.9} className="spin" /> Review will begin after the current recording finishes.
         </div>
       ) : (
         <>
           <div className="review-body">
             <aside className="review-side">
               {files.length === 0 ? (
-                <div className="review-note">마지막 커밋 이후 바뀐 기억 문서가 없습니다.</div>
+                <div className="review-note">No memory notes have changed since the last commit.</div>
               ) : (
                 <>
                   <label className="review-all">
-                    <GroupCheck label="전체 선택" paths={files.map((file) => file.path)} checked={checked} onChange={check} />
-                    전체 선택
+                    <GroupCheck label="Select all" paths={files.map((file) => file.path)} checked={checked} onChange={check} />
+                    Select all
                   </label>
-                  <ul className="review-groups" aria-label="바뀐 기억 문서">
+                  <ul className="review-groups" aria-label="Changed memory notes">
                     {byProject(files).map((group) => {
                       const name = fileName(group.folder);
                       return (
                         <li key={group.folder} className="review-group">
                           <div className="review-group-head">
-                            <GroupCheck label={`${name} 전체 선택`} paths={group.files.map((file) => file.path)} checked={checked} onChange={check} />
+                            <GroupCheck label={`Select all in ${name}`} paths={group.files.map((file) => file.path)} checked={checked} onChange={check} />
                             <span className="review-group-name">{name}</span>
                             <span className="review-group-count">{group.files.length}</span>
                           </div>
@@ -215,7 +215,7 @@ export function ReviewApp() {
                   </ul>
                 </>
               )}
-              {others.length > 0 && <div className="review-others">함께 커밋되는 다른 파일 {others.length}개 (대화 사본, qmd 설정 등)</div>}
+              {others.length > 0 && <div className="review-others">Other files included: {others.length} (conversation copies and other repository files)</div>}
             </aside>
             {viewing && rows ? (
               <DiffView key={viewing} path={viewing} rows={rows} />
@@ -223,7 +223,7 @@ export function ReviewApp() {
               <div className="review-note review-loading">
                 {viewing && (
                   <>
-                    <LoaderCircle size={15} strokeWidth={1.9} className="spin" /> 변경 내용을 불러오는 중입니다.
+                    <LoaderCircle size={15} strokeWidth={1.9} className="spin" /> Loading diff…
                   </>
                 )}
               </div>
@@ -231,14 +231,14 @@ export function ReviewApp() {
           </div>
           <footer className="review-foot">
             <label className="field-label" htmlFor="commit-message">
-              커밋 메시지
+              Commit message
             </label>
             <textarea id="commit-message" className="input review-message" rows={4} value={message} onChange={(event) => setMessage(event.target.value)} />
             <div className="review-actions">
               <span className="grow">{notice}</span>
               <button type="button" className="btn primary" disabled={committing || !committable || !message.trim()} onClick={() => void commit()}>
                 <GitCommitHorizontal size={15} strokeWidth={1.9} />
-                {committing ? "커밋 중…" : files.length === 0 ? "커밋" : `선택한 문서 ${picked.length}개 커밋`}
+                {committing ? "Committing…" : files.length === 0 ? "Commit" : `Commit selected (${picked.length})`}
               </button>
             </div>
           </footer>

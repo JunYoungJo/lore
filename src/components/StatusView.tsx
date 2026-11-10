@@ -24,10 +24,10 @@ import { IconChip, type Tint } from "@/ui/IconChip";
 import { useNow } from "@/useNow";
 
 const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label: string; tone: string }>> = {
-  recorded: { glyph: FileCheck2, tint: "green", label: "기록함", tone: "ok" },
-  no_change: { glyph: CircleDashed, tint: "neutral", label: "기록할 내용 없음", tone: "" },
-  retry_scheduled: { glyph: RotateCw, tint: "amber", label: "다시 시도 예정", tone: "warn" },
-  failed: { glyph: CircleAlert, tint: "red", label: "실패", tone: "danger" },
+  recorded: { glyph: FileCheck2, tint: "green", label: "Recorded", tone: "ok" },
+  no_change: { glyph: CircleDashed, tint: "neutral", label: "No new memory", tone: "" },
+  retry_scheduled: { glyph: RotateCw, tint: "amber", label: "Retry scheduled", tone: "warn" },
+  failed: { glyph: CircleAlert, tint: "red", label: "Failed", tone: "danger" },
 };
 
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
@@ -38,12 +38,12 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
 
   if (current) {
     return (
-      <section className="now working" aria-label="진행 중">
+      <section className="now working" aria-label="Current activity">
         <IconChip glyph={LoaderCircle} tint="blue" spin />
         <div className="now-main">
-          <div className="now-title">{current.project} 세션을 정리하고 있습니다</div>
+          <div className="now-title">Recording {current.project}</div>
           <div className="now-sub">
-            {providerLabel(current.provider)} 세션 · {model} · {elapsed(current.startedAt, now)}
+            {providerLabel(current.provider)} session · {model} · {elapsed(current.startedAt, now)}
           </div>
           <div className="progress" aria-hidden="true">
             <span />
@@ -54,19 +54,19 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   }
 
   if (snapshot.syncing || snapshot.sync?.blocked) {
-    return <section className="now paused" aria-label="진행 중"><IconChip glyph={GitCompare} tint="amber" /><div className="now-main"><div className="now-title">{snapshot.syncing ? "동기화 작업 중" : "동기화 확인이 필요합니다"}</div><div className="now-sub">기억 기록만 대기합니다. 동기화 창을 닫아도 미해결 변경과 큐는 보존됩니다.</div></div><button type="button" className="pill primary" onClick={() => void api.openSync()}>동기화</button></section>;
+    return <section className="now paused" aria-label="Current activity"><IconChip glyph={GitCompare} tint="amber" /><div className="now-main"><div className="now-title">{snapshot.syncing ? "Syncing" : "Sync review needed"}</div><div className="now-sub">Recording is on hold. Pending changes and queued sessions are kept when you close the sync window.</div></div><button type="button" className="pill primary" onClick={() => void api.openSync()}>Sync</button></section>;
   }
 
   if (snapshot.reviewing) {
     return (
-      <section className="now paused" aria-label="진행 중">
+      <section className="now paused" aria-label="Current activity">
         <IconChip glyph={GitCompare} tint="amber" />
         <div className="now-main">
-          <div className="now-title">검토 중</div>
-          <div className="now-sub">검토 창이 열려 있는 동안에는 새 기록을 시작하지 않습니다. 창을 닫으면 차례로 기록합니다.</div>
+          <div className="now-title">Reviewing</div>
+          <div className="now-sub">New recordings wait while the review window is open. Close it to resume.</div>
         </div>
         <button type="button" className="pill primary" onClick={() => void api.openReview()}>
-          검토 창
+          Open review
         </button>
       </section>
     );
@@ -74,14 +74,14 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
 
   if (settings.paused) {
     return (
-      <section className="now paused" aria-label="진행 중">
+      <section className="now paused" aria-label="Current activity">
         <IconChip glyph={Pause} tint="amber" />
         <div className="now-main">
-          <div className="now-title">기록을 멈췄습니다</div>
-          <div className="now-sub">끝난 세션은 계속 큐에 쌓이고, 다시 시작하면 차례로 기록합니다.</div>
+          <div className="now-title">Recording paused</div>
+          <div className="now-sub">Sessions still enter the queue. Resume to record them in order.</div>
         </div>
         <button type="button" className="pill primary" onClick={() => void togglePause()}>
-          다시 시작
+          Resume
         </button>
       </section>
     );
@@ -89,12 +89,12 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
 
   const last = snapshot.recent.find((activity) => activity.kind === "recorded" || activity.kind === "no_change");
   return (
-    <section className="now" aria-label="진행 중">
+    <section className="now" aria-label="Current activity">
       <IconChip glyph={CircleCheck} tint="green" />
       <div className="now-main">
-        <div className="now-title">새 세션을 기다리고 있습니다</div>
+        <div className="now-title">Waiting for the next session</div>
         <div className="now-sub">
-          {last ? `마지막 기록 ${relativeTime(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "Claude·Codex 세션이 끝나면 자동으로 기록합니다."}
+          {last ? `Last recorded ${relativeTime(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "Memory is recorded when a Claude or Codex session ends."}
         </div>
       </div>
     </section>
@@ -107,14 +107,14 @@ function HookCallout({ snapshot }: { snapshot: Snapshot }) {
   if (missing.length === 0) return null;
   const names = missing.map((hook) => providerLabel(hook.provider)).join("·");
   return (
-    <section className="callout" aria-label="훅 연결 필요">
+    <section className="callout" aria-label="Hooks need connecting">
       <IconChip glyph={Plug} tint="amber" size={28} />
       <div className="callout-main">
-        <div className="callout-title">{names} 훅 연결 필요</div>
-        <div className="callout-sub">연결 전에는 세션이 끝나도 기록하지 않습니다.</div>
+        <div className="callout-title">Connect {names} hooks</div>
+        <div className="callout-sub">Connect hooks to capture sessions when they end.</div>
       </div>
       <button type="button" className="pill primary" onClick={showSettings}>
-        연결
+        Connect
       </button>
     </section>
   );
@@ -124,22 +124,22 @@ function Stats({ snapshot }: { snapshot: Snapshot }) {
   const showQueue = useAppStore((store) => store.showQueue);
   const { counts, review } = snapshot;
   const items: { group: QueueGroup; label: string; value: number; tone: string; hint: string }[] = [
-    { group: "ready", label: "대기", value: counts.ready, tone: counts.ready === 0 ? "muted" : "", hint: "기록을 기다리는 세션을 봅니다" },
-    { group: "waiting", label: "재시도 대기", value: counts.waiting, tone: counts.waiting > 0 ? "warn" : "muted", hint: "다시 시도를 기다리는 세션을 봅니다" },
-    { group: "failed", label: "실패", value: counts.failed, tone: counts.failed > 0 ? "danger" : "muted", hint: "실패한 세션을 봅니다" },
+    { group: "ready", label: "Pending", value: counts.ready, tone: counts.ready === 0 ? "muted" : "", hint: "View sessions waiting to be recorded" },
+    { group: "waiting", label: "Retrying", value: counts.waiting, tone: counts.waiting > 0 ? "warn" : "muted", hint: "View sessions waiting for a retry" },
+    { group: "failed", label: "Failed", value: counts.failed, tone: counts.failed > 0 ? "danger" : "muted", hint: "View failed sessions" },
   ];
   const reviewValue = review === null ? "–" : String(review);
   return (
-    <section className="stats" aria-label="큐 상태">
+    <section className="stats" aria-label="Queue status">
       {items.map((item) => (
         <button key={item.label} type="button" className={`stat stat-button ${item.tone}`} aria-label={`${item.label} ${item.value}`} title={item.hint} onClick={() => showQueue(item.group)}>
           <div className="stat-value">{item.value}</div>
           <div className="stat-label">{item.label}</div>
         </button>
       ))}
-      <button type="button" className={`stat stat-button ${review ? "" : "muted"}`} aria-label={`검토 대기 ${reviewValue}`} title="바뀐 기억 문서를 검토하고 커밋합니다" onClick={() => void api.openReview()}>
+      <button type="button" className={`stat stat-button ${review ? "" : "muted"}`} aria-label={`To review ${reviewValue}`} title="Review and commit changed notes" onClick={() => void api.openReview()}>
         <div className="stat-value">{reviewValue}</div>
-        <div className="stat-label">검토 대기</div>
+        <div className="stat-label">To review</div>
       </button>
     </section>
   );
@@ -147,7 +147,7 @@ function Stats({ snapshot }: { snapshot: Snapshot }) {
 
 function AttentionRow({ job, now }: { job: Job; now: number }) {
   const failed = job.status === "failed";
-  const status = failed ? "실패" : job.status === "index_pending" ? "색인 갱신 대기" : "문서 저장 중단";
+  const status = failed ? "Failed" : job.status === "index_pending" ? "Index pending" : "Save interrupted";
   const name = job.project ?? providerLabel(job.provider);
   return (
     <div className="row">
@@ -165,7 +165,7 @@ function AttentionRow({ job, now }: { job: Job; now: number }) {
             {job.lastError}
           </div>
         )}
-        {!failed && job.nextAttemptAt > now && <div className="row-sub">약 {minutesUntil(job.nextAttemptAt, now)}분 뒤 다시 시도합니다.</div>}
+        {!failed && job.nextAttemptAt > now && <div className="row-sub">Retry in about {minutesUntil(job.nextAttemptAt, now)} min.</div>}
       </div>
       {failed && <JobActions job={job} />}
     </div>
@@ -175,7 +175,7 @@ function AttentionRow({ job, now }: { job: Job; now: number }) {
 function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
   const detail = activity.error ?? activity.summary;
-  const label = activity.kind === "recorded" ? `문서 ${activity.notes.length}개 고침` : kind.label;
+  const label = activity.kind === "recorded" ? `${activity.notes.length} note${activity.notes.length === 1 ? "" : "s"} updated` : kind.label;
   const name = activity.project ?? providerLabel(activity.provider);
   return (
     <div className="row">
@@ -196,7 +196,7 @@ function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
         {activity.notes.length > 0 && (
           <div className="files">
             {activity.notes.map((note) => (
-              <button key={note} type="button" className="file-chip" title={note} aria-label={`${fileName(note)} 열기`} onClick={() => void api.openNote(note)}>
+              <button key={note} type="button" className="file-chip" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
                 <FileText size={12} strokeWidth={1.9} />
                 <span>{fileName(note)}</span>
               </button>
@@ -221,32 +221,32 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
       <NowCard snapshot={snapshot} now={now} />
       <HookCallout snapshot={snapshot} />
       <Stats snapshot={snapshot} />
-      {!snapshot.syncing && !snapshot.sync?.blocked && <section className="card" aria-label="기억 동기화"><div className="sync-toolbar"><span className="grow">{snapshot.sync?.phase === "push_pending" ? "공유 대기" : "여러 PC 기억 공유"}</span><button className="pill" onClick={() => void api.openSync()}>동기화</button></div></section>}
+      {!snapshot.syncing && !snapshot.sync?.blocked && <section className="card" aria-label="Memory sync"><div className="sync-toolbar"><span className="grow">{snapshot.sync?.phase === "push_pending" ? "Push pending" : "Share memory across PCs"}</span><button className="pill" onClick={() => void api.openSync()}>Sync</button></div></section>}
 
       {snapshot.attention.length > 0 && (
-        <section aria-label="확인 필요">
-          <div className="eyebrow">확인 필요</div>
+        <section aria-label="Needs attention">
+          <div className="eyebrow">Needs attention</div>
           {snapshot.attention.map((job) => (
             <AttentionRow key={job.id} job={job} now={now} />
           ))}
         </section>
       )}
 
-      <section aria-label="최근 기록">
+      <section aria-label="Recent activity">
         <div className="eyebrow">
-          최근 기록
+          Recent activity
           {snapshot.recent.length > 0 && (
-            <button ref={clearButton} type="button" className="eyebrow-btn" aria-label="최근 기록 지우기" aria-expanded={confirming} onClick={() => setConfirming(!confirming)}>
-              지우기
+            <button ref={clearButton} type="button" className="eyebrow-btn" aria-label="Clear history" aria-expanded={confirming} onClick={() => setConfirming(!confirming)}>
+              Clear
             </button>
           )}
         </div>
         {confirming && snapshot.recent.length > 0 && (
           <ConfirmCard
             anchor={clearButton}
-            label="최근 기록 지우기 확인"
-            message="최근 기록을 모두 지울까요? 기억 문서와 큐는 그대로 둡니다."
-            action="모두 지우기"
+            label="Clear history confirmation"
+            message="Clear recent activity? Memory notes and queued sessions will be kept."
+            action="Clear all"
             onConfirm={() => void clearActivity()}
             onClose={() => setConfirming(false)}
           />
@@ -256,8 +256,8 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
             <div className="empty-icon">
               <Inbox size={20} strokeWidth={1.75} />
             </div>
-            <div className="empty-title">아직 기록한 세션이 없습니다</div>
-            <div>세션이 끝나고 기록을 마치면 여기에 표시됩니다.</div>
+            <div className="empty-title">No sessions recorded yet</div>
+            <div>Completed recordings will appear here.</div>
           </div>
         ) : (
           recent.map((activity) => <ActivityRow key={activity.id} activity={activity} now={now} />)

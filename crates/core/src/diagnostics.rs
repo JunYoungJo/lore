@@ -30,11 +30,11 @@ pub fn inspect(paths: &Paths, cli: &Path) -> Value {
     for (name, command) in [("codex", &settings.commands.codex), ("claude", &settings.commands.claude), ("qmd", &settings.commands.qmd)] {
         let available = command_available(command);
         if !available && (name == "qmd" || name == settings.backend) {
-            problems.push(format!("{name} 실행 파일을 찾지 못했습니다. 설치하거나 settings.json의 commands.{name}을 지정하십시오."));
+            problems.push(format!("The {name} executable was not found. Install it or set commands.{name} in settings.json."));
         }
         commands.insert(name.into(), json!({"command": command, "available": available}));
     }
-    if !platform::is_executable(cli) { problems.push(format!("훅 CLI가 없습니다: {}", cli.display())); }
+    if !platform::is_executable(cli) { problems.push(format!("Hook CLI not found: {}", cli.display())); }
     json!({
         "platform": std::env::consts::OS,
         "architecture": std::env::consts::ARCH,

@@ -49,14 +49,14 @@ pub fn prepare(job: &Job, max_chars: usize, recorder_workdir: &Path) -> Result<P
     check_prefix(&data, job.cursor_line, &job.cursor_hash)?;
     let parsed = parse(&data, job.provider)?;
     if parsed.worker_session {
-        return Ok(Preparation::Skip("Codex 하위 에이전트 세션이라 기록하지 않습니다.".into()));
+        return Ok(Preparation::Skip("Codex subagent sessions are skipped.".into()));
     }
     let cwd = PathBuf::from(&parsed.cwd);
     if !parsed.cwd.is_empty() && cwd.starts_with(recorder_workdir) {
-        return Ok(Preparation::Skip("기록 모델이 실행한 세션입니다.".into()));
+        return Ok(Preparation::Skip("This session was created by the recording model.".into()));
     }
     let Some(repository) = project::resolve_checked(&cwd)? else {
-        return Ok(Preparation::Skip(format!("git 저장소 밖에서 진행한 세션입니다: {}", parsed.cwd)));
+        return Ok(Preparation::Skip(format!("The session was outside a Git repository: {}", parsed.cwd)));
     };
     let batch = make_batch(&parsed, job.cursor_line, max_chars);
     let end_hash = prefix_hash(&data, batch.end_line);
@@ -223,7 +223,7 @@ pub fn apply(knowledge_root: &Path, plan: &Plan) -> Result<()> {
         let target = knowledge_root.join(note);
         if let Ok(metadata) = std::fs::symlink_metadata(&target) {
             if metadata.file_type().is_symlink() {
-                return Err(Error::permanent(format!("기억 문서에 심볼릭 링크를 쓸 수 없습니다: {note}")));
+                return Err(Error::permanent(format!("Symlinks are not allowed for memory notes: {note}")));
             }
         }
         atomic_write(&target, content.as_bytes())?;

@@ -64,7 +64,7 @@ const RESERVED: [&str; 22] = [
 pub const SOURCES_HEADING: &str = "\n## 원문 근거\n";
 
 pub fn validate_note_path(path: &str, project: &str) -> Result<()> {
-    let fail = || Error::rejected(format!("허용되지 않은 기억 경로입니다: {path}"));
+    let fail = || Error::rejected(format!("Invalid memory path: {path}"));
     if path.contains('\\') {
         return Err(fail());
     }
@@ -89,29 +89,29 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
     for change in &proposal.changes {
         validate_note_path(&change.path, scope.project)?;
         if !paths.insert(change.path.to_ascii_lowercase()) {
-            return Err(Error::rejected("같은 문서를 두 번 변경할 수 없습니다."));
+            return Err(Error::rejected("A note cannot be changed twice in one proposal."));
         }
         if let Some(existing) = scope.existing.iter().find(|existing| existing.eq_ignore_ascii_case(&change.path)) {
             if *existing != change.path {
-                return Err(Error::rejected(format!("기존 문서와 대소문자만 다른 경로입니다: {}", change.path)));
+                return Err(Error::rejected(format!("The path differs from an existing note only by letter case: {}", change.path)));
             }
             if !scope.editable.contains(existing) {
-                return Err(Error::rejected(format!("본문을 받지 않은 기존 문서는 고칠 수 없습니다: {}", change.path)));
+                return Err(Error::rejected(format!("Cannot edit an existing note whose body was not provided: {}", change.path)));
             }
             if !change.body.trim().is_empty() || change.edits.is_empty() {
-                return Err(Error::rejected(format!("기존 문서는 본문 전체가 아니라 edits로 고쳐야 합니다: {}", change.path)));
+                return Err(Error::rejected(format!("Existing notes must use targeted edits rather than a full replacement: {}", change.path)));
             }
             for edit in &change.edits {
                 validate_edit(edit, &change.path)?;
             }
         } else if change.title.trim().is_empty() || change.body.trim().is_empty() || !change.edits.is_empty() {
-            return Err(Error::rejected(format!("새 문서는 제목과 본문 전체(body)로 써야 합니다: {}", change.path)));
+            return Err(Error::rejected(format!("New notes require a title and complete body: {}", change.path)));
         }
         if !KINDS.contains(&change.kind.as_str()) || !AUTHORITIES.contains(&change.authority.as_str()) {
-            return Err(Error::rejected("기록 종류 또는 근거 구분이 올바르지 않습니다."));
+            return Err(Error::rejected("Invalid memory kind or evidence type."));
         }
         if change.evidence.is_empty() {
-            return Err(Error::rejected("원문 근거가 필요합니다."));
+            return Err(Error::rejected("Source evidence is required."));
         }
         let mut origins = BTreeSet::new();
         for citation in &change.evidence {
@@ -120,11 +120,11 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
                 Some(turn) if !citation.quote.trim().is_empty() && turn.text.contains(&citation.quote) => {
                     origins.insert(turn.origin as u8);
                 }
-                _ => return Err(Error::rejected("근거 위치 또는 인용문이 제공된 원문과 일치하지 않습니다.")),
+                _ => return Err(Error::rejected("The evidence location or quotation does not match the provided source.")),
             }
         }
         if change.authority == "user_decision" && !origins.contains(&(Origin::User as u8)) {
-            return Err(Error::rejected("확인된 사용자 발언 없이 사용자 결정으로 기록할 수 없습니다."));
+            return Err(Error::rejected("A user decision requires a verified user statement."));
         }
     }
     Ok(())
@@ -141,7 +141,7 @@ fn validate_edit(edit: &Edit, path: &str) -> Result<()> {
     if complete {
         Ok(())
     } else {
-        Err(Error::rejected(format!("고칠 곳의 지시가 올바르지 않습니다({}): {path}", edit.op)))
+        Err(Error::rejected(format!("Invalid edit instruction ({}): {path}", edit.op)))
     }
 }
 
@@ -228,8 +228,8 @@ fn section_end(body: &str, name: &str, path: &str) -> Result<usize> {
     let matches: Vec<usize> = section_ranges(body).into_iter().filter(|(found, _, _)| found == name).map(|(_, _, end)| end).collect();
     match matches.as_slice() {
         [end] => Ok(*end),
-        [] => Err(Error::rejected(format!("문서에 \"{name}\" 절이 없습니다: {path}"))),
-        _ => Err(Error::rejected(format!("문서에 \"{name}\" 절이 여러 개 있습니다: {path}"))),
+        [] => Err(Error::rejected(format!("Section \"{name}\" was not found: {path}"))),
+        _ => Err(Error::rejected(format!("Section \"{name}\" is ambiguous: {path}"))),
     }
 }
 
@@ -257,8 +257,8 @@ fn apply_edit(body: &str, edit: &Edit, path: &str) -> Result<String> {
             let find = edit.find.replace("\r\n", "\n");
             match body.matches(find.as_str()).count() {
                 1 => Ok(body.replacen(find.as_str(), &edit.text.replace("\r\n", "\n"), 1)),
-                0 => Err(Error::rejected(format!("바꿀 글을 문서 본문에서 찾지 못했습니다: {path}"))),
-                _ => Err(Error::rejected(format!("바꿀 글이 문서 본문에 여러 번 있습니다: {path}"))),
+                0 => Err(Error::rejected(format!("The target text was not found in the note body: {path}"))),
+                _ => Err(Error::rejected(format!("The target text occurs more than once in the note body: {path}"))),
             }
         }
         "append" => {
@@ -268,13 +268,13 @@ fn apply_edit(body: &str, edit: &Edit, path: &str) -> Result<String> {
         "add_section" => {
             let heading = heading_name(&edit.heading);
             if section_ranges(body).iter().any(|(name, _, _)| *name == heading) {
-                return Err(Error::rejected(format!("문서에 이미 \"{heading}\" 절이 있습니다: {path}")));
+                return Err(Error::rejected(format!("Section \"{heading}\" already exists: {path}")));
             }
             let after = heading_name(&edit.section);
             let end = if after.is_empty() { body.len() } else { section_end(body, &after, path)? };
             Ok(insert_at(body, end, &format!("## {heading}\n\n{}", edit.text.replace("\r\n", "\n").trim())))
         }
-        other => Err(Error::rejected(format!("알 수 없는 고칠 곳 종류입니다({other}): {path}"))),
+        other => Err(Error::rejected(format!("Unknown edit kind ({other}): {path}"))),
     }
 }
 
@@ -305,7 +305,7 @@ pub fn render_note(change: &Change, project: &str, link: &dyn Fn(&Evidence) -> S
     let body = body.trim();
     let body = body.split_once(SOURCES_HEADING).map(|(before, _)| before).unwrap_or(body).trim();
     if body.is_empty() {
-        return Err(Error::rejected(format!("고친 뒤 문서 본문이 비었습니다: {}", change.path)));
+        return Err(Error::rejected(format!("The edited note body is empty: {}", change.path)));
     }
     let title = title.replace(['\r', '\n'], " ");
     Ok(format!("{header}# {}\n\n{body}\n\n## 원문 근거\n{}\n", title.trim(), sources.join("\n")))
@@ -318,7 +318,7 @@ pub fn check_snapshot(current: &BTreeMap<String, String>, base: &BTreeMap<String
         let unchanged = now == base.get(name);
         let ours = rendered.contains_key(name) && now == rendered.get(name);
         if !unchanged && !ours {
-            return Err(Error::permanent(format!("변경안을 만든 뒤 기억 문서가 바뀌었습니다: {name}")));
+            return Err(Error::permanent(format!("The memory note changed after the proposal was created: {name}")));
         }
     }
     Ok(())

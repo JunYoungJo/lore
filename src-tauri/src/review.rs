@@ -62,7 +62,7 @@ pub async fn open_review(app: AppHandle) -> Result<(), String> {
         return Ok(());
     }
     let window = WebviewWindowBuilder::new(&app, REVIEW, WebviewUrl::App("index.html".into()))
-        .title("기억 저장소 검토")
+        .title("Review memory changes")
         .inner_size(1120.0, 760.0)
         .min_inner_size(760.0, 520.0)
         .center()
@@ -119,7 +119,7 @@ pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> 
 #[tauri::command]
 pub fn review_diff(state: State<'_, AppState>, path: String) -> Result<Vec<DiffRow>, String> {
     if !review::is_note(&path) || path.split('/').any(|part| part == ".." || part.is_empty()) {
-        return Err("기억 문서 경로가 아닙니다.".into());
+        return Err("This is not a memory note path.".into());
     }
     review::file_diff(&state.settings().knowledge_root(), &path).map_err(error)
 }
@@ -132,7 +132,7 @@ pub async fn commit_review(app: AppHandle, message: String, notes: Vec<String>) 
         let _operation = state.operation();
         let settings = state.settings();
         let pending = qmd_memory_core::sync::summary(&qmd_memory_core::sync::journal(&state.paths, &settings.knowledge_root()));
-        if pending.blocked && pending.phase != "review" { return Err("중단된 동기화 반영·검색 갱신을 먼저 마쳐야 합니다.".to_string()); }
+        if pending.blocked && pending.phase != "review" { return Err("Finish the interrupted sync apply or index update first.".to_string()); }
         review::commit_notes(&settings.knowledge_root(), &notes, &message).map_err(error)
     }).await.map_err(error)??;
     changed(&app);

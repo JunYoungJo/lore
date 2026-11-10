@@ -40,7 +40,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       { id: 1, at: 1_799_999_000, jobId: "b", provider: "codex", project: null, kind: "skipped", summary: "작업자 세션", notes: [], error: null },
     ],
     attention: [
-      { id: "f1", provider: "codex", transcript: "C:/s.jsonl", status: "failed", cursorLine: 0, cursorHash: "", project: "demoengine", sessionId: null, attempts: 3, nextAttemptAt: 0, lastError: "근거 위치 또는 인용문이 제공된 원문과 일치하지 않습니다.", updatedAt: 1 },
+      { id: "f1", provider: "codex", transcript: "C:/s.jsonl", status: "failed", cursorLine: 0, cursorHash: "", project: "demoengine", sessionId: null, attempts: 3, nextAttemptAt: 0, lastError: "The evidence location or quotation does not match the provided source.", updatedAt: 1 },
     ],
     problem: null,
     settings: {
@@ -80,36 +80,36 @@ describe("status view", () => {
   it("shows queue counts, the failed job and recorded notes but hides skipped sessions", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     render(<App />);
-    expect(await screen.findByText("대기 1건")).toBeInTheDocument();
-    const counts = screen.getByRole("region", { name: "큐 상태" });
-    expect(within(within(counts).getByText("재시도 대기").parentElement!).getByText("2")).toBeInTheDocument();
-    const attention = screen.getByRole("region", { name: "확인 필요" });
+    expect(await screen.findByText("1 pending")).toBeInTheDocument();
+    const counts = screen.getByRole("region", { name: "Queue status" });
+    expect(within(within(counts).getByText("Retrying").parentElement!).getByText("2")).toBeInTheDocument();
+    const attention = screen.getByRole("region", { name: "Needs attention" });
     expect(within(attention).getByText("demoengine")).toBeInTheDocument();
-    expect(within(attention).getByText("근거 위치 또는 인용문이 제공된 원문과 일치하지 않습니다.")).toBeInTheDocument();
-    const recent = screen.getByRole("region", { name: "최근 기록" });
-    expect(within(recent).getByText("문서 1개 고침")).toBeInTheDocument();
+    expect(within(attention).getByText("The evidence location or quotation does not match the provided source.")).toBeInTheDocument();
+    const recent = screen.getByRole("region", { name: "Recent activity" });
+    expect(within(recent).getByText("1 note updated")).toBeInTheDocument();
     expect(within(recent).queryByText("작업자 세션")).not.toBeInTheDocument();
   });
 
   it("keeps the full project, summary and error in a hover tooltip where the row cuts them off", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     render(<App />);
-    const attention = await screen.findByRole("region", { name: "확인 필요" });
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
     expect(within(attention).getByText("demoengine")).toHaveAttribute("title", "demoengine");
-    expect(within(attention).getByText("근거 위치 또는 인용문이 제공된 원문과 일치하지 않습니다.")).toHaveAttribute("title", "근거 위치 또는 인용문이 제공된 원문과 일치하지 않습니다.");
-    const recent = screen.getByRole("region", { name: "최근 기록" });
+    expect(within(attention).getByText("The evidence location or quotation does not match the provided source.")).toHaveAttribute("title", "The evidence location or quotation does not match the provided source.");
+    const recent = screen.getByRole("region", { name: "Recent activity" });
     expect(within(recent).getByText("demo-app")).toHaveAttribute("title", "demo-app");
     expect(within(recent).getByText("로그 전용으로 변경")).toHaveAttribute("title", "로그 전용으로 변경");
-    expect(screen.getByText("대기 1건")).toHaveAttribute("title", "대기 1건");
+    expect(screen.getByText("1 pending")).toHaveAttribute("title", "1 pending");
   });
 
   it("retries a failed job and opens a changed note", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.retryJob.mockResolvedValue(true);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "다시 시도" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Retry" }));
     expect(api.retryJob).toHaveBeenCalledWith("f1");
-    await userEvent.click(screen.getByRole("button", { name: "bg-policy.md 열기" }));
+    await userEvent.click(screen.getByRole("button", { name: "Open bg-policy.md" }));
     expect(api.openNote).toHaveBeenCalledWith("projects/demo-app/bg-policy.md");
   });
 
@@ -117,21 +117,21 @@ describe("status view", () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.discardJob.mockResolvedValue(true);
     render(<App />);
-    const attention = await screen.findByRole("region", { name: "확인 필요" });
-    const trigger = within(attention).getByRole("button", { name: "버리기" });
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    const trigger = within(attention).getByRole("button", { name: "Skip" });
     await userEvent.click(trigger);
-    const confirm = screen.getByRole("alertdialog", { name: "실패 버리기 확인" });
-    expect(confirm).toHaveTextContent("실패한 구간을 기록하지 않고 넘어갈까요?");
+    const confirm = screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" });
+    expect(confirm).toHaveTextContent("Skip the failed segment?");
     expect(attention).not.toContainElement(confirm);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
-    expect(within(attention).getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
-    await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
+    expect(within(attention).getByRole("button", { name: "Retry" })).toBeInTheDocument();
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
     expect(api.discardJob).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alertdialog", { name: "실패 버리기 확인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Skip failed segment confirmation" })).not.toBeInTheDocument();
     expect(trigger).toHaveFocus();
 
     await userEvent.click(trigger);
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "실패 버리기 확인" })).getByRole("button", { name: "버리기" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" })).getByRole("button", { name: "Skip" }));
     expect(api.discardJob).toHaveBeenCalledWith("f1");
     expect(api.getSnapshot).toHaveBeenCalledTimes(2);
   });
@@ -139,16 +139,16 @@ describe("status view", () => {
   it("closes the confirmation card with Escape without hiding the popover, and by clicking elsewhere", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     render(<App />);
-    const attention = await screen.findByRole("region", { name: "확인 필요" });
-    await userEvent.click(within(attention).getByRole("button", { name: "버리기" }));
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    await userEvent.click(within(attention).getByRole("button", { name: "Skip" }));
     await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("alertdialog", { name: "실패 버리기 확인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Skip failed segment confirmation" })).not.toBeInTheDocument();
     expect(api.hideWindow).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "최근 기록 지우기" }));
-    expect(screen.getByRole("alertdialog", { name: "최근 기록 지우기 확인" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Clear history" }));
+    expect(screen.getByRole("alertdialog", { name: "Clear history confirmation" })).toBeInTheDocument();
     await userEvent.click(screen.getByText("demo-app"));
-    expect(screen.queryByRole("alertdialog", { name: "최근 기록 지우기 확인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Clear history confirmation" })).not.toBeInTheDocument();
     expect(api.clearActivity).not.toHaveBeenCalled();
 
     await userEvent.keyboard("{Escape}");
@@ -157,18 +157,18 @@ describe("status view", () => {
 
   it("shows why discarding failed", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
-    api.discardJob.mockRejectedValue("파일 오류: 다른 프로세스가 파일을 사용 중입니다.");
+    api.discardJob.mockRejectedValue("File error: the file is in use by another process.");
     render(<App />);
-    const attention = await screen.findByRole("region", { name: "확인 필요" });
-    await userEvent.click(within(attention).getByRole("button", { name: "버리기" }));
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "실패 버리기 확인" })).getByRole("button", { name: "버리기" }));
-    expect(await screen.findByText("파일 오류: 다른 프로세스가 파일을 사용 중입니다.")).toBeInTheDocument();
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    await userEvent.click(within(attention).getByRole("button", { name: "Skip" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" })).getByRole("button", { name: "Skip" }));
+    expect(await screen.findByText("File error: the file is in use by another process.")).toBeInTheDocument();
   });
 
   it("shows how many notes wait for review and opens the review window from that tile", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     render(<App />);
-    const tile = await screen.findByRole("button", { name: "검토 대기 4" });
+    const tile = await screen.findByRole("button", { name: "To review 4" });
     expect(screen.queryByText("완료")).not.toBeInTheDocument();
     await userEvent.click(tile);
     expect(api.openReview).toHaveBeenCalledTimes(1);
@@ -177,32 +177,32 @@ describe("status view", () => {
   it("shows a dash for review when the memory store is not a git repository", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ review: null }));
     render(<App />);
-    expect(await screen.findByRole("button", { name: "검토 대기 –" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "To review –" })).toBeInTheDocument();
   });
 
   it("says recording waits while the review window is open", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ state: "reviewing", reviewing: true }));
     render(<App />);
-    expect(await screen.findByText("검토 중")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "진행 중" })).toHaveTextContent("검토 창이 열려 있는 동안에는 새 기록을 시작하지 않습니다");
+    expect(await screen.findByText("Reviewing")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Current activity" })).toHaveTextContent("New recordings wait while the review window is open.");
   });
 
   it("clears the recent records only after a second confirmation", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.clearActivity.mockResolvedValue(2);
     render(<App />);
-    const trigger = await screen.findByRole("button", { name: "최근 기록 지우기" });
+    const trigger = await screen.findByRole("button", { name: "Clear history" });
     await userEvent.click(trigger);
-    const confirm = screen.getByRole("alertdialog", { name: "최근 기록 지우기 확인" });
-    expect(confirm).toHaveTextContent("최근 기록을 모두 지울까요?");
-    expect(screen.getByRole("region", { name: "최근 기록" })).not.toContainElement(confirm);
+    const confirm = screen.getByRole("alertdialog", { name: "Clear history confirmation" });
+    expect(confirm).toHaveTextContent("Clear recent activity?");
+    expect(screen.getByRole("region", { name: "Recent activity" })).not.toContainElement(confirm);
     expect(trigger).toBeInTheDocument();
-    await userEvent.click(within(confirm).getByRole("button", { name: "취소" }));
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
     expect(api.clearActivity).not.toHaveBeenCalled();
-    expect(screen.queryByRole("alertdialog", { name: "최근 기록 지우기 확인" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("alertdialog", { name: "Clear history confirmation" })).not.toBeInTheDocument();
 
     await userEvent.click(trigger);
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "최근 기록 지우기 확인" })).getByRole("button", { name: "모두 지우기" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Clear history confirmation" })).getByRole("button", { name: "Clear all" }));
     expect(api.clearActivity).toHaveBeenCalledTimes(1);
     expect(api.getSnapshot).toHaveBeenCalledTimes(2);
   });
@@ -210,15 +210,15 @@ describe("status view", () => {
   it("offers no clearing when there is nothing to clear", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ recent: [] }));
     render(<App />);
-    await screen.findByText("아직 기록한 세션이 없습니다");
-    expect(screen.queryByRole("button", { name: "최근 기록 지우기" })).not.toBeInTheDocument();
+    await screen.findByText("No sessions recorded yet");
+    expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument();
   });
 
   it("shows the session being recorded", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "a", provider: "claude", project: "sample-app", startedAt: 1_800_000_000 } }));
     render(<App />);
-    expect(await screen.findByText("기록 중 · sample-app")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "진행 중" })).toHaveTextContent("sample-app 세션을 정리하고 있습니다");
+    expect(await screen.findByText("Recording · sample-app")).toBeInTheDocument();
+    expect(screen.getByRole("region", { name: "Current activity" })).toHaveTextContent("Recording sample-app");
   });
 
   it("keeps elapsed and relative times moving while the popover stays open", async () => {
@@ -230,15 +230,15 @@ describe("status view", () => {
       await act(async () => {
         await Promise.resolve();
       });
-      const now = screen.getByRole("region", { name: "진행 중" });
-      const recent = screen.getByRole("region", { name: "최근 기록" });
-      expect(now).toHaveTextContent("2분째");
-      expect(recent).toHaveTextContent("2분 전");
+      const now = screen.getByRole("region", { name: "Current activity" });
+      const recent = screen.getByRole("region", { name: "Recent activity" });
+      expect(now).toHaveTextContent("2 min elapsed");
+      expect(recent).toHaveTextContent("2m ago");
       await act(async () => {
         vi.advanceTimersByTime(60_000);
       });
-      expect(now).toHaveTextContent("3분째");
-      expect(recent).toHaveTextContent("3분 전");
+      expect(now).toHaveTextContent("3 min elapsed");
+      expect(recent).toHaveTextContent("3m ago");
       expect(api.getSnapshot).toHaveBeenCalledTimes(1);
     } finally {
       vi.useRealTimers();
@@ -248,35 +248,35 @@ describe("status view", () => {
   it("pauses from the header and offers to resume while paused", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     const { unmount } = render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "일시 중지" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Pause" }));
     expect(api.setPaused).toHaveBeenCalledWith(true);
     unmount();
 
     useAppStore.setState({ snapshot: null });
     api.getSnapshot.mockResolvedValue(snapshot({ state: "paused", settings: { ...snapshot().settings, paused: true } }));
     render(<App />);
-    const now = await screen.findByRole("region", { name: "진행 중" });
-    expect(now).toHaveTextContent("기록을 멈췄습니다");
-    await userEvent.click(within(now).getByRole("button", { name: "다시 시작" }));
+    const now = await screen.findByRole("region", { name: "Current activity" });
+    expect(now).toHaveTextContent("Recording paused");
+    await userEvent.click(within(now).getByRole("button", { name: "Resume" }));
     expect(api.setPaused).toHaveBeenLastCalledWith(false);
   });
 
   it("shows an empty state before anything is recorded and asks to connect missing hooks", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ recent: [], attention: [] }));
     render(<App />);
-    expect(await screen.findByText("아직 기록한 세션이 없습니다")).toBeInTheDocument();
-    const callout = screen.getByRole("region", { name: "훅 연결 필요" });
-    expect(callout).toHaveTextContent("Codex 훅 연결 필요");
-    await userEvent.click(within(callout).getByRole("button", { name: "연결" }));
-    expect(screen.getByText("기록 모델")).toBeInTheDocument();
+    expect(await screen.findByText("No sessions recorded yet")).toBeInTheDocument();
+    const callout = screen.getByRole("region", { name: "Hooks need connecting" });
+    expect(callout).toHaveTextContent("Connect Codex hooks");
+    await userEvent.click(within(callout).getByRole("button", { name: "Connect" }));
+    expect(screen.getByText("Recording model")).toBeInTheDocument();
   });
 
   it("does not ask to connect hooks when both are connected", async () => {
     const hooks = snapshot().hooks.map((hook) => ({ ...hook, state: "connected" as const }));
     api.getSnapshot.mockResolvedValue(snapshot({ hooks }));
     render(<App />);
-    await screen.findByText("대기 1건");
-    expect(screen.queryByRole("region", { name: "훅 연결 필요" })).not.toBeInTheDocument();
+    await screen.findByText("1 pending");
+    expect(screen.queryByRole("region", { name: "Hooks need connecting" })).not.toBeInTheDocument();
   });
 });
 
@@ -300,8 +300,8 @@ describe("queue view", () => {
     job({ id: "rec", project: "sample-app", sessionId: "rec-session" }),
     job({ id: "next", project: "ae-recipe-wizard", sessionId: "1f2e3d4c-aaaa-bbbb-cccc-000000000001", cursorLine: 120 }),
     job({ id: "unread", provider: "codex", transcript: "C:\\u\\.codex\\sessions\\rollout-x-0aa1.jsonl" }),
-    job({ id: "retry", project: "demoengine", sessionId: "retry-session", attempts: 2, nextAttemptAt: 4_000_000_000, lastError: "모델 시간 초과" }),
-    job({ id: "f1", provider: "codex", status: "failed", project: "sample-viewer", sessionId: "failed-session", attempts: 3, lastError: "원문 파일이 없습니다" }),
+    job({ id: "retry", project: "demoengine", sessionId: "retry-session", attempts: 2, nextAttemptAt: 4_000_000_000, lastError: "Model timeout" }),
+    job({ id: "f1", provider: "codex", status: "failed", project: "sample-viewer", sessionId: "failed-session", attempts: 3, lastError: "Transcript file not found" }),
   ];
   const recording = { state: "working" as const, current: { jobId: "rec", provider: "claude" as const, project: "sample-app", startedAt: 1_800_000_000 } };
 
@@ -309,35 +309,35 @@ describe("queue view", () => {
     api.getSnapshot.mockResolvedValue(snapshot(recording));
     api.getQueue.mockResolvedValue(queued);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "대기 1" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Pending 1" }));
 
-    const now = await screen.findByRole("region", { name: "기록 중" });
+    const now = await screen.findByRole("region", { name: "Recording" });
     expect(now).toHaveTextContent("sample-app");
     expect(now).toHaveTextContent("rec-session");
-    const ready = screen.getByRole("region", { name: "대기" });
+    const ready = screen.getByRole("region", { name: "Pending" });
     expect(within(ready).getByText("ae-recipe-wizard")).toBeInTheDocument();
     expect(within(ready).getByText("1f2e3d4c-aaaa-bbbb-cccc-000000000001")).toBeInTheDocument();
-    expect(within(ready).getByText("이어서 기록")).toBeInTheDocument();
-    expect(within(ready).getByText("rollout-x-0aa1.jsonl")).toHaveAttribute("title", "세션 rollout-x-0aa1.jsonl\nC:\\u\\.codex\\sessions\\rollout-x-0aa1.jsonl");
+    expect(within(ready).getByText("Resume recording")).toBeInTheDocument();
+    expect(within(ready).getByText("rollout-x-0aa1.jsonl")).toHaveAttribute("title", "Session rollout-x-0aa1.jsonl\nC:\\u\\.codex\\sessions\\rollout-x-0aa1.jsonl");
     expect(within(ready).getByText("Codex", { selector: ".name" })).toBeInTheDocument();
-    const waiting = screen.getByRole("region", { name: "재시도 대기" });
+    const waiting = screen.getByRole("region", { name: "Retrying" });
     expect(waiting).toHaveTextContent("demoengine");
-    expect(waiting).toHaveTextContent("2번 실패 · 모델 시간 초과");
-    const failed = screen.getByRole("region", { name: "실패" });
-    expect(failed).toHaveTextContent("원문 파일이 없습니다");
-    expect(within(failed).getByRole("button", { name: "다시 시도" })).toBeInTheDocument();
+    expect(waiting).toHaveTextContent("2 failed attempts · Model timeout");
+    const failed = screen.getByRole("region", { name: "Failed" });
+    expect(failed).toHaveTextContent("Transcript file not found");
+    expect(within(failed).getByRole("button", { name: "Retry" })).toBeInTheDocument();
 
-    await userEvent.click(screen.getByRole("button", { name: "뒤로" }));
-    expect(await screen.findByRole("region", { name: "큐 상태" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    expect(await screen.findByRole("region", { name: "Queue status" })).toBeInTheDocument();
   });
 
   it("says a group is empty instead of hiding it", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.getQueue.mockResolvedValue([]);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "재시도 대기 2" }));
-    expect(await screen.findByRole("region", { name: "재시도 대기" })).toHaveTextContent("다시 시도를 기다리는 세션이 없습니다.");
-    expect(screen.getByRole("region", { name: "기록 중" })).toHaveTextContent("지금 기록하는 세션이 없습니다.");
+    await userEvent.click(await screen.findByRole("button", { name: "Retrying 2" }));
+    expect(await screen.findByRole("region", { name: "Retrying" })).toHaveTextContent("No sessions are waiting for a retry.");
+    expect(screen.getByRole("region", { name: "Recording" })).toHaveTextContent("No sessions are being recorded.");
   });
 
   it("scrolls to the group of the clicked tile once, not again on later updates", async () => {
@@ -346,8 +346,8 @@ describe("queue view", () => {
       api.getSnapshot.mockResolvedValue(snapshot());
       api.getQueue.mockResolvedValue(queued);
       render(<App />);
-      await userEvent.click(await screen.findByRole("button", { name: "실패 1" }));
-      const failed = await screen.findByRole("region", { name: "실패" });
+      await userEvent.click(await screen.findByRole("button", { name: "Failed 1" }));
+      const failed = await screen.findByRole("region", { name: "Failed" });
       expect(scroll.mock.contexts).toEqual([failed]);
 
       const [[stateChanged]] = api.onStateChanged.mock.calls as unknown as [[() => void]];
@@ -365,32 +365,32 @@ describe("settings view", () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.saveSettings.mockResolvedValue(undefined);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Claude" }));
-    await userEvent.type(screen.getByLabelText("모델"), "   ");
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    await userEvent.type(screen.getByLabelText("Model"), "   ");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ backend: "claude", models: { codex: null, claude: null }, knowledgeRoot: "D:/doc/knowledge" }));
-    expect(await screen.findByRole("button", { name: "설정" })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Settings" })).toBeInTheDocument();
   });
 
   it("keeps the model typed for each CLI while switching between them", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ settings: { ...snapshot().settings, backend: "claude", models: { codex: null, claude: "opus" } } }));
     api.saveSettings.mockResolvedValue(undefined);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    expect(screen.getByLabelText("모델")).toHaveValue("opus");
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    expect(screen.getByLabelText("Model")).toHaveValue("opus");
     await userEvent.click(screen.getByRole("button", { name: "Claude" }));
-    expect(screen.getByLabelText("모델")).toHaveValue("opus");
-    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
+    expect(screen.getByLabelText("Model")).toHaveValue("opus");
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Codex" }));
-    expect(screen.getByLabelText("모델")).toHaveValue("");
-    await userEvent.type(screen.getByLabelText("모델"), "gpt-6.1-sol");
+    expect(screen.getByLabelText("Model")).toHaveValue("");
+    await userEvent.type(screen.getByLabelText("Model"), "gpt-6.1-sol");
     await userEvent.click(screen.getByRole("button", { name: "Claude" }));
-    expect(screen.getByLabelText("모델")).toHaveValue("opus");
+    expect(screen.getByLabelText("Model")).toHaveValue("opus");
     await userEvent.click(screen.getByRole("button", { name: "Codex" }));
-    expect(screen.getByLabelText("모델")).toHaveValue("gpt-6.1-sol");
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    expect(screen.getByLabelText("Model")).toHaveValue("gpt-6.1-sol");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ backend: "codex", models: { codex: "gpt-6.1-sol", claude: "opus" } }));
   });
 
@@ -398,14 +398,14 @@ describe("settings view", () => {
     api.getSnapshot.mockResolvedValue(snapshot());
     api.saveSettings.mockResolvedValue(undefined);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    expect(screen.getByLabelText("기록 모델 시간 제한(초)")).toHaveValue(600);
-    expect(screen.getByLabelText("qmd 색인 시간 제한(초)")).toHaveValue(900);
-    expect(screen.getByLabelText("한 번에 보내는 새 대화(자)")).toHaveValue(30000);
-    expect(screen.getByLabelText("한 번에 보내는 기존 문서(자)")).toHaveValue(60000);
-    await userEvent.clear(screen.getByLabelText("기록 모델 시간 제한(초)"));
-    await userEvent.type(screen.getByLabelText("기록 모델 시간 제한(초)"), "1200");
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    expect(screen.getByLabelText("Recording timeout (seconds)")).toHaveValue(600);
+    expect(screen.getByLabelText("qmd timeout (seconds)")).toHaveValue(900);
+    expect(screen.getByLabelText("New conversation per request (characters)")).toHaveValue(30000);
+    expect(screen.getByLabelText("Existing notes per request (characters)")).toHaveValue(60000);
+    await userEvent.clear(screen.getByLabelText("Recording timeout (seconds)"));
+    await userEvent.type(screen.getByLabelText("Recording timeout (seconds)"), "1200");
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(api.saveSettings).toHaveBeenCalledWith({
       knowledgeRoot: "D:/doc/knowledge",
       backend: "codex",
@@ -419,26 +419,26 @@ describe("settings view", () => {
 
   it("enables saving only after a limit changes and sends an emptied limit as zero for the app to reject", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
-    api.saveSettings.mockRejectedValue("시간 제한은 1초 이상이어야 합니다.");
+    api.saveSettings.mockRejectedValue("Timeouts must be at least one second.");
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    expect(screen.getByRole("button", { name: "저장" })).toBeDisabled();
-    await userEvent.clear(screen.getByLabelText("qmd 색인 시간 제한(초)"));
-    expect(screen.getByRole("button", { name: "저장" })).toBeEnabled();
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+    await userEvent.clear(screen.getByLabelText("qmd timeout (seconds)"));
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
     expect(api.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ qmdTimeoutSecs: 0 }));
-    expect(await screen.findByText("시간 제한은 1초 이상이어야 합니다.")).toBeInTheDocument();
+    expect(await screen.findByText("Timeouts must be at least one second.")).toBeInTheDocument();
   });
 
   it("keeps the settings open and shows the error when saving fails", async () => {
     api.getSnapshot.mockResolvedValue(snapshot());
-    api.saveSettings.mockRejectedValue("기억 저장소 위치가 비어 있습니다.");
+    api.saveSettings.mockRejectedValue("The memory folder path is empty.");
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    await userEvent.clear(screen.getByLabelText("위치"));
-    await userEvent.click(screen.getByRole("button", { name: "저장" }));
-    expect(await screen.findByText("기억 저장소 위치가 비어 있습니다.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "저장" })).toBeInTheDocument();
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await userEvent.clear(screen.getByLabelText("Location"));
+    await userEvent.click(screen.getByRole("button", { name: "Save" }));
+    expect(await screen.findByText("The memory folder path is empty.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save" })).toBeInTheDocument();
   });
 
   it("offers connect for a missing hook, disconnect for a connected one, and toggles autostart", async () => {
@@ -446,17 +446,17 @@ describe("settings view", () => {
     api.connectHook.mockResolvedValue(snapshot().hooks[1]);
     api.disconnectHook.mockResolvedValue(snapshot().hooks[0]);
     render(<App />);
-    await userEvent.click(await screen.findByRole("button", { name: "설정" }));
-    const claude = screen.getByLabelText("Claude 훅");
-    expect(within(claude).getByText("연결됨")).toBeInTheDocument();
-    expect(within(claude).queryByRole("button", { name: "연결" })).not.toBeInTheDocument();
-    const codex = screen.getByLabelText("Codex 훅");
-    expect(within(codex).queryByRole("button", { name: "해제" })).not.toBeInTheDocument();
-    await userEvent.click(within(codex).getByRole("button", { name: "연결" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const claude = screen.getByLabelText("Claude hooks");
+    expect(within(claude).getByText("Connected")).toBeInTheDocument();
+    expect(within(claude).queryByRole("button", { name: "Connect" })).not.toBeInTheDocument();
+    const codex = screen.getByLabelText("Codex hooks");
+    expect(within(codex).queryByRole("button", { name: "Disconnect" })).not.toBeInTheDocument();
+    await userEvent.click(within(codex).getByRole("button", { name: "Connect" }));
     expect(api.connectHook).toHaveBeenCalledWith("codex");
-    await userEvent.click(within(screen.getByLabelText("Claude 훅")).getByRole("button", { name: "해제" }));
+    await userEvent.click(within(screen.getByLabelText("Claude hooks")).getByRole("button", { name: "Disconnect" }));
     expect(api.disconnectHook).toHaveBeenCalledWith("claude");
-    await userEvent.click(screen.getByRole("switch", { name: "Windows 로그인 시 자동 실행" }));
+    await userEvent.click(screen.getByRole("switch", { name: "Launch at login" }));
     expect(api.setAutostart).toHaveBeenCalledWith(true);
   });
 });

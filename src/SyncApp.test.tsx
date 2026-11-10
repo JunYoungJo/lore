@@ -33,15 +33,15 @@ describe("model-assisted synchronization review", () => {
   it("shows provenance and requires a choice and server preview before applying", async () => {
     render(<SyncApp />);
     await screen.findByRole("region", { name: "오류 알림 방침" });
-    expect(screen.getByRole("button", { name: "이 내용으로 반영·공유" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply & share" })).toBeDisabled();
     expect(api.applySync).not.toHaveBeenCalled();
     expect(screen.getByText("팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
-    await userEvent.click(screen.getAllByText("근거 대화 보기", { selector: "summary" })[0]);
+    await userEvent.click(screen.getAllByText("View source conversation", { selector: "summary" })[0]);
     expect(screen.getByText("사용자: 팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
-    const preview = await screen.findByRole("region", { name: "최종 문서 미리보기" });
+    const preview = await screen.findByRole("region", { name: "Final document preview" });
     expect(within(preview).getByText("최종: 로그만")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "이 내용으로 반영·공유" }));
+    await userEvent.click(screen.getByRole("button", { name: "Apply & share" }));
     expect(api.applySync).toHaveBeenCalledWith("comparison-1", [{ issue: 0, option: 0, customText: null }], "confirmed-preview");
   });
 
@@ -49,8 +49,8 @@ describe("model-assisted synchronization review", () => {
     render(<SyncApp />);
     await screen.findByRole("radio", { name: /로그 전용/ });
     await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
-    await userEvent.click(screen.getByRole("checkbox", { name: "선택한 안의 문구 직접 정리" }));
-    const input = screen.getByRole("textbox", { name: "최종 문구" });
+    await userEvent.click(screen.getByRole("checkbox", { name: "Edit the selected wording" }));
+    const input = screen.getByRole("textbox", { name: "Final wording" });
     await userEvent.clear(input); await userEvent.type(input, "운영은 로그만, 점검 중 팝업");
     await waitFor(() => expect(api.previewSync).toHaveBeenLastCalledWith("comparison-1", [{ issue: 0, option: 0, customText: "운영은 로그만, 점검 중 팝업" }]));
     await screen.findByText("운영은 로그만, 점검 중 팝업", { selector: "pre" });
@@ -58,11 +58,11 @@ describe("model-assisted synchronization review", () => {
   });
 
   it("does not silently apply after a preview validation failure", async () => {
-    api.previewSync.mockRejectedValue(new Error("근거 링크가 빠졌습니다"));
+    api.previewSync.mockRejectedValue(new Error("Evidence 링크가 빠졌습니다"));
     render(<SyncApp />);
     await userEvent.click(await screen.findByRole("radio", { name: /로그 전용/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("근거 링크가 빠졌습니다");
-    expect(screen.getByRole("button", { name: "이 내용으로 반영·공유" })).toBeDisabled();
+    expect(await screen.findByRole("alert")).toHaveTextContent("Evidence 링크가 빠졌습니다");
+    expect(screen.getByRole("button", { name: "Apply & share" })).toBeDisabled();
   });
 
   it("discards a slow preview when the choice changes", async () => {
@@ -81,7 +81,7 @@ describe("model-assisted synchronization review", () => {
     api.deferSync.mockResolvedValue(undefined);
     render(<SyncApp />);
     await screen.findByRole("region", { name: "오류 알림 방침" });
-    await userEvent.click(screen.getByRole("button", { name: "나중에" }));
+    await userEvent.click(screen.getByRole("button", { name: "Later" }));
     expect(api.deferSync).toHaveBeenCalledOnce(); expect(api.applySync).not.toHaveBeenCalled();
   });
 
@@ -89,10 +89,10 @@ describe("model-assisted synchronization review", () => {
     api.getSync.mockResolvedValueOnce(snapshot({ plan: { ...plan(), analysis: null } })).mockResolvedValue(snapshot());
     api.analyzeSync.mockResolvedValue(undefined);
     render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("button", { name: "모델로 비교" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Compare with model" }));
     expect(api.analyzeSync).toHaveBeenCalledOnce();
     expect(await screen.findByRole("region", { name: "오류 알림 방침" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "이 내용으로 반영·공유" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply & share" })).toBeDisabled();
   });
 
   it("reports a pending push separately and resumes without rerunning the model", async () => {
@@ -100,7 +100,7 @@ describe("model-assisted synchronization review", () => {
     api.resumeSync.mockResolvedValue(undefined);
     render(<SyncApp />);
     expect(await screen.findByRole("status")).toHaveTextContent("오프라인");
-    await userEvent.click(screen.getByRole("button", { name: "전송 다시 시도" }));
+    await userEvent.click(screen.getByRole("button", { name: "Retry push" }));
     expect(api.resumeSync).toHaveBeenCalledOnce(); expect(api.analyzeSync).not.toHaveBeenCalled();
   });
 });

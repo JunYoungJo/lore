@@ -57,11 +57,11 @@ fn parse(text: Option<&str>) -> Result<Value> {
     match text.map(|text| text.trim_start_matches('\u{feff}').trim()).filter(|text| !text.is_empty()) {
         None => Ok(Value::Object(Map::new())),
         Some(text) => {
-            let value: Value = serde_json::from_str(text).map_err(|error| Error::permanent(format!("훅 설정 파일의 JSON을 읽지 못했습니다: {error}")))?;
+            let value: Value = serde_json::from_str(text).map_err(|error| Error::permanent(format!("Could not read the hook settings JSON: {error}")))?;
             if value.is_object() {
                 Ok(value)
             } else {
-                Err(Error::permanent("훅 설정 파일의 최상위가 JSON 객체가 아닙니다."))
+                Err(Error::permanent("The hook settings root must be a JSON object."))
             }
         }
     }
@@ -104,12 +104,12 @@ pub fn inspect(text: Option<&str>, provider: Provider, wanted: &str) -> Result<(
 
 pub fn add_hooks(text: Option<&str>, provider: Provider, wanted: &str) -> Result<String> {
     let mut root = parse(text)?;
-    let object = root.as_object_mut().ok_or_else(|| Error::permanent("훅 설정 파일의 최상위가 JSON 객체가 아닙니다."))?;
+    let object = root.as_object_mut().ok_or_else(|| Error::permanent("The hook settings root must be a JSON object."))?;
     let hooks = object.entry("hooks").or_insert_with(|| Value::Object(Map::new()));
-    let hooks = hooks.as_object_mut().ok_or_else(|| Error::permanent("훅 설정 파일의 hooks가 JSON 객체가 아닙니다."))?;
+    let hooks = hooks.as_object_mut().ok_or_else(|| Error::permanent("The hooks field must be a JSON object."))?;
     for event in EVENTS {
         let entries = hooks.entry(event).or_insert_with(|| Value::Array(Vec::new()));
-        let entries = entries.as_array_mut().ok_or_else(|| Error::permanent(format!("훅 설정 파일의 {event} 항목이 배열이 아닙니다.")))?;
+        let entries = entries.as_array_mut().ok_or_else(|| Error::permanent(format!("The {event} hook entry must be an array.")))?;
         for entry in entries.iter_mut() {
             if let Some(list) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
                 list.retain(|hook| hook.get("command").and_then(Value::as_str).map(|command| command == wanted || !is_ours(command, provider)).unwrap_or(true));

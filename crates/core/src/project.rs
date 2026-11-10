@@ -88,9 +88,9 @@ pub fn resolve_checked(cwd: &Path) -> Result<Option<Repository>> {
             let identity_path = root.join(ID_FILE);
             let name = match std::fs::read_to_string(&identity_path) {
                 Ok(text) => {
-                    let identity: Identity = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("{}: 프로젝트 ID를 읽지 못했습니다: {error}", identity_path.display())))?;
+                    let identity: Identity = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("{}: could not read the project ID: {error}", identity_path.display())))?;
                     if !is_valid_name(&identity.project) || identity.project.len() > 100 {
-                        return Err(Error::permanent(format!("{}: project는 소문자 영문·숫자로 시작하는 100자 이하의 영문·숫자·-·_ ID여야 합니다.", identity_path.display())));
+                        return Err(Error::permanent(format!("{}: project must be at most 100 lowercase letters, digits, hyphens, or underscores, starting with a letter or digit.", identity_path.display())));
                     }
                     identity.project
                 }

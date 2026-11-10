@@ -2,20 +2,20 @@ import type { Provider } from "@/ipc/contract";
 
 export function relativeTime(seconds: number, now: number): string {
   const diff = Math.max(0, now - seconds);
-  if (diff < 60) return "방금";
-  if (diff < 3600) return `${Math.floor(diff / 60)}분 전`;
-  if (diff < 86_400) return `${Math.floor(diff / 3600)}시간 전`;
+  if (diff < 60) return "Just now";
+  if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+  if (diff < 86_400) return `${Math.floor(diff / 3600)}h ago`;
   const date = new Date(seconds * 1000);
   const today = new Date(now * 1000);
   const yesterday = new Date(today.getFullYear(), today.getMonth(), today.getDate() - 1);
-  if (date >= yesterday) return "어제";
-  return `${date.getMonth() + 1}월 ${date.getDate()}일`;
+  if (date >= yesterday) return "Yesterday";
+  return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
 export function elapsed(seconds: number, now: number): string {
   const diff = Math.max(0, now - seconds);
-  if (diff < 60) return "방금 시작";
-  return `${Math.floor(diff / 60)}분째`;
+  if (diff < 60) return "Just started";
+  return `${Math.floor(diff / 60)} min elapsed`;
 }
 
 export function minutesUntil(seconds: number, now: number): number {

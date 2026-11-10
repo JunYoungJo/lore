@@ -205,7 +205,7 @@ impl Queue {
     }
 
     pub fn record_failure(&self, id: &str, failure: Failure, message: &str, now: i64) -> Result<FailureOutcome> {
-        let job = self.get(id)?.ok_or_else(|| Error::permanent(format!("작업이 없습니다: {id}")))?;
+        let job = self.get(id)?.ok_or_else(|| Error::permanent(format!("Job not found: {id}")))?;
         let attempts = job.attempts + 1;
         let gave_up = match failure {
             Failure::Permanent => true,

@@ -9,10 +9,10 @@ import { IconChip, type Tint } from "@/ui/IconChip";
 import { useNow } from "@/useNow";
 
 const GROUPS: { group: QueueGroup; title: string; empty: string; glyph: LucideIcon; tint: Tint }[] = [
-  { group: "recording", title: "기록 중", empty: "지금 기록하는 세션이 없습니다.", glyph: LoaderCircle, tint: "blue" },
-  { group: "ready", title: "대기", empty: "기록을 기다리는 세션이 없습니다.", glyph: Clock, tint: "neutral" },
-  { group: "waiting", title: "재시도 대기", empty: "다시 시도를 기다리는 세션이 없습니다.", glyph: RotateCw, tint: "amber" },
-  { group: "failed", title: "실패", empty: "실패한 세션이 없습니다.", glyph: CircleAlert, tint: "red" },
+  { group: "recording", title: "Recording", empty: "No sessions are being recorded.", glyph: LoaderCircle, tint: "blue" },
+  { group: "ready", title: "Pending", empty: "No sessions are waiting to be recorded.", glyph: Clock, tint: "neutral" },
+  { group: "waiting", title: "Retrying", empty: "No sessions are waiting for a retry.", glyph: RotateCw, tint: "amber" },
+  { group: "failed", title: "Failed", empty: "No failed sessions.", glyph: CircleAlert, tint: "red" },
 ];
 
 function groupOf(job: Job, current: Current | null, now: number): QueueGroup {
@@ -24,15 +24,15 @@ function groupOf(job: Job, current: Current | null, now: number): QueueGroup {
 function stateLabel(job: Job, group: QueueGroup, current: Current | null, now: number): { text: string; tone: string } {
   switch (group) {
     case "recording":
-      return { text: current ? elapsed(current.startedAt, now) : "기록 중", tone: "" };
+      return { text: current ? elapsed(current.startedAt, now) : "Recording", tone: "" };
     case "waiting":
-      return { text: `약 ${minutesUntil(job.nextAttemptAt, now)}분 뒤 다시 시도`, tone: "warn" };
+      return { text: `Retry in about ${minutesUntil(job.nextAttemptAt, now)} min`, tone: "warn" };
     case "failed":
-      return { text: "실패", tone: "danger" };
+      return { text: "Failed", tone: "danger" };
     case "ready":
-      if (job.status === "applying") return { text: "문서 저장 중단", tone: "warn" };
-      if (job.status === "index_pending") return { text: "색인 갱신 대기", tone: "warn" };
-      return { text: job.cursorLine > 0 ? "이어서 기록" : "대기", tone: "" };
+      if (job.status === "applying") return { text: "Save interrupted", tone: "warn" };
+      if (job.status === "index_pending") return { text: "Index pending", tone: "warn" };
+      return { text: job.cursorLine > 0 ? "Resume recording" : "Pending", tone: "" };
   }
 }
 
@@ -41,7 +41,7 @@ function QueueRow({ job, group, current, now }: { job: Job; group: QueueGroup; c
   const name = job.project ?? providerLabel(job.provider);
   const session = job.sessionId ?? fileName(job.transcript.replace(/\\/g, "/"));
   const state = stateLabel(job, group, current, now);
-  const error = group === "waiting" ? [`${job.attempts}번 실패`, job.lastError].filter(Boolean).join(" · ") : job.lastError;
+  const error = group === "waiting" ? [`${job.attempts} failed attempts`, job.lastError].filter(Boolean).join(" · ") : job.lastError;
   return (
     <div className="row">
       <IconChip glyph={meta.glyph} tint={meta.tint} spin={group === "recording"} />
@@ -53,7 +53,7 @@ function QueueRow({ job, group, current, now }: { job: Job; group: QueueGroup; c
           <span className="badge">{providerLabel(job.provider)}</span>
           <span className={`row-kind ${state.tone}`}>{state.text}</span>
         </div>
-        <div className="row-meta mono" title={`세션 ${session}\n${job.transcript}`}>
+        <div className="row-meta mono" title={`Session ${session}\n${job.transcript}`}>
           {session}
         </div>
         {error && group !== "recording" && (
@@ -66,7 +66,7 @@ function QueueRow({ job, group, current, now }: { job: Job; group: QueueGroup; c
         <JobActions job={job} />
       ) : (
         group !== "recording" && (
-          <span className="row-time" title="큐에 들어오거나 상태가 바뀐 시각">
+          <span className="row-time" title="Time enqueued or last updated">
             {relativeTime(job.updatedAt, now)}
           </span>
         )
@@ -91,7 +91,7 @@ export function QueueView({ snapshot }: { snapshot: Snapshot }) {
   if (!queue) {
     return (
       <div className="body">
-        <div className="empty">큐를 불러오는 중입니다.</div>
+        <div className="empty">Loading queue…</div>
       </div>
     );
   }

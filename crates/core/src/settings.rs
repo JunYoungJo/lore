@@ -147,19 +147,19 @@ impl Settings {
 
     pub fn validate(&self) -> Result<()> {
         if !matches!(self.backend.as_str(), "codex" | "claude") {
-            return Err(Error::permanent("기록 모델은 codex 또는 claude여야 합니다."));
+            return Err(Error::permanent("The recording backend must be codex or claude."));
         }
         if self.knowledge_root.trim().is_empty() {
-            return Err(Error::permanent("기억 저장소 위치가 비어 있습니다."));
+            return Err(Error::permanent("The memory folder path is empty."));
         }
         if !self.knowledge_root().is_absolute() {
-            return Err(Error::permanent("기억 저장소 위치는 이 PC의 절대 경로여야 합니다."));
+            return Err(Error::permanent("The memory folder must be an absolute path on this PC."));
         }
         if self.max_chars < 1_000 || self.notes_budget < 1_000 {
-            return Err(Error::permanent("입력 한도가 너무 작습니다."));
+            return Err(Error::permanent("The input limit is too small."));
         }
         if self.model_timeout_secs == 0 || self.qmd_timeout_secs == 0 {
-            return Err(Error::permanent("시간 제한은 1초 이상이어야 합니다."));
+            return Err(Error::permanent("Timeouts must be at least one second."));
         }
         Ok(())
     }
@@ -238,7 +238,7 @@ pub fn save(path: &Path, settings: &Settings) -> Result<()> {
 }
 
 pub fn reloaded(text: &str, running: &Settings) -> Result<Settings> {
-    let mut settings: Settings = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("설정 파일을 읽지 못했습니다: {error}")))?;
+    let mut settings: Settings = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("Could not read the settings file: {error}")))?;
     settings.move_single_model();
     if settings.since == 0 {
         settings.since = running.since;

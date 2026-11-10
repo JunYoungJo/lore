@@ -78,8 +78,8 @@ fn finish_plan(queue: &Queue, qmd: &Qmd, settings: &Settings, job: &Job, plan: &
 
 fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Recorder, qmd: &Qmd, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
     if matches!(job.status, Status::Applying | Status::IndexPending) {
-        let manifest = job.manifest.as_deref().ok_or_else(|| Error::permanent("중단된 반영 정보가 없습니다."))?;
-        let plan: Plan = serde_json::from_str(manifest).map_err(|error| Error::permanent(format!("중단된 반영 정보를 읽지 못했습니다: {error}")))?;
+        let manifest = job.manifest.as_deref().ok_or_else(|| Error::permanent("No interrupted apply state is available."))?;
+        let plan: Plan = serde_json::from_str(manifest).map_err(|error| Error::permanent(format!("Could not read interrupted apply state: {error}")))?;
         return finish_plan(queue, qmd, settings, job, &plan, true);
     }
     let prepared = match pipeline::prepare(job, settings.max_chars, &paths.recorder_workdir())? {
@@ -99,7 +99,7 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
     };
     queue.set_session(&job.id, Some(&prepared.project), &prepared.parsed.session_id)?;
     if !qmd.available() {
-        return Err(Error::transient("qmd를 찾지 못해 기록 모델을 호출하지 않았습니다. qmd-memory-cli doctor로 실행 경로를 확인하십시오."));
+        return Err(Error::transient("qmd was not found, so the recording model was not called. Run qmd-memory-cli doctor to check the executable path."));
     }
     reporter.started(job, &prepared.project);
     let root = settings.knowledge_root();
@@ -118,7 +118,7 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
         request = pipeline::build_request(&prepared, &scope, &ranked, &proposal.needs_notes, settings.notes_budget);
         proposal = recorder.record(&request.payload, &artifacts.join("followup"))?;
         if proposal.changes.is_empty() && !proposal.needs_notes.is_empty() {
-            return Err(Error::rejected("모델이 기존 문서 본문을 다시 요청했습니다."));
+            return Err(Error::rejected("The model requested the existing note body again."));
         }
     }
     let plan = pipeline::plan(&prepared, &request, &proposal, &root, &job.id)?;
@@ -248,7 +248,7 @@ mod tests {
 
     fn fail(queue: &Queue, id: &str) {
         for _ in 0..MAX_REJECTED_ATTEMPTS {
-            queue.record_failure(id, Failure::Rejected, "모델이 기존 문서 본문을 다시 요청했습니다.", 100).unwrap();
+            queue.record_failure(id, Failure::Rejected, "The model requested the existing note body again.", 100).unwrap();
         }
         assert_eq!(queue.get(id).unwrap().unwrap().status, Status::Failed);
     }
@@ -298,7 +298,7 @@ mod tests {
         fixture.queue.finish(&changed, 2, "stale", true, 100).unwrap();
         fail(&fixture.queue, &changed);
 
-        for (id, cause) in [(missing, "원문 파일이 없습니다"), (broken, "JSON 형식이 올바르지 않습니다"), (changed, "이미 처리한 원문 앞부분이 바뀌었습니다")] {
+        for (id, cause) in [(missing, "Transcript file not found"), (broken, "invalid JSON"), (changed, "previously processed source prefix has changed")] {
             match discard_job(&fixture, &id).unwrap() {
                 Some(Discarded::Session { reason }) => assert!(reason.contains(cause), "{reason}"),
                 other => panic!("{id}: {other:?}"),

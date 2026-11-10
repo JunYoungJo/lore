@@ -15,7 +15,7 @@ pub fn run() {
     let loaded = settings::load_or_init(&paths.settings(), worker::now());
     let (initial, problem) = match loaded {
         Ok(settings) => (settings, None),
-        Err(error) => (settings::Settings::default(), Some(format!("설정 파일을 읽지 못했습니다: {error}"))),
+        Err(error) => (settings::Settings::default(), Some(format!("Could not read the settings file: {error}"))),
     };
     let app_state = state::AppState::new(paths, initial);
     app_state.set_problem(problem);
@@ -69,9 +69,9 @@ pub fn run() {
             sync::defer_sync,
         ])
         .build(tauri::generate_context!())
-        .expect("qmd-memory를 시작하지 못했습니다")
+        .expect("Could not start Lore")
         .run(|_app, event| {
-            // Tray-only app: closing the popover must not end the process; tray "종료" passes an exit code.
+            // Tray-only app: closing the popover must not end the process; tray "Quit" passes an exit code.
             if let tauri::RunEvent::ExitRequested { code, api, .. } = event {
                 if code.is_none() {
                     api.prevent_exit();

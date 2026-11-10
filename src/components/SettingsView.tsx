@@ -9,7 +9,7 @@ import { Segmented } from "@/ui/Segmented";
 import { Toggle } from "@/ui/Toggle";
 
 const DEFAULT_MODEL = { codex: "gpt-6.1-sol", claude: "haiku" } as const;
-const STATE_LABEL = { connected: "연결됨", other_path: "다른 경로", missing: "연결 안 됨" } as const;
+const STATE_LABEL = { connected: "Connected", other_path: "Different path", missing: "Not connected" } as const;
 
 function HookRow({ hook }: { hook: HookStatus }) {
   const connecting = useAppStore((store) => store.connecting);
@@ -17,7 +17,7 @@ function HookRow({ hook }: { hook: HookStatus }) {
   const disconnectHook = useAppStore((store) => store.disconnectHook);
   const busy = connecting === hook.provider;
   return (
-    <div className="hook" aria-label={`${providerLabel(hook.provider)} 훅`}>
+    <div className="hook" aria-label={`${providerLabel(hook.provider)} hooks`}>
       <IconChip glyph={Bot} tint={hook.provider === "claude" ? "amber" : "indigo"} size={30} />
       <div className="hook-main">
         <div className="hook-name">
@@ -30,17 +30,17 @@ function HookRow({ hook }: { hook: HookStatus }) {
         {hook.error && <div className="hook-error">{hook.error}</div>}
       </div>
       {busy ? (
-        <span className="row-kind">처리 중…</span>
+        <span className="row-kind">Working…</span>
       ) : (
         <div className="hook-actions">
           {hook.state !== "connected" && (
             <button type="button" className="pill primary" disabled={connecting !== null} onClick={() => void connectHook(hook.provider)}>
-              {hook.state === "other_path" ? "다시 연결" : "연결"}
+              {hook.state === "other_path" ? "Reconnect" : "Connect"}
             </button>
           )}
           {hook.state !== "missing" && (
             <button type="button" className="pill ghost" disabled={connecting !== null} onClick={() => void disconnectHook(hook.provider)}>
-              해제
+              Disconnect
             </button>
           )}
         </div>
@@ -52,10 +52,10 @@ function HookRow({ hook }: { hook: HookStatus }) {
 type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget";
 
 const LIMITS: { key: LimitKey; id: string; label: string }[] = [
-  { key: "modelTimeoutSecs", id: "model-timeout", label: "기록 모델 시간 제한(초)" },
-  { key: "qmdTimeoutSecs", id: "qmd-timeout", label: "qmd 색인 시간 제한(초)" },
-  { key: "maxChars", id: "max-chars", label: "한 번에 보내는 새 대화(자)" },
-  { key: "notesBudget", id: "notes-budget", label: "한 번에 보내는 기존 문서(자)" },
+  { key: "modelTimeoutSecs", id: "model-timeout", label: "Recording timeout (seconds)" },
+  { key: "qmdTimeoutSecs", id: "qmd-timeout", label: "qmd timeout (seconds)" },
+  { key: "maxChars", id: "max-chars", label: "New conversation per request (characters)" },
+  { key: "notesBudget", id: "notes-budget", label: "Existing notes per request (characters)" },
 ];
 
 function isDirty(draft: EditableSettings, saved: Settings): boolean {
@@ -72,14 +72,14 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <div className="body settings">
-      <section className="card" aria-label="기록 모델">
+      <section className="card" aria-label="Recording model">
         <div className="card-title">
           <Bot size={15} strokeWidth={1.9} />
-          기록 모델
+          Recording model
         </div>
-        <span className="field-label">실행할 CLI</span>
+        <span className="field-label">CLI</span>
         <Segmented
-          label="실행할 CLI"
+          label="CLI"
           value={draft.backend}
           options={[
             { value: "codex", label: "Codex" },
@@ -88,56 +88,56 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
           onChange={(backend) => editDraft({ backend })}
         />
         <label className="field-label" htmlFor="model">
-          모델
+          Model
         </label>
         <input
           id="model"
           className="input mono"
           value={draft.models[draft.backend] ?? ""}
-          placeholder={`${DEFAULT_MODEL[draft.backend]} (기본값)`}
+          placeholder={`${DEFAULT_MODEL[draft.backend]} (default)`}
           onChange={(event) => editDraft({ models: { ...draft.models, [draft.backend]: event.target.value } })}
         />
         <div className="help">
-          기록할 때마다 {draft.backend === "claude" ? "claude --print" : "codex exec"}가 한 번 실행되고, 로그인한 계정의 사용 한도에서 차감됩니다.
+          Each recording runs {draft.backend === "claude" ? "claude --print" : "codex exec"} and uses your signed-in account’s allowance.
         </div>
       </section>
 
-      <section className="card" aria-label="훅 연결">
+      <section className="card" aria-label="Hook connections">
         <div className="card-title">
           <Plug size={15} strokeWidth={1.9} />
-          훅 연결
+          Hook connections
         </div>
         {snapshot.hooks.map((hook) => (
           <HookRow key={hook.provider} hook={hook} />
         ))}
         <div className="help">
-          연결하면 세션 종료 훅과 컨텍스트 압축 직전 훅에 qmd-memory-cli를 추가하고, 해제하면 qmd-memory 훅만 지웁니다. 다른 훅은 그대로 두고, 바꾸기 전 파일은 같은 폴더에 백업합니다.
+          Connecting adds qmd-memory-cli to session-end and pre-compaction hooks. Disconnecting removes only Lore’s hooks. Existing hooks are kept, and the settings file is backed up before changes.
           <br />
-          Codex는 연결 후 /hooks에서 새 훅을 신뢰로 표시해야 실행됩니다.
+          In Codex, trust the new hooks in /hooks after connecting.
         </div>
       </section>
 
-      <section className="card" aria-label="기억 저장소">
+      <section className="card" aria-label="Memory repository">
         <div className="card-title">
           <Database size={15} strokeWidth={1.9} />
-          기억 저장소
+          Memory repository
         </div>
         <label className="field-label" htmlFor="knowledge-root">
-          위치
+          Location
         </label>
         <div className="input-row">
           <input id="knowledge-root" className="input mono" value={draft.knowledgeRoot} onChange={(event) => editDraft({ knowledgeRoot: event.target.value })} />
-          <button type="button" className="icon-btn" title="저장된 위치 열기" aria-label="저장된 위치 열기" onClick={() => void api.openFolder("knowledge")}>
+          <button type="button" className="icon-btn" title="Open saved location" aria-label="Open saved location" onClick={() => void api.openFolder("knowledge")}>
             <FolderOpen size={16} strokeWidth={1.9} />
           </button>
         </div>
-        <div className="help">common/과 projects/에 기억 문서를, sources/에 근거 대화 사본을 둡니다.</div>
+        <div className="help">Memory notes live in common/ and projects/. Supporting conversation copies live in sources/.</div>
       </section>
 
-      <section className="card" aria-label="처리 한도">
+      <section className="card" aria-label="Processing limits">
         <div className="card-title">
           <Gauge size={15} strokeWidth={1.9} />
-          처리 한도
+          Processing limits
         </div>
         <div className="field-grid">
           {LIMITS.map(({ key, id, label }) => (
@@ -158,21 +158,21 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
           ))}
         </div>
         <div className="help">
-          시간 제한을 넘긴 실행은 중단하고 나중에 다시 시도합니다. 저장하면 시간 제한은 지금 실행 중인 호출에도 바로 적용되고, 글자 수 한도는 다음 기록부터 적용됩니다. 기존 문서가 한도를 넘으면 관련 문서만 본문을 보내고 나머지는 제목만 보냅니다.
+          Timed-out calls are stopped and retried later. Saved timeouts apply to running calls; character limits apply to the next recording. If existing notes exceed the limit, only relevant notes are sent in full; the rest are listed by title.
         </div>
       </section>
 
-      <section className="card" aria-label="시작">
+      <section className="card" aria-label="Startup">
         <div className="toggle-row">
           <IconChip glyph={Power} tint="blue" size={30} />
           <div className="toggle-text">
-            <div className="toggle-title">Windows 로그인 시 자동 실행</div>
-            <div className="toggle-sub">로그인하면 트레이에서 바로 기록을 시작합니다.</div>
+            <div className="toggle-title">Launch at login</div>
+            <div className="toggle-sub">Start recording from the tray when you sign in.</div>
           </div>
-          <Toggle label="Windows 로그인 시 자동 실행" checked={snapshot.autostart} onChange={(enabled) => void setAutostart(enabled)} />
+          <Toggle label="Launch at login" checked={snapshot.autostart} onChange={(enabled) => void setAutostart(enabled)} />
         </div>
         <button type="button" className="link-btn" onClick={() => void api.openFolder("data")}>
-          <FolderOpen size={13} strokeWidth={1.9} />앱 데이터 폴더 열기
+          <FolderOpen size={13} strokeWidth={1.9} />Open app data folder
         </button>
       </section>
     </div>
@@ -191,10 +191,10 @@ export function SettingsFooter({ snapshot }: { snapshot: Snapshot }) {
     <footer className="settings-foot">
       <span className="grow">{error}</span>
       <button type="button" className="btn ghost" onClick={showStatus}>
-        취소
+        Cancel
       </button>
       <button type="button" className="btn primary" disabled={!dirty || saving} onClick={() => void saveDraft()}>
-        {saving ? "저장 중…" : "저장"}
+        {saving ? "Saving…" : "Save"}
       </button>
     </footer>
   );

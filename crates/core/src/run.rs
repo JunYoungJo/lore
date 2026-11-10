@@ -57,7 +57,7 @@ pub fn run(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option
 }
 
 pub fn run_allow(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: Option<&str>, limit: &dyn Fn() -> Duration, accepted: &[i32]) -> Result<Output> {
-    let (program, args) = command.split_first().ok_or_else(|| Error::transient("실행할 명령이 설정되지 않았습니다."))?;
+    let (program, args) = command.split_first().ok_or_else(|| Error::transient("No command is configured."))?;
     std::fs::create_dir_all(cwd)?;
     let mut builder = Command::new(program);
     builder.args(args).current_dir(cwd).stdin(if stdin.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -77,7 +77,7 @@ pub fn run_allow(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: 
     builder.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
     #[cfg(unix)]
     builder.process_group(0);
-    let mut child = builder.spawn().map_err(|error| Error::transient(format!("{program} 실행 실패: {error}")))?;
+    let mut child = builder.spawn().map_err(|error| Error::transient(format!("Could not start {program}: {error}")))?;
     let writer = stdin.map(|text| {
         let mut pipe = child.stdin.take();
         let text = text.to_string();
@@ -112,7 +112,7 @@ pub fn run_allow(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: 
         if started.elapsed() >= timeout {
             kill_tree(child.id());
             let _ = child.wait();
-            return Err(Error::transient(format!("{program} 실행이 {}초를 넘어 중단했습니다.", timeout.as_secs())));
+            return Err(Error::transient(format!("{program} was stopped after exceeding {} seconds.", timeout.as_secs())));
         }
         thread::sleep(Duration::from_millis(100));
     };
@@ -123,7 +123,7 @@ pub fn run_allow(command: &[String], cwd: &Path, env: &[(&str, String)], stdin: 
     let stderr = String::from_utf8_lossy(&stderr_reader.join().unwrap_or_default()).to_string();
     if !status.code().map(|code| accepted.contains(&code)).unwrap_or(false) {
         let detail = if stderr.trim().is_empty() { &stdout } else { &stderr };
-        return Err(Error::transient(format!("{program} 실행 실패(종료 코드 {:?}): {}", status.code(), tail(detail.trim(), 1500))));
+        return Err(Error::transient(format!("{program} failed (exit code {:?}): {}", status.code(), tail(detail.trim(), 1500))));
     }
     Ok(Output { stdout, stderr, code: status.code() })
 }
@@ -141,7 +141,7 @@ mod tests {
         let marker = dir.path().join("survived");
         let command = vec!["/bin/sh".into(), "-c".into(), "sh -c 'sleep 2; touch \"$1\"' child \"$1\" & echo $! > \"$2\"; wait".into(), "wrapper".into(), marker.to_string_lossy().to_string(), child_pid.to_string_lossy().to_string()];
         let error = run(&command, dir.path(), &[], None, &|| Duration::from_millis(500)).err().unwrap();
-        assert!(error.message.contains("중단"));
+        assert!(error.message.contains("stopped"));
         let pid: i32 = std::fs::read_to_string(child_pid).unwrap().trim().parse().unwrap();
         // Reap can be asynchronous; a killed child can briefly remain a zombie.
         // Waiting past the marker's deadline checks behavior rather than PID reuse.

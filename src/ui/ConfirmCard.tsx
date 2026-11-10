@@ -70,7 +70,7 @@ export function ConfirmCard({
       <p className="confirm-text">{message}</p>
       <div className="confirm-actions">
         <button ref={cancel} type="button" className="pill ghost" onClick={dismiss}>
-          취소
+          Cancel
         </button>
         <button
           type="button"
