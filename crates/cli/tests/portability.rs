@@ -36,7 +36,7 @@ fn bundle_configuration_and_cli_agree_on_identity_and_default_storage() {
     let data = std::path::Path::new(report["dataDir"].as_str().unwrap());
     assert_eq!(data.file_name().unwrap().to_str().unwrap(), config["identifier"]);
     let memory = std::path::Path::new(report["knowledgeRoot"].as_str().unwrap());
-    assert_eq!(memory, dir.path().join("Documents/lore-memory"));
+    assert_eq!(memory, dir.path().join("Documents/doc/lore-memory"));
     assert!(!data.exists(), "diagnostics must not initialize application state");
 }
 
