@@ -21,7 +21,7 @@
 
 아래 `%LOCALAPPDATA%\io.github.junyoungjo.lore`는 Windows의 앱 데이터 위치입니다. macOS는 `~/Library/Application Support/io.github.junyoungjo.lore`, Linux는 `${XDG_DATA_HOME:-~/.local/share}/io.github.junyoungjo.lore`입니다. `LORE_HOME`으로 앱과 CLI의 데이터 폴더를 함께 재정의할 수 있습니다.
 
-새 기억 저장소 기본값은 `~/Documents/doc/lore-memory`이고, 기존 `settings.json`에 지정한 위치는 유지합니다. 아래 `D:\doc\lore-memory`는 Windows에서 사용하던 위치의 예입니다. qmd 설정·색인·캐시는 기억 저장소가 아닌 앱 데이터의 `qmd/<기억 경로 해시>/` 아래에 PC별로 생성합니다. 처음 설정할 때 `index`를 실행하고 qmd MCP 연결의 환경 변수를 `doctor`가 보여 주는 경로에 맞춥니다. 기존 `.qmd/` 데이터는 자동으로 지우지 않습니다.
+새 기억 저장소 기본값은 `~/Documents/lore-memory`이고, 기존 `settings.json`에 지정한 위치는 유지합니다. 아래 `D:\doc\lore-memory`는 Windows에서 사용하던 위치의 예입니다. qmd 설정·색인·캐시는 기억 저장소가 아닌 앱 데이터의 `qmd/<기억 경로 해시>/` 아래에 PC별로 생성합니다. 처음 설정할 때 `index`를 실행하고 qmd MCP 연결의 환경 변수를 `doctor`가 보여 주는 경로에 맞춥니다. 기존 `.qmd/` 데이터는 자동으로 지우지 않습니다.
 
 | 경로 | 내용 |
 |---|---|

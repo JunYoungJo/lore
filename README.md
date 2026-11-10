@@ -89,7 +89,7 @@ The build includes `lore-cli` as a sidecar. The app executable is `lore` (`lore.
 
 ### Set up your memory
 
-1. Open the app's settings. Choose a memory folder—the default is `~/Documents/doc/lore-memory`—and select the recording CLI and model.
+1. Open the app's settings. Choose a memory folder—the default is `~/Documents/lore-memory`—and select the recording CLI and model.
 2. Quit the tray app, then run the bundled CLI to check dependencies and initialize this PC's index:
 
    ```sh

@@ -20,7 +20,7 @@ macOS Finder·로그인 실행에서는 터미널의 PATH가 전달되지 않을
 
 1. 앱 소스와 기억 저장소를 각각 옮깁니다. Git bundle에 포함된 소스만으로 `D:\doc\lore-memory`나 `%LOCALAPPDATA%`의 운영 데이터가 복원되지는 않습니다.
 2. 기억 저장소의 `common/`, `projects/`, `sources/`와 Git 이력을 함께 가져옵니다. `sources/`에는 근거 대화가 있으므로 문서만 가져오면 근거를 확인할 수 없습니다.
-3. 새 PC의 `settings.json`에 그 PC의 기억 저장소 **절대 경로**를 지정합니다. 새 설치 기본값은 `~/Documents/doc/lore-memory`입니다. Windows 경로를 Mac에 그대로 지정하면 거부합니다.
+3. 새 PC의 `settings.json`에 그 PC의 기억 저장소 **절대 경로**를 지정합니다. 새 설치 기본값은 `~/Documents/lore-memory`입니다. Windows 경로를 Mac에 그대로 지정하면 거부합니다.
 4. `lore-cli doctor`로 Codex·Claude·qmd 탐색 결과와 qmd 설정 위치를 확인합니다. 이 명령은 설정·DB·훅을 변경하지 않습니다. 설치된 CLI가 PATH에 없으면 설치 폴더의 실행 파일을 절대 경로로 실행합니다. macOS 앱 안의 CLI는 `Lore.app/Contents/MacOS/lore-cli`입니다.
 5. 트레이 앱을 끈 상태에서 `lore-cli portable-links`로 이전 계획을 봅니다. `--apply`를 붙이면 이전합니다. 원본 세션 파일이나 Windows 드라이브가 없어도 가져온 대화 사본으로 정확한 발언을 찾습니다. 사본이나 정확한 줄을 찾을 수 없으면 보고하고 그 사본의 링크는 모두 보존합니다.
 6. `lore-cli index`로 새 PC의 qmd 컬렉션과 색인을 만듭니다. `common`과 가져온 모든 유효한 프로젝트 폴더를 등록합니다. 실제 qmd 설치와 모델 다운로드가 필요한 단계입니다.

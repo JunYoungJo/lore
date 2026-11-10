@@ -106,7 +106,7 @@ impl Default for Settings {
     fn default() -> Self {
         let home = home();
         Self {
-            knowledge_root: slash(home.join("Documents").join("doc").join("lore-memory")),
+            knowledge_root: slash(home.join("Documents").join("lore-memory")),
             backend: "codex".into(),
             models: Models::default(),
             single_model: None,
