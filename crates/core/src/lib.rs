@@ -18,6 +18,7 @@ pub mod review;
 pub mod run;
 pub mod scan;
 pub mod settings;
+pub mod setup;
 pub mod sync;
 pub mod transcript;
 pub mod worker;

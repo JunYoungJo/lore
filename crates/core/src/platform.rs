@@ -45,7 +45,7 @@ pub fn search_paths() -> Vec<PathBuf> {
     #[cfg(unix)]
     {
         let home = home();
-        folders.extend([home.join(".local/bin"), home.join(".bun/bin"), home.join(".cargo/bin"), home.join(".npm-global/bin"), PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/usr/local/bin")]);
+        folders.extend([home.join(".local/bin"), home.join(".bun/bin"), home.join(".cargo/bin"), home.join(".npm-global/bin"), PathBuf::from("/opt/homebrew/bin"), PathBuf::from("/opt/homebrew/opt/node@24/bin"), PathBuf::from("/usr/local/bin"), PathBuf::from("/usr/local/opt/node@24/bin")]);
         let nvm = std::env::var_os("NVM_DIR").map(PathBuf::from).unwrap_or_else(|| home.join(".nvm"));
         if let Ok(entries) = std::fs::read_dir(nvm.join("versions/node")) {
             let mut versions: Vec<_> = entries.flatten().filter(|entry| entry.path().join("bin").is_dir()).collect();
@@ -53,6 +53,15 @@ pub fn search_paths() -> Vec<PathBuf> {
             folders.extend(versions.into_iter().rev().map(|entry| entry.path().join("bin")));
         }
         folders.extend([PathBuf::from("/usr/bin"), PathBuf::from("/bin")]);
+    }
+    #[cfg(windows)]
+    {
+        if let Some(appdata) = std::env::var_os("APPDATA") { folders.push(PathBuf::from(appdata).join("npm")); }
+        if let Some(local) = std::env::var_os("LOCALAPPDATA") { folders.push(PathBuf::from(local).join("Programs/nodejs")); }
+        if let Some(programs) = std::env::var_os("ProgramFiles") {
+            let programs = PathBuf::from(programs);
+            folders.extend([programs.join("nodejs"), programs.join("Git/cmd")]);
+        }
     }
     let mut seen = std::collections::BTreeSet::new();
     folders.retain(|folder| !folder.as_os_str().is_empty() && seen.insert(folder.clone()));

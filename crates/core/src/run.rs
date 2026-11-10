@@ -36,7 +36,7 @@ fn tail(text: &str, limit: usize) -> String {
     text.chars().skip(count.saturating_sub(limit)).collect()
 }
 
-fn kill_tree(pid: u32) {
+pub fn kill_tree(pid: u32) {
     #[cfg(windows)]
     {
         let _ = Command::new("taskkill")

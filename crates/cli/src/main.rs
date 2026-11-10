@@ -33,6 +33,8 @@ const USAGE: &str = "Usage: lore-cli <command>
   hooks                           Show Claude / Codex hook connection status
   connect <claude|codex>          Add this CLI to hook settings (backs up the previous file)
   disconnect <claude|codex>       Remove only Lore hooks (backs up the previous file)
+  integrations disconnect <claude|codex>
+                                  Remove unchanged Lore-owned MCP, rules, skill, and hooks
   migrate-links [--apply] [--backup <folder>]
                                   Move original-session links to conversation copies (preview by default)
   refresh-copies [--apply]        Rebuild queued conversation copies and update note links
@@ -74,6 +76,14 @@ fn run(args: &[String]) -> Result<()> {
         return Ok(());
     }
     match command {
+        "integrations" => {
+            if args.get(1).map(String::as_str) != Some("disconnect") { return Err(Error::permanent("Use integrations disconnect <claude|codex>.")); }
+            let provider = provider(args.get(2))?;
+            let kept = lore_core::setup::disconnect(&lore_core::platform::home(), &paths, provider)?;
+            hooks::unregister_at(&hooks::config_path(provider), provider, lore_core::worker::now())?;
+            for warning in kept { println!("{warning}"); }
+            println!("Removed unchanged Lore-owned integration entries and Lore hooks.");
+        }
         "sync" => {
             let mode = args.get(1).map(String::as_str).unwrap_or("status");
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else { return Err(Error::transient("Close the tray app before using CLI sync.")); };

@@ -206,6 +206,15 @@ impl Settings {
 
 fn detect_command(name: &str, package_script: &str) -> Vec<String> {
     let Some(found) = which(name) else { return Vec::new() };
+    #[cfg(unix)]
+    {
+        use std::io::Read;
+        let mut header = Vec::new();
+        if let Ok(file) = std::fs::File::open(&found) { let _ = file.take(160).read_to_end(&mut header); }
+        if header.starts_with(b"#!") && String::from_utf8_lossy(&header).lines().next().is_some_and(|line| line.contains("node")) {
+            if let Some(node) = which("node") { return vec![node.to_string_lossy().into(), found.to_string_lossy().into()]; }
+        }
+    }
     let is_exe = found.extension().map(|ext| ext.eq_ignore_ascii_case("exe")).unwrap_or(false);
     if !cfg!(windows) || is_exe {
         return vec![found.to_string_lossy().to_string()];

@@ -69,3 +69,30 @@ fn a_renamed_checkout_uses_its_versioned_project_identity() {
     assert_eq!(report["project"], "my-project");
     assert!(!dir.path().join("app").exists());
 }
+
+#[test]
+fn uninstall_cleanup_removes_owned_integrations_and_keeps_other_settings() {
+    use lore_core::{hooks, settings::{Commands, Paths, Settings}, setup, transcript::Provider};
+    let dir = tempfile::tempdir().unwrap();
+    let user_root = dir.path().join("user");
+    let paths = Paths { root: dir.path().join("app") };
+    std::fs::create_dir_all(&user_root).unwrap();
+    let config = user_root.join(".claude.json");
+    std::fs::write(&config, r#"{"keep":true,"mcpServers":{"other":{"command":"other"}}}"#).unwrap();
+    let settings = Settings { commands: Commands { qmd: vec!["fixture-qmd".into()], ..Default::default() }, ..Default::default() };
+    let plan = setup::plan(&user_root, &paths, Provider::Claude, &settings).unwrap();
+    setup::connect(&user_root, &paths, Provider::Claude, &settings, &plan.token).unwrap();
+    hooks::register_at(&user_root.join(".claude/settings.json"), Provider::Claude, std::path::Path::new(env!("CARGO_BIN_EXE_lore-cli")), 1).unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lore-cli"))
+        .args(["integrations", "disconnect", "claude"])
+        .env("LORE_HOME", &paths.root).env("HOME", &user_root).env("USERPROFILE", &user_root)
+        .output().unwrap();
+    assert!(output.status.success(), "{:?}", output);
+    let after: serde_json::Value = serde_json::from_slice(&std::fs::read(config).unwrap()).unwrap();
+    assert_eq!(after["keep"], true);
+    assert_eq!(after["mcpServers"]["other"]["command"], "other");
+    assert!(after["mcpServers"].get("qmd").is_none());
+    assert!(!user_root.join(".claude/skills/lore-memory/SKILL.md").exists());
+    assert!(!std::fs::read_to_string(user_root.join(".claude/CLAUDE.md")).unwrap().contains("lore-memory:start"));
+    assert!(!paths.database().exists());
+}

@@ -1,4 +1,4 @@
-import { Bot, Database, FolderOpen, Gauge, Plug, Power } from "lucide-react";
+import { Bot, Database, FolderOpen, Gauge, Plug, Power, Sparkles } from "lucide-react";
 
 import * as api from "@/ipc/api";
 import type { EditableSettings, HookStatus, Settings, Snapshot } from "@/ipc/contract";
@@ -72,6 +72,12 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <div className="body settings">
+      <section className="card" aria-label="Setup and integrations">
+        <div className="card-title"><Sparkles size={15} strokeWidth={1.9} />Setup & integrations</div>
+        <div className="help">Install tools, connect your AI clients, repair connections, and test memory recording and search.</div>
+        <button type="button" className="btn primary" onClick={() => void api.openSetup()}>Open setup guide</button>
+        <button type="button" className="link-btn" onClick={() => void api.openIntegrations()}>Manage integrations</button>
+      </section>
       <section className="card" aria-label="Recording model">
         <div className="card-title">
           <Bot size={15} strokeWidth={1.9} />

@@ -1,0 +1,11 @@
+.setup-terminal { background: #101722; border-radius: 10px; overflow: hidden; margin-top: 24px; border: 1px solid #263242; }
+.setup-terminal-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; color: #a3b2c5; background: #151e2c; font-size: 10px; border-bottom: 1px solid #263242; }
+.terminal-state { font-size: 9px; }
+.terminal-stop { display: flex; align-items: center; gap: 5px; color: #f19595; border: 1px solid #5c3e44; border-radius: 4px; font-size: 9px; padding: 3px 6px; background: none; cursor: pointer; }
+.setup-command { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #263242; }
+.setup-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: #b3c7df; font-size: 10px; line-height: 1.7; user-select: text; }
+.setup-command .btn { flex: none; font-size: 10px; }
+.setup-terminal-screen { height: 240px; padding: 10px 8px 0; }
+.terminal-note { border-top: 1px solid #263242; color: #8c9db5; font-size: 9px; padding: 10px 14px; line-height: 1.8; margin: 0; }
+
+.setup-terminal-head .grow { flex: 1; }

@@ -92,6 +92,7 @@ fn run_exclusive(
         let _operation = state.operation();
         let settings = state.settings();
         settings.validate().and_then(|_| {
+            if state.setup_busy() { return Err(Error::transient("Wait for setup to finish before syncing.")); }
             if state.reviewing() { return Err(Error::permanent("Close the memory review window before syncing.")); }
             let queue = Queue::open(&state.paths.database())?;
             if !queue.jobs_with_status(&[Status::Applying, Status::IndexPending], 1)?.is_empty() {

@@ -99,11 +99,11 @@ pub fn spawn(app: AppHandle) {
         let mut last_sync = Instant::now().checked_sub(Duration::from_secs(300)).unwrap_or_else(Instant::now);
         loop {
             let settings = state.settings();
-            if settings.sync_enabled && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= Duration::from_secs(300) {
+            if settings.sync_enabled && !state.setup_busy() && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= Duration::from_secs(300) {
                 last_sync = Instant::now();
                 crate::sync::automatic(&app);
             }
-            if settings.paused || state.reviewing() || state.syncing() || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
+            if state.setup_busy() || settings.paused || state.reviewing() || state.syncing() || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
                 state.wait(ERROR_WAIT);
                 continue;
             }
@@ -117,7 +117,7 @@ pub fn spawn(app: AppHandle) {
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.
-            if state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
+            if state.setup_busy() || state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
             drop(operation);
             changed(&app);

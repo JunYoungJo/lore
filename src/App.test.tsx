@@ -19,6 +19,8 @@ const api = vi.hoisted(() => ({
   openNote: vi.fn(),
   openFolder: vi.fn(),
   hideWindow: vi.fn(),
+  openSetup: vi.fn(),
+  openIntegrations: vi.fn(),
   onStateChanged: vi.fn(() => Promise.resolve(() => {})),
   onPopoverShown: vi.fn(() => Promise.resolve(() => {})),
 }));

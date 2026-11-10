@@ -4,6 +4,8 @@
 
 앱은 `lore`, CLI는 `lore-cli`, 앱 식별자는 `io.github.junyoungjo.lore`입니다. 아래 명령과 경로는 이 이름을 기준으로 합니다.
 
+처음 실행할 때는 설정 안내를 따릅니다. 기존 설치에서는 **Settings → Setup & integrations → Open setup guide**로 다시 열 수 있습니다. 도구 설치·로그인용 내장 터미널, 기억 폴더, MCP·규칙·스킬·훅 연결, 색인과 실제 기록·검색 테스트를 제공합니다. 연결 관리와 보존 범위는 [설정 안내](setup.md)를 참고하십시오. 아래의 Hook connections와 CLI connect/disconnect는 훅만 관리합니다.
+
 ## 훅 등록
 
 팝오버 설정 화면의 "Hook connections"에서 Claude Code와 Codex의 연결 상태(연결됨, 다른 경로, 연결 안 됨)를 보고, "Connect"과 "Disconnect" 버튼으로 연결하거나 해제합니다. 같은 일을 `lore-cli.exe connect <claude|codex>`, `disconnect <claude|codex>`로도 할 수 있습니다. 앱은 사용자가 누르기 전에는 전역 설정 파일을 바꾸지 않습니다. 해제는 lore 훅만 지우고, 연결 때 새로 만든 이벤트 항목이 비면 그 항목도 지웁니다. Windows NSIS 설치본을 제거하면 제거 프로그램이 Claude·Codex의 lore 훅을 해제합니다(업데이트를 위한 재설치일 때는 해제하지 않습니다). macOS·Linux에서는 앱을 지우기 전에 훅을 해제합니다.

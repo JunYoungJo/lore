@@ -37,3 +37,24 @@ export const previewSync = (id: string, choices: import("./contract").SyncChoice
 export const applySync = (id: string, choices: import("./contract").SyncChoice[], token: string): Promise<void> => invoke("apply_sync", { id, choices, token });
 export const resumeSync = (): Promise<void> => invoke("resume_sync");
 export const deferSync = (): Promise<void> => invoke("defer_sync");
+
+export const openSetup = (): Promise<void> => invoke("open_setup");
+export const openIntegrations = (): Promise<void> => invoke("open_integrations");
+export const setupCheckTools = (): Promise<import("./contract").ToolChecks> => invoke("setup_check_tools");
+export const setupPickFolder = (): Promise<string | null> => invoke("setup_pick_folder");
+export const getSetup = (): Promise<import("./contract").SetupSnapshot> => invoke("get_setup");
+export const saveSetupProgress = (progress: import("./contract").SetupProgress): Promise<void> => invoke("save_setup_progress", { progress });
+export const setupDetect = (): Promise<void> => invoke("setup_detect");
+export const setupRepository = (path: string, create: boolean): Promise<void> => invoke("setup_repository", { path, create });
+export const setupConnect = (provider: Provider, token: string): Promise<void> => invoke("setup_connect", { provider, token });
+export const setupDisconnect = (provider: Provider): Promise<string[]> => invoke("setup_disconnect", { provider });
+export const setupIndex = (): Promise<void> => invoke("setup_index");
+export const setupBeginTest = (): Promise<void> => invoke("setup_begin_test");
+const commandArgs = ({ task, remote = "", path = "", query = "" }: import("./contract").SetupCommand) => ({ task, remote, path, query });
+export const setupPrepare = (command: import("./contract").SetupCommand): Promise<import("./contract").PreparedCommand> => invoke("setup_prepare", commandArgs(command));
+export const setupRun = (command: import("./contract").SetupCommand, token: string, cols: number, rows: number): Promise<void> => invoke("setup_run", { request: { ...commandArgs(command), token, cols, rows } });
+export const setupOpenDocs = (topic: string): Promise<void> => invoke("setup_open_docs", { topic });
+export const setupTerminalRead = (after: number): Promise<import("./contract").TerminalOutput> => invoke("setup_terminal_read", { after });
+export const setupTerminalInput = (data: string): Promise<void> => invoke("setup_terminal_input", { data });
+export const setupTerminalResize = (cols: number, rows: number): Promise<void> => invoke("setup_terminal_resize", { cols, rows });
+export const setupTerminalStop = (): Promise<void> => invoke("setup_terminal_stop");

@@ -15,6 +15,7 @@ rusqlite = { version = "0.32", features = ["bundled"] }
 sha2 = "0.10"
 similar = "2"
 zstd = "0.13"
+toml_edit = "0.22"
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

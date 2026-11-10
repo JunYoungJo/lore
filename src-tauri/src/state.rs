@@ -25,6 +25,7 @@ pub struct AppState {
     signal: Condvar,
     operation: Mutex<()>,
     syncing: AtomicBool,
+    setup_busy: AtomicBool,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -45,6 +46,7 @@ impl AppState {
             signal: Condvar::new(),
             operation: Mutex::new(()),
             syncing: AtomicBool::new(false),
+            setup_busy: AtomicBool::new(false),
         }
     }
 
@@ -62,6 +64,12 @@ impl AppState {
 
     pub fn syncing(&self) -> bool {
         self.syncing.load(Ordering::SeqCst)
+    }
+
+    pub fn setup_busy(&self) -> bool { self.setup_busy.load(Ordering::SeqCst) }
+
+    pub fn begin_setup(&self) -> Option<SetupGuard<'_>> {
+        self.setup_busy.compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst).ok().map(|_| SetupGuard(self))
     }
 
     pub fn begin_sync(&self) -> Option<SyncGuard<'_>> {
@@ -118,6 +126,11 @@ impl AppState {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         *guard = false;
     }
+}
+
+pub struct SetupGuard<'a>(&'a AppState);
+impl Drop for SetupGuard<'_> {
+    fn drop(&mut self) { self.0.setup_busy.store(false, Ordering::SeqCst); self.0.wake(); }
 }
 
 pub struct SyncGuard<'a>(&'a AppState);

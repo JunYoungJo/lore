@@ -40,6 +40,11 @@ Lore preserves that context as topic-based notes: decisions and their reasons, p
 - **Git sharing with conflict review** — Compare diverged histories, inspect the supporting conversations, choose a proposed resolution, and preview the resulting documents before applying and sharing.
 - **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. Synchronization also retains its state after indexing or push failures.
 - **Tray controls** — Pause recording, configure the model and hooks, and switch between light and dark themes.
+- **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, connect AI clients, and test recording and recall. Reopen the guide to repair or remove Lore integrations.
+
+<img src="docs/screenshots/onboarding.png" alt="Lore first-run introduction with an interactive example of remembering a project decision" width="720" />
+
+The first-run introduction. Ongoing repair and removal have a separate integration-management window.
 
 <details>
 <summary>Settings and session queue</summary>
@@ -89,17 +94,17 @@ The build includes `lore-cli` as a sidecar. The app executable is `lore` (`lore.
 
 ### Set up your memory
 
-1. Open the app's settings. Choose a memory folder—the default is `~/Documents/lore-memory`—and select the recording CLI and model.
-2. Quit the tray app, then run the bundled CLI to check dependencies and initialize this PC's index:
+1. Open the first-run introduction, or use **Settings → Setup & integrations → Open setup guide** on an existing installation. Try the short memory example, then choose your coding tools and memory folder.
+2. Lore checks the tools and sign-in needed on this PC. Only missing setup is offered. When needed, review a prepared command and select **Run** in the embedded terminal.
+3. Choose an existing memory folder, create a new Git repository, or clone your memory remote. The default location is still `~/Documents/lore-memory`.
+4. In preparation, inspect **What will change?** and select **Connect & prepare memory**. Lore prepares search and connects the selected clients through qmd MCP, memory guidance, a search skill, and session hooks. Existing user instructions and unrelated settings are preserved.
+5. Restart your AI client. In Codex, review and trust Lore's hooks through `/hooks`; check the `qmd` server in `/mcp`. Lore does not grant trust on your behalf.
+6. New indexes use Qwen3-Embedding-0.6B for multilingual search. Existing model choices are preserved. The guide shows when preparation is complete.
+7. Start using Lore. For your first memory, make a decision in a normal Git-project session and recall it through qmd in a new session. This exercise can happen after setup; configuration readiness is not presented as proof of successful recording and recall.
 
-   ```sh
-   lore-cli doctor
-   lore-cli index
-   ```
+Use **Set up later** to save your place. Repairs, disconnection, and advanced controls are in the separate **Manage integrations** window. See [Setup and integrations](docs/setup.md) for ownership, platform details, and limitations.
 
-3. Configure qmd MCP in the coding tools that should read the memory. Match `QMD_CONFIG_DIR`, `XDG_CACHE_HOME`, and the index name to the paths and values reported by `doctor`. Give those agents instructions to search the memory when relevant.
-4. Reopen the app and explicitly connect Claude Code and/or Codex in **Settings → Hook connections**. Trust the new hooks in Codex's `/hooks` interface when required.
-5. Work in a Git project. When a connected session ends or compacts, check the tray app for the recording result.
+For manual setup, the bundled `lore-cli doctor` reports this PC's command and index paths. Run `lore-cli index` with the tray app closed to initialize or refresh the index outside the guide.
 
 Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `lore-cli scan` is available for manual recovery.
 

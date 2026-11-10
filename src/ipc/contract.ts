@@ -145,6 +145,54 @@ export interface Snapshot {
   version: string;
 }
 
+export interface SetupProgress {
+  step: number;
+  completed: boolean;
+  deferred: boolean;
+  providers: Provider[];
+  testStartedAt: number | null;
+  recallConfirmed: boolean;
+}
+
+export interface SetupResource {
+  label: string;
+  path: string;
+  state: "add" | "ready" | "update" | "preserved" | "conflict";
+  detail: string;
+  content: string;
+}
+
+export interface SetupPlan { token: string; resources: SetupResource[]; canApply: boolean }
+export interface SetupClient { provider: Provider; plan: SetupPlan | null; error: string | null; hooks: HookStatus }
+export interface SetupSnapshot {
+  progress: SetupProgress;
+  settings: Settings;
+  diagnostics: {
+    commands: Record<"codex" | "claude" | "qmd", { command: string[]; available: boolean }>;
+    indexConfigured: boolean;
+    problems: string[];
+    qmdConfigDir: string;
+    qmdCacheDir: string;
+    hookCli: string;
+  };
+  tools: { name: string; path: string | null }[];
+  clients: SetupClient[];
+  platform: string;
+  recorded: number;
+  testRecorded: boolean;
+  rootExists: boolean;
+  qwenModel: string;
+}
+
+export interface SetupCommand { task: string; remote?: string; path?: string; query?: string }
+export interface PreparedCommand { command: string; argv: string[]; cwd: string; env: [string, string][]; token: string }
+export interface TerminalOutput { bytes: number[]; offset: number; running: boolean; exitCode: number | null }
+export interface ToolChecks {
+  nodeVersion: string | null;
+  nodeReady: boolean;
+  auth: Record<Provider, "ready" | "signed_out" | "unavailable" | "unknown">;
+}
+
 export interface SyncSummary { phase: string; message: string | null; issues: number; blocked: boolean }
 export interface SyncFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; textConflict: boolean }
 export interface SyncSource { id: string; side: string; path: string; text: string }

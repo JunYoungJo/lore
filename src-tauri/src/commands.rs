@@ -38,7 +38,7 @@ fn error(value: impl std::fmt::Display) -> String {
     value.to_string()
 }
 
-fn cli_path() -> PathBuf {
+pub(crate) fn cli_path() -> PathBuf {
     let name = lore_core::platform::CLI_FILENAME;
     let sibling = std::env::current_exe().ok().and_then(|exe| exe.parent().map(|dir| dir.join(name))).unwrap_or_else(|| PathBuf::from(name));
     #[cfg(debug_assertions)]

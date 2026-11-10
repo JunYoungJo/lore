@@ -1,6 +1,7 @@
 use lore_core::settings::{self, Paths};
 use lore_core::worker;
 use tauri_plugin_notification::NotificationExt;
+use tauri::Manager;
 
 mod background;
 mod commands;
@@ -9,9 +10,12 @@ mod state;
 mod sync;
 mod tray;
 mod watch;
+mod setup;
+mod setup_terminal;
 
 pub fn run() {
     let paths = Paths::standard();
+    let first_launch = !paths.settings().exists();
     let loaded = settings::load_or_init(&paths.settings(), worker::now());
     let (initial, problem) = match loaded {
         Ok(settings) => (settings, None),
@@ -24,14 +28,20 @@ pub fn run() {
         .plugin(tauri_plugin_single_instance::init(|app, _argv, _cwd| tray::open_popover(app)))
         .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
         .manage(app_state)
-        .setup(|app| {
+        .manage(setup_terminal::Terminal::default())
+        .setup(move |app| {
             #[cfg(target_os = "macos")]
             app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             let handle = app.handle().clone();
             tray::setup_tray(&handle)?;
             tray::create_popover(&handle);
+            let progress = lore_core::setup::progress(&handle.state::<state::AppState>().paths).unwrap_or_default();
+            let show_setup = first_launch || (!progress.completed && !progress.deferred && lore_core::setup::progress_path(&handle.state::<state::AppState>().paths).exists());
+            if first_launch { lore_core::setup::save_progress(&handle.state::<state::AppState>().paths, &progress)?; }
+            setup::create_window(&handle, show_setup)?;
             let opener = handle.clone();
             let _ = handle.notification().on_action(move |_| tray::open_popover(&opener));
             watch::spawn(handle.clone());
@@ -67,6 +77,25 @@ pub fn run() {
             sync::apply_sync,
             sync::resume_sync,
             sync::defer_sync,
+            setup::open_setup,
+            setup::open_integrations,
+            setup::setup_check_tools,
+            setup::setup_pick_folder,
+            setup::get_setup,
+            setup::save_setup_progress,
+            setup::setup_detect,
+            setup::setup_begin_test,
+            setup::setup_repository,
+            setup::setup_connect,
+            setup::setup_disconnect,
+            setup::setup_index,
+            setup::setup_prepare,
+            setup::setup_run,
+            setup::setup_open_docs,
+            setup_terminal::setup_terminal_read,
+            setup_terminal::setup_terminal_input,
+            setup_terminal::setup_terminal_resize,
+            setup_terminal::setup_terminal_stop,
         ])
         .build(tauri::generate_context!())
         .expect("Could not start Lore")

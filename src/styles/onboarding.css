@@ -1,0 +1,127 @@
+.onboard { display: flex; flex-direction: column; height: 100%; background: var(--surface); }
+.onboard-top { height: 80px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 38px; }
+.onboard-logo { display: flex; gap: 9px; align-items: center; font-size: 18px; font-weight: 630; letter-spacing: -.5px; }
+.onboard-logo .brand { width: 28px; height: 28px; }
+.onboard-dismiss, .onboard-back { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: none; border: 0; color: var(--text3); font-size: 11px; cursor: pointer; padding: 8px; border-radius: 5px; }
+.onboard-dismiss:hover, .onboard-back:hover { color: var(--text); background: var(--surface2); }
+.onboard-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }
+.onboard-content { width: min(100%, 650px); margin: auto; padding: 30px 24px 24px; animation: onboarding-in .25s ease-out; }
+.onboard-welcome { padding-top: 12px; }
+.onboard-heading { text-align: center; }
+.onboard-overline { font-size: 9px; letter-spacing: 2px; color: var(--text3); font-weight: 580; }
+.onboard-heading h1 { font-size: 34px; line-height: 1.2; letter-spacing: -1.1px; font-weight: 600; margin: 16px 0 15px; }
+.onboard-welcome .onboard-heading h1 { font-size: 40px; letter-spacing: -1.7px; line-height: 1.17; }
+.onboard-heading p { font-size: 13px; color: var(--text2); line-height: 1.9; margin: 0; white-space: pre-line; }
+.onboard-main-action { display: flex; flex-direction: column; align-items: center; gap: 11px; margin: 26px 0 0; }
+.onboard-main-action > span { color: var(--text3); font-size: 10px; text-align: center; line-height: 1.8; }
+.onboard-primary { display: inline-flex; align-items: center; justify-content: center; gap: 18px; padding: 13px 24px; min-width: 185px; border: 1px solid var(--accent); border-radius: 9px; background: var(--accent); color: var(--accent-ink); font-size: 12px; font-weight: 550; box-shadow: 0 2px 3px #00000012; cursor: pointer; }
+.onboard-primary:hover { filter: brightness(1.06); }
+.onboard-primary > svg { flex: none; }
+.onboard-secondary { display: inline-flex; align-items: center; justify-content: center; gap: 9px; border: 1px solid var(--line2); border-radius: 7px; background: var(--surface); padding: 10px 15px; font-size: 11px; cursor: pointer; margin-top: 12px; }
+.onboard-text-button { display: block; border: 0; background: none; color: var(--text3); font-size: 10px; padding: 8px; margin: 10px auto 0; cursor: pointer; text-align: center; }
+.onboard-text-button:hover { color: var(--accent); }
+.onboard-footer { flex: none; min-height: 62px; display: flex; align-items: center; gap: 12px; padding: 12px 38px 18px; }
+.onboard-back { width: 75px; justify-content: flex-start; }
+.onboard-progress { margin-left: auto; margin-right: auto; display: flex; gap: 5px; align-items: center; padding-left: 50px; }
+.onboard-progress span { width: 5px; height: 5px; border-radius: 5px; background: var(--line2); transition: width .2s; }
+.onboard-progress .current { background: var(--accent); width: 20px; }
+.onboard-progress .past { background: var(--text3); }
+.onboard-progress-caption { color: var(--text3); font-size: 9px; min-width: 125px; text-align: right; }
+.onboard-loading { display: flex; height: 100%; flex-direction: column; align-items: center; justify-content: center; gap: 14px; color: var(--text2); }
+.onboard-error { display: flex; align-items: start; gap: 10px; justify-content: space-between; padding: 12px 15px; border-radius: 8px; color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.8; margin-bottom: 22px; overflow-wrap: anywhere; }
+.onboard-error > button { border: 0; background: none; color: inherit; cursor: pointer; flex: none; padding: 0; }
+.onboard-small { color: var(--text3); font-size: 10px; line-height: 1.9; text-align: center; margin: 20px auto 0; max-width: 445px; }
+.onboard code { font-family: var(--font-mono); user-select: text; }
+.onboard button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
+.onboard button:disabled { cursor: default; opacity: .4; }
+.onboard .setup-spin { animation: spin 1s linear infinite; }
+
+.memory-story { position: relative; overflow: hidden; margin: 25px auto 0; display: flex; flex-wrap: wrap; align-items: center; border: 1px solid var(--line2); border-radius: 16px; background: radial-gradient(ellipse at 10% 30%, var(--accent-soft), transparent 65%), var(--paper); padding: 22px 24px 12px; }
+.story-orbit { width: 110px; height: 130px; flex: none; position: relative; display: grid; place-items: center; margin-right: 16px; }
+.story-orbit > span { position: absolute; width: 100px; height: 100px; border: 1px solid color-mix(in srgb, var(--accent) 13%, transparent); border-radius: 50%; }
+.story-orbit > span:first-child { transform: scale(1.2); opacity: .5; }
+.story-symbol { display: grid; place-items: center; width: 58px; height: 66px; border: 1px solid color-mix(in srgb, var(--accent) 20%, var(--line2)); border-radius: 11px; color: var(--accent); background: var(--surface); transform: rotate(-7deg); box-shadow: 4px 7px 18px #00000008; }
+.story-body { min-width: 0; flex: 1; animation: onboarding-in .22s ease-out; }
+.story-tag { font-size: 8px; font-weight: 650; color: var(--accent); letter-spacing: 1px; }
+.story-body h3 { font-size: 12px; font-weight: 600; line-height: 1.6; margin: 7px 0; }
+.story-note { white-space: pre-line; font-size: 11px; line-height: 1.85; color: var(--text2); min-height: 62px; }
+.story-body > p { font-size: 9px; color: var(--text3); line-height: 1.7; margin: 6px 0 0; }
+.story-controls { flex-basis: 100%; display: flex; align-items: center; border-top: 1px solid var(--line2); padding-top: 10px; margin-top: 15px; gap: 14px; }
+.story-example { font-size: 8px; color: var(--text3); flex: 1; }
+.story-dots { display: flex; gap: 5px; }
+.story-dots button { width: 5px; height: 5px; border: 0; border-radius: 50%; padding: 0; background: var(--line2); cursor: pointer; }
+.story-dots button[aria-pressed="true"] { background: var(--accent); }
+.story-next { padding: 4px; display: grid; place-items: center; border: 0; border-radius: 5px; color: var(--text2); background: transparent; cursor: pointer; }
+.story-next:hover { color: var(--accent); background: var(--accent-soft); }
+
+.onboard-provider-options { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin: 35px auto 0; max-width: 480px; }
+.onboard-provider { display: flex; flex-direction: column; overflow: hidden; text-align: left; padding: 0; background: var(--surface); border: 1px solid var(--line2); border-radius: 12px; cursor: pointer; transition: border-color .15s, box-shadow .15s; }
+.onboard-provider:hover { border-color: var(--text3); }
+.onboard-provider.chosen { border-color: var(--accent); box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 10%, transparent); }
+.provider-art { display: flex; align-items: start; gap: 12px; height: 112px; padding: 28px 22px 18px; border-bottom: 1px solid var(--line); background: linear-gradient(155deg, var(--paper), var(--surface2)); }
+.provider-prompt { font-family: var(--font-mono); font-size: 25px; font-weight: 500; color: var(--text2); line-height: 1.2; }
+.provider-art.claude .provider-prompt { font-size: 35px; line-height: .9; color: #b77958; }
+.provider-code { display: flex; flex: 1; flex-direction: column; gap: 9px; padding-top: 6px; }
+.provider-code i { display: block; height: 4px; background: var(--line2); border-radius: 2px; width: 90%; }
+.provider-code i:nth-child(2) { width: 65%; }
+.provider-code i:nth-child(3) { width: 80%; }
+.provider-caption { display: flex; align-items: center; gap: 10px; padding: 17px 18px 7px; }
+.provider-caption strong { flex: 1; font-size: 13px; font-weight: 600; }
+.provider-select { width: 17px; height: 17px; display: grid; place-items: center; border-radius: 50%; border: 1px solid var(--line2); color: var(--accent-ink); }
+.chosen .provider-select { border-color: var(--accent); background: var(--accent); }
+.provider-detected { display: block; color: var(--text3); font-size: 9px; padding: 0 18px 18px; }
+.onboard-folder-scene { display: flex; align-items: center; gap: 17px; color: var(--accent); max-width: 430px; margin: 30px auto 0; padding: 20px 22px; border-block: 1px solid var(--line); }
+.onboard-folder-scene > div { flex: 1; display: flex; flex-direction: column; gap: 8px; }
+.onboard-folder-scene strong { font-size: 13px; font-weight: 550; color: var(--text); }
+.onboard-folder-scene div span { font-size: 9px; color: var(--text3); }
+.folder-md { display: block; font-family: var(--font-mono); font-size: 11px; color: var(--text3); }
+.onboard-folder-modes { display: flex; gap: 18px; justify-content: center; margin: 24px 0; }
+.onboard-folder-modes button { border: 0; border-bottom: 1px solid transparent; background: none; padding: 0 0 6px; color: var(--text3); cursor: pointer; font-size: 11px; }
+.onboard-folder-modes button[aria-pressed="true"] { border-color: var(--accent); color: var(--accent); }
+.onboard-folder-fields { max-width: 430px; margin: auto; }
+.onboard-folder-fields > label { display: block; font-size: 10px; color: var(--text2); margin: 14px 0 8px; }
+.onboard-folder-input { display: flex; gap: 4px; border: 1px solid var(--line2); border-radius: 8px; background: var(--paper); padding: 7px 8px 7px 12px; align-items: center; }
+.onboard-folder-input input { min-width: 0; flex: 1; border: 0; background: transparent; outline: none; color: var(--text2); font-size: 10px; }
+.onboard-folder-input:focus-within { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
+.onboard-folder-input button { display: grid; place-items: center; border: 0; background: transparent; color: var(--text2); padding: 5px; cursor: pointer; }
+.onboard-folder-fields > .input { font-size: 10px; }
+.onboard-checking, .onboard-preparation-icon { display: flex; min-height: 160px; align-items: center; justify-content: center; color: var(--accent); }
+.onboard-checking { flex-direction: column; gap: 15px; font-size: 11px; color: var(--text3); }
+.onboard-checking svg { animation: spin 1.5s linear infinite; color: var(--accent); }
+.onboard-preparation-icon { width: 90px; min-height: 90px; margin: 30px auto; border-radius: 25px; background: var(--accent-soft); }
+.onboard-connection-scene { display: flex; align-items: center; justify-content: center; gap: 16px; padding: 35px 0 25px; }
+.onboard-connection-scene > div { width: 130px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 12px; color: var(--text2); font-size: 10px; }
+.onboard-connection-scene .brand { width: 32px; height: 32px; }
+.connection-thread { display: flex; gap: 7px; }
+.connection-thread i { width: 4px; height: 4px; border-radius: 50%; background: var(--accent); opacity: .35; }
+.connection-thread i:nth-child(2) { opacity: .6; }
+.connection-thread i:nth-child(3) { opacity: 1; }
+.onboard-connection-copy { display: grid; grid-template-columns: 16px auto; justify-content: center; gap: 9px; color: var(--text2); align-items: center; }
+.onboard-connection-copy svg { color: var(--ok); }
+.onboard-connection-copy p { font-size: 11px; margin: 0; line-height: 1.8; }
+.onboard-disclosure { display: flex; align-items: center; gap: 8px; padding: 8px; border: 0; background: none; margin: 14px auto 0; color: var(--text3); font-size: 10px; cursor: pointer; }
+.onboard-change-details { margin: 20px 0; padding: 16px; border: 1px solid var(--line2); border-radius: 8px; font-size: 11px; line-height: 1.9; color: var(--text2); }
+.onboard-change-details > p { margin: 0 0 15px; }
+.onboard-change-details section { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 14px; }
+.onboard-change-details details { margin: 10px 0; }
+.onboard-change-details summary { display: flex; justify-content: space-between; gap: 10px; cursor: pointer; color: var(--text); }
+.onboard-change-details small { color: var(--text3); font-size: 9px; }
+.onboard-change-details code { display: block; font-size: 9px; overflow-wrap: anywhere; }
+.onboard-change-details pre { padding: 10px; background: var(--surface2); white-space: pre-wrap; overflow-wrap: anywhere; font-size: 9px; }
+.onboard-preparing { text-align: center; margin: 45px 0; }
+.preparing-ring { margin: 0 auto 30px; width: 90px; height: 90px; display: grid; place-items: center; color: var(--accent); border: 1px solid var(--accent-soft); border-radius: 50%; position: relative; }
+.preparing-ring:after { content: ""; position: absolute; inset: -6px; border: 1px solid transparent; border-top-color: var(--accent); border-radius: 50%; animation: spin 2s linear infinite; }
+.onboard-preparing strong { font-size: 13px; font-weight: 500; }
+.onboard-preparing p { color: var(--text3); font-size: 11px; line-height: 1.9; margin: 15px 0; }
+.onboard-success-mark { display: grid; place-items: center; width: 60px; height: 60px; border-radius: 50%; color: var(--ok); background: var(--ok-soft); margin: 0 auto 28px; }
+.onboard-trust-note { display: flex; gap: 13px; align-items: flex-start; max-width: 460px; margin: 25px auto 0; padding: 15px 17px; border-radius: 8px; background: var(--accent-soft); color: var(--accent); }
+.onboard-trust-note svg { flex: none; margin-top: 2px; }
+.onboard-trust-note p { margin: 0; font-size: 11px; line-height: 1.8; }
+.onboard-first-use { max-width: 430px; margin: 30px auto 0; }
+.onboard-first-use > div { display: flex; gap: 15px; margin: 17px 0; align-items: start; }
+.onboard-first-use > div > span { display: grid; place-items: center; width: 22px; height: 22px; border: 1px solid var(--line2); border-radius: 50%; color: var(--text3); flex: none; font-size: 10px; }
+.onboard-first-use p { margin: 0; color: var(--text2); font-size: 11px; line-height: 1.9; }
+.onboard-first-use strong { display: block; font-weight: 550; color: var(--text); }
+@keyframes onboarding-in { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: none; } }
+@media (prefers-reduced-motion: reduce) { .onboard *, .onboard *::after { animation: none !important; transition: none !important; scroll-behavior: auto !important; } }
+@media (max-height: 720px) { .onboard-top { height: 62px; } .onboard-content { padding-top: 15px; } .onboard-welcome .onboard-heading h1 { font-size: 35px; } .memory-story { margin-top: 20px; padding-top: 16px; } .onboard-main-action { margin-top: 21px; } }

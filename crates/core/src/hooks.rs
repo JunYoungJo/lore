@@ -33,7 +33,7 @@ pub const EVENTS: [&str; 2] = ["SessionEnd", "PreCompact"];
 pub fn config_path(provider: Provider) -> PathBuf {
     match provider {
         Provider::Claude => home().join(".claude").join("settings.json"),
-        Provider::Codex => home().join(".codex").join("hooks.json"),
+        Provider::Codex => std::env::var_os("CODEX_HOME").filter(|s| !s.is_empty()).map(PathBuf::from).unwrap_or_else(|| home().join(".codex")).join("hooks.json"),
     }
 }
 
