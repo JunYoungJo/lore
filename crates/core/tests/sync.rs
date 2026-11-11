@@ -227,6 +227,14 @@ fn different_nested_documents_in_one_project_still_need_model_comparison() {
 }
 
 #[test]
+fn tracking_names_the_branch_and_its_upstream() {
+    let f = fixture();
+    assert_eq!(sync::tracking(&f.local).as_deref(), Some("main ↔ origin/main"));
+    git(&f.local, &["branch", "--unset-upstream"]);
+    assert_eq!(sync::tracking(&f.local), None);
+}
+
+#[test]
 fn fast_forward_reindexes_and_resumes_index_failure_without_reapplying() {
     let f = fixture();
     write(
@@ -247,10 +255,16 @@ fn fast_forward_reindexes_and_resumes_index_failure_without_reapplying() {
     .unwrap();
     assert_eq!(pending.phase, "index_pending");
     assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), plan.remote);
+    assert_eq!(sync::summary(&f.journal).last_synced_at, None);
+    let before = chrono::Utc::now().timestamp();
     assert!(sync::finish(&f.local, &f.journal, || Ok(()))
         .unwrap()
         .is_none());
+    let after = chrono::Utc::now().timestamp();
     assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), plan.remote);
+    let summary = sync::summary(&f.journal);
+    assert_eq!(summary.phase, "idle");
+    assert!(summary.last_synced_at.is_some_and(|at| (before..=after).contains(&at)));
 }
 
 #[test]
@@ -313,6 +327,7 @@ fn push_race_keeps_the_approved_local_commit() {
     assert_eq!(pending.phase, "push_pending");
     assert_eq!(git(&f.local, &["rev-parse", "HEAD"]), approved);
     assert!(!pending.blocks_recording());
+    assert_eq!(sync::summary(&f.journal).last_synced_at, None);
 }
 
 #[test]

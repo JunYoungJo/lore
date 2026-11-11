@@ -3,5 +3,5 @@
   "identifier": "default",
   "description": "Capability for the tray popover and the review window",
   "windows": ["tray", "review", "sync", "setup", "integrations"],
-  "permissions": ["core:default", "notification:default"]
+  "permissions": ["core:default", "core:window:allow-start-dragging", "notification:default"]
 }

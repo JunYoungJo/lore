@@ -15,9 +15,8 @@
 .setup-theme { display: flex; align-items: center; gap: 8px; padding: 10px; font-size: 11px; color: var(--text2); background: none; border: 0; cursor: pointer; border-radius: 6px; }
 .setup-theme:hover { background: var(--surface2); }
 .setup-workspace { min-width: 0; flex: 1; display: flex; flex-direction: column; }
-.setup-topbar { height: 58px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 30px; font-size: 11px; color: var(--text2); border-bottom: 1px solid var(--line); }
+.setup-topbar { height: 58px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 12px 0 30px; font-size: 11px; color: var(--text2); border-bottom: 1px solid var(--line); }
 .setup-divider { color: var(--text3); padding: 0 8px; }
-.setup-later { display: flex; align-items: center; gap: 10px; border: 0; background: none; color: var(--text2); cursor: pointer; font-size: 11px; }
 .setup-scroll { flex: 1; min-height: 0; overflow: auto; padding: 32px 38px 28px; }
 .setup-page-head { margin-bottom: 18px; }
 .setup-eyebrow { color: var(--accent); font-size: 10px; font-weight: 650; letter-spacing: 1.6px; }

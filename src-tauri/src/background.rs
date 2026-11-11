@@ -113,7 +113,7 @@ pub fn spawn(app: AppHandle) {
                 state.wait(ERROR_WAIT);
                 continue;
             }
-            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone());
+            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone()).defaulting_to(state.catalog().default_model(&settings.backend));
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.

@@ -1,19 +1,20 @@
 import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
-import { Square, TerminalSquare } from "lucide-react";
+import { Square, TerminalSquare, X } from "lucide-react";
 import "@xterm/xterm/css/xterm.css";
 import "@/styles/setup-terminal.css";
 
 import * as api from "@/ipc/api";
 import type { PreparedCommand, SetupCommand } from "@/ipc/contract";
 
-export function SetupTerminal({ command, prepared, onFinished, onError, onRunningChange }: {
+export function SetupTerminal({ command, prepared, onFinished, onError, onRunningChange, onClose }: {
   command: SetupCommand | null;
   prepared: PreparedCommand | null;
   onFinished: () => void;
   onError: (error: unknown) => void;
   onRunningChange?: (running: boolean) => void;
+  onClose?: () => void;
 }) {
   const element = useRef<HTMLDivElement>(null);
   const terminal = useRef<Terminal>();
@@ -102,6 +103,7 @@ export function SetupTerminal({ command, prepared, onFinished, onError, onRunnin
         <span className="grow" />
         <span className="terminal-state">{active ? "Running · input enabled" : exitCode === null ? "Ready" : `Exited ${exitCode}`}</span>
         {active && <button type="button" className="terminal-stop" onClick={() => void api.setupTerminalStop().catch(onError)}><Square size={11} />Stop</button>}
+        {onClose && !active && <button type="button" className="terminal-close" aria-label="Close terminal" onClick={onClose}><X size={13} /></button>}
       </div>
       <div className="setup-command">
         <code>{prepared?.command ?? "Choose a command above to prepare it here."}</code>

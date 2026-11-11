@@ -11,6 +11,69 @@ use crate::settings::Settings;
 const SEARCH_LIMIT: Duration = Duration::from_secs(180);
 const CONTEXT_LIMIT: Duration = Duration::from_secs(120);
 
+pub const QWEN_EMBED: &str = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
+pub const GEMMA_EMBED: &str = "hf:ggml-org/embeddinggemma-300M-GGUF/embeddinggemma-300M-Q8_0.gguf";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+pub struct EmbedModel {
+    pub uri: &'static str,
+    pub name: &'static str,
+    pub size: &'static str,
+    pub note: &'static str,
+}
+
+// qmd 2.8.3 formats queries for only these two model families.
+pub const EMBED_MODELS: [EmbedModel; 2] = [
+    EmbedModel { uri: QWEN_EMBED, name: "Qwen3-Embedding-0.6B", size: "about 640 MB", note: "Multilingual, including Korean." },
+    EmbedModel { uri: GEMMA_EMBED, name: "embeddinggemma-300M", size: "under 350 MB", note: "qmd’s default. Smaller, but weaker on Korean, Chinese and Japanese." },
+];
+
+fn section_lines<'a>(config_text: &'a str, section: &str) -> impl Iterator<Item = &'a str> {
+    let header = format!("{section}:");
+    let mut inside = false;
+    config_text.lines().filter(move |line| {
+        if !line.starts_with(' ') && !line.trim().is_empty() {
+            inside = line.trim_end() == header;
+            return false;
+        }
+        inside
+    })
+}
+
+fn unquoted(value: &str) -> &str {
+    let value = value.trim();
+    value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))).unwrap_or(value)
+}
+
+pub fn embed_model(config_text: &str) -> Option<String> {
+    section_lines(config_text, "models").find_map(|line| line.strip_prefix("  embed:")).map(unquoted).filter(|value| !value.is_empty()).map(str::to_string)
+}
+
+pub fn collection_names(config_text: &str) -> Vec<String> {
+    section_lines(config_text, "collections")
+        .filter(|line| line.starts_with("  ") && !line.starts_with("   "))
+        .filter_map(|line| line.trim().strip_suffix(':'))
+        .map(|name| unquoted(name).to_string())
+        .collect()
+}
+
+pub fn with_embed_model(config_text: &str, model: &str) -> String {
+    let entry = format!("  embed: \"{model}\"");
+    let mut lines: Vec<String> = config_text.lines().map(str::to_string).collect();
+    let header = lines.iter().position(|line| line.trim_end() == "models:");
+    match header {
+        Some(start) => {
+            let end = lines.iter().skip(start + 1).position(|line| !line.starts_with(' ') && !line.trim().is_empty()).map_or(lines.len(), |offset| start + 1 + offset);
+            match (start + 1..end).find(|&index| lines[index].starts_with("  embed:")) {
+                Some(index) => lines[index] = entry,
+                None => lines.insert(start + 1, entry),
+            }
+        }
+        None => lines.extend(["models:".to_string(), entry]),
+    }
+    format!("{}\n", lines.join("\n"))
+}
+
 pub struct Qmd {
     command: Vec<String>,
     config_dir: PathBuf,
@@ -100,6 +163,17 @@ impl Qmd {
         Ok(())
     }
 
+    // Vectors from different models cannot be mixed, so a model change re-embeds everything.
+    pub fn rebuild_vectors(&self) -> Result<()> {
+        self.run(&["update"], self.limit.as_ref())?;
+        self.run(&["embed", "-f"], self.limit.as_ref())?;
+        Ok(())
+    }
+
+    pub fn config_path(&self) -> PathBuf {
+        self.config_dir.join(format!("{}.yml", self.index))
+    }
+
     pub fn rank(&self, query: &str, collections: &[String], limit: usize) -> Result<Vec<String>> {
         let limit = limit.to_string();
         let mut args = vec!["vsearch", query, "--format", "json", "-n", limit.as_str()];
@@ -116,8 +190,7 @@ impl Qmd {
     }
 
     pub fn configured_collections(&self) -> Result<String> {
-        let path = self.config_dir.join(format!("{}.yml", self.index));
-        match std::fs::read_to_string(&path) {
+        match std::fs::read_to_string(self.config_path()) {
             Ok(text) => Ok(text),
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),
             Err(error) => Err(error.into()),
@@ -153,6 +226,32 @@ mod tests {
         assert!(!has_collection(config, "project-tc"));
         assert!(!has_collection(config, "path"));
         assert_eq!(collection_name("demoengine"), "project-demoengine");
+    }
+
+    const CONFIG: &str = "collections:\n  common:\n    path: D:\\k\\common\n    pattern: \"**/*.md\"\n    context:\n      \"\": 공통\n  project-demo:\n    path: D:\\k\\projects\\demo\nmodels:\n  embed: hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf\n  rerank: hf:r\n";
+
+    #[test]
+    fn the_embedding_model_and_collections_are_read_from_the_index_config() {
+        assert_eq!(embed_model(CONFIG).as_deref(), Some(QWEN_EMBED));
+        assert_eq!(embed_model("models:\n  embed: \"hf:a/b/c.gguf\"\n").as_deref(), Some("hf:a/b/c.gguf"));
+        assert_eq!(embed_model("collections: {}\n"), None);
+        assert_eq!(embed_model("collections:\n  embed:\n    path: x\n"), None);
+        assert_eq!(collection_names(CONFIG), ["common", "project-demo"]);
+        assert!(collection_names("collections: {}\nmodels:\n  embed: x\n").is_empty());
+    }
+
+    #[test]
+    fn changing_the_embedding_model_keeps_every_other_line() {
+        let changed = with_embed_model(CONFIG, GEMMA_EMBED);
+        assert_eq!(embed_model(&changed).as_deref(), Some(GEMMA_EMBED));
+        assert_eq!(changed.replace(&format!("  embed: \"{GEMMA_EMBED}\""), &format!("  embed: {QWEN_EMBED}")), CONFIG);
+
+        let without_embed = with_embed_model("collections: {}\nmodels:\n  rerank: hf:r\n", GEMMA_EMBED);
+        assert_eq!(without_embed, format!("collections: {{}}\nmodels:\n  embed: \"{GEMMA_EMBED}\"\n  rerank: hf:r\n"));
+
+        let without_models = with_embed_model("collections:\n  common:\n    path: x\n", QWEN_EMBED);
+        assert_eq!(without_models, format!("collections:\n  common:\n    path: x\nmodels:\n  embed: \"{QWEN_EMBED}\"\n"));
+        assert_eq!(collection_names(&without_models), ["common"]);
     }
 
     #[test]

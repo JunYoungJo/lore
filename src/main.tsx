@@ -6,8 +6,11 @@ import "pretendard/dist/web/variable/pretendardvariable-dynamic-subset.css";
 import "@/styles/tokens.css";
 import "@/styles/app.css";
 import { App } from "@/App";
+import { trackKeyboardFocus } from "@/keyboardFocus";
 import { ReviewApp } from "@/ReviewApp";
 import { SyncApp } from "@/SyncApp";
+
+trackKeyboardFocus();
 
 const isReview = getCurrentWindow().label === "review";
 const isSync = getCurrentWindow().label === "sync";

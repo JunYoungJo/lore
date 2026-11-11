@@ -57,9 +57,25 @@ pub struct Models {
     pub claude: Option<String>,
 }
 
+fn clean(value: Option<String>) -> Option<String> {
+    value.map(|value| value.trim().to_string()).filter(|value| !value.is_empty())
+}
+
 impl Models {
     fn trimmed(self) -> Self {
-        let clean = |model: Option<String>| model.map(|model| model.trim().to_string()).filter(|model| !model.is_empty());
+        Self { codex: clean(self.codex), claude: clean(self.claude) }
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Efforts {
+    pub codex: Option<String>,
+    pub claude: Option<String>,
+}
+
+impl Efforts {
+    fn trimmed(self) -> Self {
         Self { codex: clean(self.codex), claude: clean(self.claude) }
     }
 }
@@ -70,6 +86,7 @@ pub struct Settings {
     pub knowledge_root: String,
     pub backend: String,
     pub models: Models,
+    pub efforts: Efforts,
     #[serde(rename = "model", skip_serializing)]
     pub single_model: Option<String>,
     pub model_timeout_secs: u64,
@@ -92,6 +109,7 @@ pub struct EditableSettings {
     pub knowledge_root: String,
     pub backend: String,
     pub models: Models,
+    pub efforts: Efforts,
     pub model_timeout_secs: u64,
     pub qmd_timeout_secs: u64,
     pub max_chars: usize,
@@ -109,6 +127,7 @@ impl Default for Settings {
             knowledge_root: slash(home.join("Documents").join("lore-memory")),
             backend: "codex".into(),
             models: Models::default(),
+            efforts: Efforts::default(),
             single_model: None,
             model_timeout_secs: 600,
             qmd_timeout_secs: 900,
@@ -161,12 +180,21 @@ impl Settings {
         if self.model_timeout_secs == 0 || self.qmd_timeout_secs == 0 {
             return Err(Error::permanent("Timeouts must be at least one second."));
         }
+        // Codex receives the effort inside a TOML string.
+        if [&self.efforts.codex, &self.efforts.claude].into_iter().flatten().any(|effort| !effort.bytes().all(|byte| byte.is_ascii_lowercase())) {
+            return Err(Error::permanent("The effort level must be a single lowercase word."));
+        }
         Ok(())
     }
 
     pub fn model(&self) -> Option<&str> {
         let model = if self.backend == "claude" { &self.models.claude } else { &self.models.codex };
         model.as_deref()
+    }
+
+    pub fn effort(&self) -> Option<&str> {
+        let effort = if self.backend == "claude" { &self.efforts.claude } else { &self.efforts.codex };
+        effort.as_deref()
     }
 
     fn move_single_model(&mut self) {
@@ -183,6 +211,7 @@ impl Settings {
             knowledge_root: change.knowledge_root,
             backend: change.backend,
             models: change.models.trimmed(),
+            efforts: change.efforts.trimmed(),
             model_timeout_secs: change.model_timeout_secs,
             qmd_timeout_secs: change.qmd_timeout_secs,
             max_chars: change.max_chars,
@@ -324,6 +353,7 @@ mod tests {
             knowledge_root: "E:/notes".into(),
             backend: "claude".into(),
             models: Models { codex: Some(" gpt-6.1-sol ".into()), claude: Some("opus".into()) },
+            efforts: Efforts { codex: Some(" high ".into()), claude: Some(" ".into()) },
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
             max_chars: 20_000,
@@ -338,6 +368,7 @@ mod tests {
             knowledge_root: "E:/notes".into(),
             backend: "claude".into(),
             models: Models { codex: Some("gpt-6.1-sol".into()), claude: Some("opus".into()) },
+            efforts: Efforts { codex: Some("high".into()), claude: None },
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
             max_chars: 20_000,
@@ -376,6 +407,18 @@ mod tests {
         assert_eq!(load_or_init(&path, 9).unwrap().models.claude.as_deref(), Some("opus"));
         let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
         assert!(saved.get("model").is_none() && saved["models"]["claude"] == "opus", "{saved}");
+    }
+
+    #[test]
+    fn each_recorder_cli_keeps_its_own_effort_and_only_plain_words_are_accepted() {
+        let settings = Settings { backend: "claude".into(), efforts: Efforts { codex: Some("low".into()), claude: Some("max".into()) }, ..Settings::default() };
+        assert_eq!(settings.effort(), Some("max"));
+        assert_eq!(Settings { backend: "codex".into(), ..settings.clone() }.effort(), Some("low"));
+        settings.validate().unwrap();
+        for effort in ["high\"", "x high", "High", "low\n"] {
+            let invalid = Settings { efforts: Efforts { codex: Some(effort.into()), claude: None }, ..Settings::default() };
+            assert!(invalid.validate().is_err(), "{effort:?}");
+        }
     }
 
     #[test]

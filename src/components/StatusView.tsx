@@ -1,8 +1,10 @@
 import {
+  ChevronRight,
   CircleAlert,
   CircleCheck,
   CircleDashed,
   FileCheck2,
+  FileDiff,
   FileText,
   GitCompare,
   Inbox,
@@ -10,15 +12,17 @@ import {
   Pause,
   Plug,
   RotateCw,
+  Share2,
   type LucideIcon,
 } from "lucide-react";
-import { useRef, useState } from "react";
+import { useRef, useState, type RefObject } from "react";
 
-import { JobActions } from "@/components/JobActions";
 import * as api from "@/ipc/api";
-import type { Activity, ActivityKind, Job, Snapshot } from "@/ipc/contract";
-import { elapsed, fileName, minutesUntil, providerLabel, relativeTime } from "@/format";
+import type { Activity, ActivityKind, Snapshot } from "@/ipc/contract";
+import { elapsed, fileName, minutesUntil, providerLabel, relativePhrase, relativeTime } from "@/format";
+import { unavailableModel } from "@/recordingModel";
 import { useAppStore, type QueueGroup } from "@/store/appStore";
+import { AnchoredCard } from "@/ui/AnchoredCard";
 import { ConfirmCard } from "@/ui/ConfirmCard";
 import { IconChip, type Tint } from "@/ui/IconChip";
 import { useNow } from "@/useNow";
@@ -30,155 +34,266 @@ const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label
   failed: { glyph: CircleAlert, tint: "red", label: "Failed", tone: "danger" },
 };
 
+const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
+
+function QueueLink({ snapshot }: { snapshot: Snapshot }) {
+  const showQueue = useAppStore((store) => store.showQueue);
+  const { ready, waiting } = snapshot.counts;
+  if (ready + waiting === 0) return null;
+  const parts = [ready > 0 && `${plural(ready, "session")} waiting`, waiting > 0 && `${waiting} retrying`].filter(Boolean);
+  const focus: QueueGroup = ready > 0 ? "ready" : "waiting";
+  return (
+    <button type="button" className="now-queue" onClick={() => showQueue(focus)}>
+      <span className="grow">{parts.join(" · ")}</span>
+      <ChevronRight size={14} strokeWidth={1.9} aria-hidden="true" />
+    </button>
+  );
+}
+
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   const togglePause = useAppStore((store) => store.togglePause);
-  const { current, settings } = snapshot;
+  const { current, settings, sync } = snapshot;
   const chosen = settings.models[settings.backend];
   const model = `${providerLabel(settings.backend)}${chosen ? ` ${chosen}` : ""}`;
 
+  let tone = "";
+  let glyph: LucideIcon = CircleCheck;
+  let tint: Tint = "green";
+  let title = "Waiting for the next session";
+  let sub: string;
+  let action: { label: string; run: () => void } | null = null;
+
   if (current) {
-    return (
-      <section className="now working" aria-label="Current activity">
-        <IconChip glyph={LoaderCircle} tint="blue" spin />
-        <div className="now-main">
-          <div className="now-title">Recording {current.project}</div>
-          <div className="now-sub">
-            {providerLabel(current.provider)} session · {model} · {elapsed(current.startedAt, now)}
-          </div>
-          <div className="progress" aria-hidden="true">
-            <span />
-          </div>
-        </div>
-      </section>
-    );
+    tone = "working";
+    glyph = LoaderCircle;
+    tint = "blue";
+    title = `Recording ${current.project}`;
+    sub = `${providerLabel(current.provider)} session · ${model} · ${elapsed(current.startedAt, now)}`;
+  } else if (snapshot.syncing || sync?.blocked) {
+    tone = "paused";
+    glyph = GitCompare;
+    tint = "amber";
+    if (snapshot.syncing) {
+      title = "Syncing";
+      sub = "Recording waits until sync finishes.";
+    } else if (sync?.phase === "review") {
+      title = "Sync needs your review";
+      sub = "This PC and another PC changed the same notes. Recording waits until you choose what to keep.";
+    } else {
+      title = "Sync needs attention";
+      sub = sync?.message ?? "Recording waits until the shared changes are applied.";
+    }
+    action = { label: sync?.phase === "review" ? "Review" : "Open", run: () => void api.openSync() };
+  } else if (snapshot.reviewing) {
+    tone = "paused";
+    glyph = GitCompare;
+    tint = "amber";
+    title = "Reviewing";
+    sub = "New recordings wait while the review window is open. Close it to resume.";
+    action = { label: "Open review", run: () => void api.openReview() };
+  } else if (settings.paused) {
+    tone = "paused";
+    glyph = Pause;
+    tint = "amber";
+    title = "Recording paused";
+    sub = "Sessions still enter the queue. Resume to record them in order.";
+    action = { label: "Resume", run: () => void togglePause() };
+  } else {
+    const last = snapshot.recent.find((activity) => activity.kind === "recorded" || activity.kind === "no_change");
+    sub = last ? `Last memory ${relativePhrase(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "Memory is recorded when a Claude or Codex session ends.";
   }
 
-  if (snapshot.syncing || snapshot.sync?.blocked) {
-    return <section className="now paused" aria-label="Current activity"><IconChip glyph={GitCompare} tint="amber" /><div className="now-main"><div className="now-title">{snapshot.syncing ? "Syncing" : "Sync review needed"}</div><div className="now-sub">Recording is on hold. Pending changes and queued sessions are kept when you close the sync window.</div></div><button type="button" className="pill primary" onClick={() => void api.openSync()}>Sync</button></section>;
-  }
-
-  if (snapshot.reviewing) {
-    return (
-      <section className="now paused" aria-label="Current activity">
-        <IconChip glyph={GitCompare} tint="amber" />
-        <div className="now-main">
-          <div className="now-title">Reviewing</div>
-          <div className="now-sub">New recordings wait while the review window is open. Close it to resume.</div>
-        </div>
-        <button type="button" className="pill primary" onClick={() => void api.openReview()}>
-          Open review
-        </button>
-      </section>
-    );
-  }
-
-  if (settings.paused) {
-    return (
-      <section className="now paused" aria-label="Current activity">
-        <IconChip glyph={Pause} tint="amber" />
-        <div className="now-main">
-          <div className="now-title">Recording paused</div>
-          <div className="now-sub">Sessions still enter the queue. Resume to record them in order.</div>
-        </div>
-        <button type="button" className="pill primary" onClick={() => void togglePause()}>
-          Resume
-        </button>
-      </section>
-    );
-  }
-
-  const last = snapshot.recent.find((activity) => activity.kind === "recorded" || activity.kind === "no_change");
   return (
-    <section className="now" aria-label="Current activity">
-      <IconChip glyph={CircleCheck} tint="green" />
-      <div className="now-main">
-        <div className="now-title">Waiting for the next session</div>
-        <div className="now-sub">
-          {last ? `Last recorded ${relativeTime(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "Memory is recorded when a Claude or Codex session ends."}
+    <section className={`now ${tone}`} aria-label="Current activity">
+      <div className="now-top">
+        <IconChip glyph={glyph} tint={tint} spin={Boolean(current)} />
+        <div className="now-main">
+          <div className="now-title">{title}</div>
+          <div className="now-sub">{sub}</div>
+          {current && (
+            <div className="progress" aria-hidden="true">
+              <span />
+            </div>
+          )}
         </div>
+        {action && (
+          <button type="button" className="pill primary" onClick={action.run}>
+            {action.label}
+          </button>
+        )}
       </div>
+      <QueueLink snapshot={snapshot} />
     </section>
   );
 }
 
-function HookCallout({ snapshot }: { snapshot: Snapshot }) {
-  const showSettings = useAppStore((store) => store.showSettings);
+interface Task {
+  key: string;
+  glyph: LucideIcon;
+  tint: Tint;
+  title: string;
+  detail: string;
+  action: string;
+  run: () => void;
+}
+
+function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) => void, syncNow: () => void, showSettings: () => void): Task[] {
+  const list: Task[] = [];
   const missing = snapshot.hooks.filter((hook) => hook.state !== "connected");
-  if (missing.length === 0) return null;
-  const names = missing.map((hook) => providerLabel(hook.provider)).join("·");
+  if (missing.length > 0) {
+    list.push({
+      key: "hooks",
+      glyph: Plug,
+      tint: "amber",
+      title: `Connect ${missing.map((hook) => providerLabel(hook.provider)).join(" and ")} hooks`,
+      detail: "Sessions are captured when they end once hooks are connected.",
+      action: "Connect",
+      run: () => void api.openIntegrations(),
+    });
+  }
+  if (snapshot.review) {
+    list.push({
+      key: "review",
+      glyph: FileDiff,
+      tint: "blue",
+      title: `Review ${plural(snapshot.review, "changed note")}`,
+      detail: "Commit them to share with your other PCs.",
+      action: "Review",
+      run: () => void api.openReview(),
+    });
+  }
+  const failed = snapshot.attention.filter((job) => job.status === "failed");
+  if (failed.length > 0) {
+    const first = failed[0];
+    list.push({
+      key: "failed",
+      glyph: CircleAlert,
+      tint: "red",
+      title: `${plural(failed.length, "recording")} failed`,
+      detail: [first.project ?? providerLabel(first.provider), first.lastError].filter(Boolean).join(" · "),
+      action: "View",
+      run: () => showQueue("failed"),
+    });
+  }
+  const interrupted = snapshot.attention.filter((job) => job.status !== "failed");
+  if (interrupted.length > 0) {
+    const first = interrupted[0];
+    const state = first.status === "index_pending" ? "Index pending" : "Save interrupted";
+    const retry = first.nextAttemptAt > now ? `retry in about ${minutesUntil(first.nextAttemptAt, now)} min` : null;
+    list.push({
+      key: "interrupted",
+      glyph: RotateCw,
+      tint: "amber",
+      title: `${plural(interrupted.length, "recording")} interrupted`,
+      detail: [first.project ?? providerLabel(first.provider), state, retry].filter(Boolean).join(" · "),
+      action: "View",
+      run: () => showQueue("ready"),
+    });
+  }
+  const model = unavailableModel(snapshot);
+  if (model) {
+    list.push({
+      key: "model",
+      glyph: CircleAlert,
+      tint: "amber",
+      title: "Recording model not available",
+      detail: `${model} is not in ${providerLabel(snapshot.settings.backend)}’s model list for this account.`,
+      action: "Settings",
+      run: showSettings,
+    });
+  }
+  if (snapshot.sync?.phase === "push_pending" && !snapshot.syncing) {
+    list.push({
+      key: "share",
+      glyph: Share2,
+      tint: "amber",
+      title: "Memory not shared yet",
+      detail: snapshot.sync.message ?? "Committed notes are waiting to reach your other PCs.",
+      action: "Sync",
+      run: syncNow,
+    });
+  }
+  return list;
+}
+
+function NeedsAttention({ snapshot, now }: { snapshot: Snapshot; now: number }) {
+  const showQueue = useAppStore((store) => store.showQueue);
+  const syncNow = useAppStore((store) => store.syncNow);
+  const showSettings = useAppStore((store) => store.showSettings);
+  const list = tasks(snapshot, now, showQueue, () => void syncNow(), showSettings);
+  if (list.length === 0) return null;
   return (
-    <section className="callout" aria-label="Hooks need connecting">
-      <IconChip glyph={Plug} tint="amber" size={28} />
-      <div className="callout-main">
-        <div className="callout-title">Connect {names} hooks</div>
-        <div className="callout-sub">Connect hooks to capture sessions when they end.</div>
+    <section aria-label="Needs attention">
+      <div className="eyebrow">
+        <span>
+          Needs attention<span className="eyebrow-badge">{list.length}</span>
+        </span>
       </div>
-      <button type="button" className="pill primary" onClick={showSettings}>
-        Connect
-      </button>
+      <div className="todo">
+        {list.map((task, index) => (
+          <div key={task.key} className="todo-row">
+            <IconChip glyph={task.glyph} tint={task.tint} />
+            <div className="todo-main">
+              <div className="todo-title">{task.title}</div>
+              <div className="todo-sub" title={task.detail}>
+                {task.detail}
+              </div>
+            </div>
+            <button type="button" className={`pill ${index === 0 ? "primary" : "ghost"}`} onClick={task.run}>
+              {task.action}
+            </button>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
 
-function Stats({ snapshot }: { snapshot: Snapshot }) {
-  const showQueue = useAppStore((store) => store.showQueue);
-  const { counts, review } = snapshot;
-  const items: { group: QueueGroup; label: string; value: number; tone: string; hint: string }[] = [
-    { group: "ready", label: "Pending", value: counts.ready, tone: counts.ready === 0 ? "muted" : "", hint: "View sessions waiting to be recorded" },
-    { group: "waiting", label: "Retrying", value: counts.waiting, tone: counts.waiting > 0 ? "warn" : "muted", hint: "View sessions waiting for a retry" },
-    { group: "failed", label: "Failed", value: counts.failed, tone: counts.failed > 0 ? "danger" : "muted", hint: "View failed sessions" },
-  ];
-  const reviewValue = review === null ? "–" : String(review);
+function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: RefObject<HTMLButtonElement>; activity: Activity; name: string; canReview: boolean; onClose: () => void }) {
+  const first = useRef<HTMLButtonElement>(null);
   return (
-    <section className="stats" aria-label="Queue status">
-      {items.map((item) => (
-        <button key={item.label} type="button" className={`stat stat-button ${item.tone}`} aria-label={`${item.label} ${item.value}`} title={item.hint} onClick={() => showQueue(item.group)}>
-          <div className="stat-value">{item.value}</div>
-          <div className="stat-label">{item.label}</div>
+    <AnchoredCard anchor={anchor} label={`Updated notes in ${name}`} role="dialog" className="notes-card" focus={first} onClose={onClose}>
+      <div className="notes-card-head">
+        {name} · {plural(activity.notes.length, "note")}
+      </div>
+      {activity.summary && (
+        <p className="notes-card-summary" title={activity.summary}>
+          {activity.summary}
+        </p>
+      )}
+      {activity.notes.map((note, index) => (
+        <button key={note} ref={index === 0 ? first : undefined} type="button" className="notes-card-row" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
+          <FileText size={14} strokeWidth={1.9} />
+          <span>{fileName(note)}</span>
         </button>
       ))}
-      <button type="button" className={`stat stat-button ${review ? "" : "muted"}`} aria-label={`To review ${reviewValue}`} title="Review and commit changed notes" onClick={() => void api.openReview()}>
-        <div className="stat-value">{reviewValue}</div>
-        <div className="stat-label">To review</div>
-      </button>
-    </section>
+      {canReview && (
+        <button
+          type="button"
+          className="notes-card-foot"
+          onClick={() => {
+            onClose();
+            void api.openReview();
+          }}
+        >
+          Review changes
+        </button>
+      )}
+    </AnchoredCard>
   );
 }
 
-function AttentionRow({ job, now }: { job: Job; now: number }) {
-  const failed = job.status === "failed";
-  const status = failed ? "Failed" : job.status === "index_pending" ? "Index pending" : "Save interrupted";
-  const name = job.project ?? providerLabel(job.provider);
-  return (
-    <div className="row">
-      <IconChip glyph={failed ? CircleAlert : RotateCw} tint={failed ? "red" : "amber"} />
-      <div className="row-main">
-        <div className="row-title">
-          <span className="name" title={name}>
-            {name}
-          </span>
-          <span className="badge">{providerLabel(job.provider)}</span>
-          <span className={`row-kind ${failed ? "danger" : "warn"}`}>{status}</span>
-        </div>
-        {job.lastError && (
-          <div className="row-sub danger" title={job.lastError}>
-            {job.lastError}
-          </div>
-        )}
-        {!failed && job.nextAttemptAt > now && <div className="row-sub">Retry in about {minutesUntil(job.nextAttemptAt, now)} min.</div>}
-      </div>
-      {failed && <JobActions job={job} />}
-    </div>
-  );
-}
-
-function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
+function ActivityRow({ activity, now, canReview }: { activity: Activity; now: number; canReview: boolean }) {
+  const notesButton = useRef<HTMLButtonElement>(null);
+  const [open, setOpen] = useState(false);
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
-  const detail = activity.error ?? activity.summary;
-  const label = activity.kind === "recorded" ? `${activity.notes.length} note${activity.notes.length === 1 ? "" : "s"} updated` : kind.label;
   const name = activity.project ?? providerLabel(activity.provider);
+  const hasNotes = activity.notes.length > 0;
+  const label = activity.kind === "recorded" ? `${plural(activity.notes.length, "note")} updated` : kind.label;
+  const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? activity.summary ?? "";
+  const tone = activity.error ? "danger" : hasNotes ? "" : "muted";
   return (
-    <div className="row">
+    <div className="row activity">
       <IconChip glyph={kind.glyph} tint={kind.tint} />
       <div className="row-main">
         <div className="row-title">
@@ -186,25 +301,20 @@ function ActivityRow({ activity, now }: { activity: Activity; now: number }) {
             {name}
           </span>
           <span className="badge">{providerLabel(activity.provider)}</span>
-          <span className={`row-kind ${kind.tone}`}>{label}</span>
+          {hasNotes ? (
+            <button ref={notesButton} type="button" className={`row-kind ${kind.tone} notes-btn`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
+              {label}
+            </button>
+          ) : (
+            <span className={`row-kind ${kind.tone}`}>{label}</span>
+          )}
         </div>
-        {detail && (
-          <div className={activity.error ? "row-sub danger" : "row-sub"} title={detail}>
-            {detail}
-          </div>
-        )}
-        {activity.notes.length > 0 && (
-          <div className="files">
-            {activity.notes.map((note) => (
-              <button key={note} type="button" className="file-chip" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
-                <FileText size={12} strokeWidth={1.9} />
-                <span>{fileName(note)}</span>
-              </button>
-            ))}
-          </div>
-        )}
+        <div className={`row-line ${tone}`} title={hasNotes ? activity.notes.join("\n") : detail || undefined}>
+          {detail}
+        </div>
       </div>
       <span className="row-time">{relativeTime(activity.at, now)}</span>
+      {open && <NotesCard anchor={notesButton} activity={activity} name={name} canReview={canReview} onClose={() => setOpen(false)} />}
     </div>
   );
 }
@@ -215,22 +325,12 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
   const [confirming, setConfirming] = useState(false);
   const clearButton = useRef<HTMLButtonElement>(null);
   const recent = snapshot.recent.filter((activity) => KINDS[activity.kind]);
+  const canReview = Boolean(snapshot.review);
 
   return (
     <div className="body">
       <NowCard snapshot={snapshot} now={now} />
-      <HookCallout snapshot={snapshot} />
-      <Stats snapshot={snapshot} />
-      {!snapshot.syncing && !snapshot.sync?.blocked && <section className="card" aria-label="Memory sync"><div className="sync-toolbar"><span className="grow">{snapshot.sync?.phase === "push_pending" ? "Push pending" : "Share memory across PCs"}</span><button className="pill" onClick={() => void api.openSync()}>Sync</button></div></section>}
-
-      {snapshot.attention.length > 0 && (
-        <section aria-label="Needs attention">
-          <div className="eyebrow">Needs attention</div>
-          {snapshot.attention.map((job) => (
-            <AttentionRow key={job.id} job={job} now={now} />
-          ))}
-        </section>
-      )}
+      <NeedsAttention snapshot={snapshot} now={now} />
 
       <section aria-label="Recent activity">
         <div className="eyebrow">
@@ -260,7 +360,7 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
             <div>Completed recordings will appear here.</div>
           </div>
         ) : (
-          recent.map((activity) => <ActivityRow key={activity.id} activity={activity} now={now} />)
+          recent.map((activity) => <ActivityRow key={activity.id} activity={activity} now={now} canReview={canReview} />)
         )}
       </section>
     </div>

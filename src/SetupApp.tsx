@@ -145,7 +145,7 @@ export function SetupApp() {
   });
 
   return <main className="onboard">
-    <header className="onboard-top"><div className="onboard-logo"><BrandMark /><span>Lore</span></div><button type="button" className="onboard-dismiss" disabled={busy !== null} onClick={() => void later()}>Set up later <X size={15} /></button></header>
+    <header className="onboard-top" data-tauri-drag-region><div className="onboard-logo" data-tauri-drag-region><BrandMark /><span>Lore</span></div><button type="button" className="onboard-dismiss" disabled={busy !== null} onClick={() => void later()}>Set up later <X size={15} /></button></header>
     <div className="onboard-scroll" ref={scrollContainer}>
       <div className={`onboard-content ${step === 0 ? "onboard-welcome" : ""}`} key={step}>
         {error && <div className="onboard-error" role="alert">{error}<button type="button" aria-label="Dismiss error" onClick={() => setError(null)}><X size={14} /></button></div>}
@@ -204,6 +204,6 @@ export function SetupApp() {
         <div ref={terminalContainer} hidden={!showTerminal}><SetupTerminal command={command} prepared={prepared} onRunningChange={setTerminalActive} onFinished={() => { if (step === 3) void checkTools(); else void refresh(); }} onError={(e) => setError(message(e))} /></div>
       </div>
     </div>
-    <footer className="onboard-footer"><button type="button" className="onboard-back" disabled={step === 0 || busyNow} onClick={() => void perform("back", () => move(step - 1))}><ArrowLeft size={15} />Back</button><div className="onboard-progress" aria-label={`Setup: ${STAGES[step]}`}>{STAGES.map((name, i) => <span key={name} className={i === step ? "current" : i < step ? "past" : ""} title={name} />)}</div><span className="onboard-progress-caption">{step === 0 ? "Made for the way you work" : "Your progress is saved"}</span></footer>
+    <footer className="onboard-footer"><button type="button" className="onboard-back" disabled={step === 0 || busyNow} onClick={() => void perform("back", () => move(step - 1))}><ArrowLeft size={15} />Back</button><div className="onboard-progress" aria-label={`Setup: ${STAGES[step]}`}>{STAGES.map((name, i) => <span key={name} className={i === step ? "current" : i < step ? "past" : ""} title={name} />)}</div><span className="onboard-progress-caption">{step > 0 && "Your progress is saved"}</span></footer>
   </main>;
 }

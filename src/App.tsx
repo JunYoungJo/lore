@@ -1,14 +1,16 @@
 import { useEffect, useState } from "react";
-import { ChevronLeft, FolderOpen, Moon, Pause, Play, Settings as SettingsIcon, Sun, TriangleAlert } from "lucide-react";
+import { ChevronLeft, FolderOpen, Pause, Play, RefreshCw, Settings as SettingsIcon, TriangleAlert } from "lucide-react";
 
 import * as api from "@/ipc/api";
 import type { Snapshot } from "@/ipc/contract";
 import { QueueView } from "@/components/QueueView";
-import { SettingsFooter, SettingsView } from "@/components/SettingsView";
+import { SettingsView } from "@/components/SettingsView";
 import { StatusView } from "@/components/StatusView";
 import { useAppStore } from "@/store/appStore";
+import { syncState } from "@/syncState";
 import { useTheme } from "@/theme";
 import { BrandMark } from "@/ui/BrandMark";
+import { useNow } from "@/useNow";
 
 function statusLine(snapshot: Snapshot): string {
   if (snapshot.current) return `Recording · ${snapshot.current.project}`;
@@ -20,6 +22,24 @@ function statusLine(snapshot: Snapshot): string {
   return "Idle";
 }
 
+function SyncStatus({ snapshot }: { snapshot: Snapshot }) {
+  const now = useNow(15_000);
+  const syncNow = useAppStore((store) => store.syncNow);
+  const state = syncState(snapshot, now);
+  const label = state.opensWindow ? "Open sync" : "Sync now";
+  return (
+    <>
+      <span className={`foot-sync ${state.tone}`}>
+        <span className="sync-dot" aria-hidden="true" />
+        {state.text}
+      </span>
+      <button type="button" className="icon-btn" title={label} aria-label={label} disabled={snapshot.syncing} onClick={() => void (state.opensWindow ? api.openSync() : syncNow())}>
+        <RefreshCw size={15} strokeWidth={1.9} className={snapshot.syncing ? "spin" : undefined} />
+      </button>
+    </>
+  );
+}
+
 export function App() {
   const snapshot = useAppStore((store) => store.snapshot);
   const view = useAppStore((store) => store.view);
@@ -28,8 +48,8 @@ export function App() {
   const togglePause = useAppStore((store) => store.togglePause);
   const showSettings = useAppStore((store) => store.showSettings);
   const showStatus = useAppStore((store) => store.showStatus);
-  const [theme, toggleTheme] = useTheme();
   const [shown, setShown] = useState(0);
+  useTheme();
 
   useEffect(() => {
     void refresh();
@@ -39,6 +59,7 @@ export function App() {
         setShown((count) => count + 1);
         void refresh();
       }),
+      api.onShowSettings(showSettings),
     ];
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") void api.hideWindow();
@@ -48,7 +69,7 @@ export function App() {
       window.removeEventListener("keydown", onKey);
       unlisten.forEach((pending) => void pending.then((stop) => stop()));
     };
-  }, [refresh]);
+  }, [refresh, showSettings]);
 
   if (!snapshot) {
     return (
@@ -65,51 +86,36 @@ export function App() {
   return (
     <main key={shown} className="pop anim-traypop">
       <header className="head">
-        {view === "settings" ? (
-          <>
-            <button type="button" className="icon-btn" title="Back" aria-label="Back" onClick={showStatus}>
-              <ChevronLeft size={18} strokeWidth={1.9} />
-            </button>
-            <div className="head-text">
-              <div className="head-title">Settings</div>
-              <div className="head-sub">Lore {snapshot.version}</div>
-            </div>
-          </>
-        ) : view === "queue" ? (
-          <>
-            <button type="button" className="icon-btn" title="Back" aria-label="Back" onClick={showStatus}>
-              <ChevronLeft size={18} strokeWidth={1.9} />
-            </button>
-            <div className="head-text">
-              <div className="head-title">Queue</div>
-              <div className="head-sub" title={status}>
-                <span className={dotClass} />
-                {status}
-              </div>
-            </div>
-          </>
-        ) : (
+        {view === "status" ? (
           <>
             <BrandMark />
             <div className="head-text">
               <div className="head-title">Lore</div>
-              <div className="head-sub" title={status}>
-                <span className={dotClass} />
-                {status}
-              </div>
             </div>
             <button type="button" className="icon-btn" title={paused ? "Resume" : "Pause"} aria-label={paused ? "Resume" : "Pause"} onClick={() => void togglePause()}>
               {paused ? <Play size={16} strokeWidth={1.9} /> : <Pause size={16} strokeWidth={1.9} />}
             </button>
+            <button type="button" className="icon-btn" title="Settings" aria-label="Settings" onClick={showSettings}>
+              <SettingsIcon size={16} strokeWidth={1.9} />
+            </button>
           </>
-        )}
-        <button type="button" className="icon-btn" title="Theme" aria-label="Toggle theme" onClick={toggleTheme}>
-          {theme === "dark" ? <Sun size={16} strokeWidth={1.9} /> : <Moon size={16} strokeWidth={1.9} />}
-        </button>
-        {view === "status" && (
-          <button type="button" className="icon-btn" title="Settings" aria-label="Settings" onClick={showSettings}>
-            <SettingsIcon size={16} strokeWidth={1.9} />
-          </button>
+        ) : (
+          <>
+            <button type="button" className="icon-btn" title="Back" aria-label="Back" onClick={showStatus}>
+              <ChevronLeft size={18} strokeWidth={1.9} />
+            </button>
+            <div className="head-text">
+              <div className="head-title">{view === "settings" ? "Settings" : "Queue"}</div>
+              {view === "settings" ? (
+                <div className="head-sub">Lore {snapshot.version}</div>
+              ) : (
+                <div className="head-sub" title={status}>
+                  <span className={dotClass} />
+                  {status}
+                </div>
+              )}
+            </div>
+          </>
         )}
       </header>
 
@@ -119,7 +125,7 @@ export function App() {
           <span>{snapshot.problem}</span>
         </div>
       )}
-      {error && view !== "settings" && (
+      {error && (
         <div className="banner" role="alert">
           <TriangleAlert size={15} strokeWidth={1.9} style={{ flex: "none", marginTop: 1 }} />
           <span>{error}</span>
@@ -128,17 +134,13 @@ export function App() {
 
       {view === "settings" ? <SettingsView snapshot={snapshot} /> : view === "queue" ? <QueueView snapshot={snapshot} /> : <StatusView snapshot={snapshot} />}
 
-      {view === "settings" ? (
-        <SettingsFooter snapshot={snapshot} />
-      ) : (
+      {view !== "settings" && (
         <footer className="foot">
-          <button type="button" className="foot-btn" onClick={() => void api.openFolder("knowledge")}>
+          <button type="button" className="foot-btn" title={snapshot.settings.knowledgeRoot} onClick={() => void api.openFolder("knowledge")}>
             <FolderOpen size={14} strokeWidth={1.9} />
             Memory folder
           </button>
-          <span className="foot-path mono" title={snapshot.settings.knowledgeRoot}>
-            {snapshot.settings.knowledgeRoot}
-          </span>
+          <SyncStatus snapshot={snapshot} />
         </footer>
       )}
     </main>

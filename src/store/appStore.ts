@@ -1,26 +1,24 @@
 import { create } from "zustand";
 
 import * as api from "@/ipc/api";
-import type { EditableSettings, Job, Models, Provider, Settings, Snapshot } from "@/ipc/contract";
+import type { Backend, EditableSettings, Job, Settings, Snapshot } from "@/ipc/contract";
 
 export type View = "status" | "settings" | "queue";
 
 export type QueueGroup = "recording" | "ready" | "waiting" | "failed";
 
-export function editable({ knowledgeRoot, backend, models, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget }: Settings): EditableSettings {
-  return { knowledgeRoot, backend, models: { ...models }, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget };
+export function editable({ knowledgeRoot, backend, models, efforts, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget }: Settings): EditableSettings {
+  return { knowledgeRoot, backend, models: { ...models }, efforts: { ...efforts }, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget };
 }
 
-const cleanModel = (model: string | null) => (model?.trim() ? model.trim() : null);
+const cleanValue = (value: string | null) => (value?.trim() ? value.trim() : null);
 
-export const cleanModels = (models: Models): Models => ({ codex: cleanModel(models.codex), claude: cleanModel(models.claude) });
+const cleanPerCli = (values: Record<Backend, string | null>) => ({ codex: cleanValue(values.codex), claude: cleanValue(values.claude) });
 
 interface AppStore {
   snapshot: Snapshot | null;
   view: View;
-  draft: EditableSettings | null;
   error: string | null;
-  saving: boolean;
   queue: Job[] | null;
   queueFocus: QueueGroup;
   refresh: () => Promise<void>;
@@ -28,157 +26,101 @@ interface AppStore {
   showSettings: () => void;
   showStatus: () => void;
   showQueue: (focus: QueueGroup) => void;
-  editDraft: (patch: Partial<EditableSettings>) => void;
-  saveDraft: () => Promise<void>;
+  saveSettings: (patch: Partial<EditableSettings>) => Promise<boolean>;
   togglePause: () => Promise<void>;
   retry: (id: string) => Promise<void>;
   discard: (id: string) => Promise<void>;
   clearActivity: () => Promise<void>;
   setAutostart: (enabled: boolean) => Promise<void>;
-  connecting: Provider | null;
-  connectHook: (provider: Provider) => Promise<void>;
-  disconnectHook: (provider: Provider) => Promise<void>;
+  setSyncEnabled: (enabled: boolean) => Promise<void>;
+  syncNow: () => Promise<void>;
 }
 
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 let refreshing: Promise<void> | null = null;
 let loadingQueue: Promise<void> | null = null;
+let saving: Promise<boolean> = Promise.resolve(true);
 
-export const useAppStore = create<AppStore>((set, get) => ({
-  snapshot: null,
-  view: "status",
-  draft: null,
-  error: null,
-  saving: false,
-  queue: null,
-  queueFocus: "ready",
+export const useAppStore = create<AppStore>((set, get) => {
+  const attempt = async (action: () => Promise<unknown>) => {
+    try {
+      await action();
+      await get().refresh();
+    } catch (error) {
+      set({ error: message(error) });
+    }
+  };
 
-  refresh: () => {
-    if (get().view === "queue") void get().loadQueue();
-    if (refreshing) return refreshing;
-    refreshing = api
-      .getSnapshot()
-      .then((snapshot) => set({ snapshot, error: null }))
-      .catch((error) => set({ error: message(error) }))
-      .finally(() => {
-        refreshing = null;
+  return {
+    snapshot: null,
+    view: "status",
+    error: null,
+    queue: null,
+    queueFocus: "ready",
+
+    refresh: () => {
+      if (get().view === "queue") void get().loadQueue();
+      if (refreshing) return refreshing;
+      refreshing = api
+        .getSnapshot()
+        .then((snapshot) => set({ snapshot, error: null }))
+        .catch((error) => set({ error: message(error) }))
+        .finally(() => {
+          refreshing = null;
+        });
+      return refreshing;
+    },
+
+    loadQueue: () => {
+      if (loadingQueue) return loadingQueue;
+      loadingQueue = api
+        .getQueue()
+        .then((queue) => set({ queue }))
+        .catch((error) => set({ error: message(error) }))
+        .finally(() => {
+          loadingQueue = null;
+        });
+      return loadingQueue;
+    },
+
+    showQueue: (focus) => {
+      set({ view: "queue", queueFocus: focus, queue: null, error: null });
+      void get().loadQueue();
+    },
+
+    showSettings: () => set({ view: "settings", error: null }),
+
+    showStatus: () => set({ view: "status", error: null }),
+
+    // Saves run in order and each starts from the last saved values: leaving a field saves it, and the click that left it often saves another setting.
+    saveSettings: (patch) => {
+      saving = saving.then(async () => {
+        const settings = get().snapshot?.settings;
+        if (!settings) return false;
+        const next = { ...editable(settings), ...patch };
+        const sent = { ...next, models: cleanPerCli(next.models), efforts: cleanPerCli(next.efforts) };
+        set({ error: null });
+        try {
+          await api.saveSettings(sent);
+          const current = get().snapshot;
+          if (current) set({ snapshot: { ...current, settings: { ...current.settings, ...sent } } });
+          void get().refresh();
+          return true;
+        } catch (error) {
+          set({ error: message(error) });
+          return false;
+        }
       });
-    return refreshing;
-  },
+      return saving;
+    },
 
-  loadQueue: () => {
-    if (loadingQueue) return loadingQueue;
-    loadingQueue = api
-      .getQueue()
-      .then((queue) => set({ queue }))
-      .catch((error) => set({ error: message(error) }))
-      .finally(() => {
-        loadingQueue = null;
-      });
-    return loadingQueue;
-  },
-
-  showQueue: (focus) => {
-    set({ view: "queue", queueFocus: focus, queue: null, error: null });
-    void get().loadQueue();
-  },
-
-  showSettings: () => {
-    const settings = get().snapshot?.settings ?? null;
-    set({ view: "settings", draft: settings ? editable(settings) : null, error: null });
-  },
-
-  showStatus: () => set({ view: "status", draft: null, error: null }),
-
-  editDraft: (patch) => {
-    const draft = get().draft;
-    if (draft) set({ draft: { ...draft, ...patch } });
-  },
-
-  saveDraft: async () => {
-    const draft = get().draft;
-    if (!draft) return;
-    set({ saving: true, error: null });
-    try {
-      await api.saveSettings({ ...draft, models: cleanModels(draft.models) });
-      set({ view: "status", draft: null });
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    } finally {
-      set({ saving: false });
-    }
-  },
-
-  togglePause: async () => {
-    const paused = get().snapshot?.settings.paused ?? false;
-    try {
-      await api.setPaused(!paused);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  retry: async (id) => {
-    try {
-      await api.retryJob(id);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  discard: async (id) => {
-    try {
-      await api.discardJob(id);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  clearActivity: async () => {
-    try {
-      await api.clearActivity();
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  setAutostart: async (enabled) => {
-    try {
-      await api.setAutostart(enabled);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    }
-  },
-
-  connecting: null,
-  connectHook: async (provider) => {
-    set({ connecting: provider, error: null });
-    try {
-      await api.connectHook(provider);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    } finally {
-      set({ connecting: null });
-    }
-  },
-
-  disconnectHook: async (provider) => {
-    set({ connecting: provider, error: null });
-    try {
-      await api.disconnectHook(provider);
-      await get().refresh();
-    } catch (error) {
-      set({ error: message(error) });
-    } finally {
-      set({ connecting: null });
-    }
-  },
-}));
+    togglePause: () => attempt(() => api.setPaused(!(get().snapshot?.settings.paused ?? false))),
+    retry: (id) => attempt(() => api.retryJob(id)),
+    discard: (id) => attempt(() => api.discardJob(id)),
+    clearActivity: () => attempt(() => api.clearActivity()),
+    setAutostart: (enabled) => attempt(() => api.setAutostart(enabled)),
+    setSyncEnabled: (enabled) => attempt(() => api.setSyncEnabled(enabled)),
+    syncNow: () => attempt(() => api.syncNow()),
+  };
+});

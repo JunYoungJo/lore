@@ -2,6 +2,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
+use lore_core::catalog::Catalog;
 use lore_core::settings::{Paths, Settings};
 use lore_core::transcript::Provider;
 use serde::Serialize;
@@ -26,6 +27,7 @@ pub struct AppState {
     operation: Mutex<()>,
     syncing: AtomicBool,
     setup_busy: AtomicBool,
+    catalog: Mutex<Catalog>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -47,7 +49,16 @@ impl AppState {
             operation: Mutex::new(()),
             syncing: AtomicBool::new(false),
             setup_busy: AtomicBool::new(false),
+            catalog: Mutex::new(Catalog::default()),
         }
+    }
+
+    pub fn catalog(&self) -> Catalog {
+        lock(&self.catalog).clone()
+    }
+
+    pub fn set_catalog(&self, catalog: Catalog) {
+        *lock(&self.catalog) = catalog;
     }
 
     pub fn reviewing(&self) -> bool {

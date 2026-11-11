@@ -45,6 +45,7 @@ pub fn run() {
             let opener = handle.clone();
             let _ = handle.notification().on_action(move |_| tray::open_popover(&opener));
             watch::spawn(handle.clone());
+            commands::refresh_catalog(&handle);
             background::spawn(handle);
             Ok(())
         })
@@ -60,8 +61,7 @@ pub fn run() {
             commands::open_note,
             commands::open_folder,
             commands::hide_window,
-            commands::connect_hook,
-            commands::disconnect_hook,
+            commands::open_settings,
             review::open_review,
             review::begin_review,
             review::end_review,
@@ -76,6 +76,7 @@ pub fn run() {
             sync::preview_sync,
             sync::apply_sync,
             sync::resume_sync,
+            sync::sync_now,
             sync::defer_sync,
             setup::open_setup,
             setup::open_integrations,
@@ -89,6 +90,7 @@ pub fn run() {
             setup::setup_connect,
             setup::setup_disconnect,
             setup::setup_index,
+            setup::setup_embed_model,
             setup::setup_prepare,
             setup::setup_run,
             setup::setup_open_docs,

@@ -33,7 +33,7 @@ function Cell({ no, segments, side }: { no: number | null; segments: Segment[] |
   );
 }
 
-export function DiffView({ path, rows }: { path: string; rows: DiffRow[] }) {
+export function DiffView({ path, rows, labels = ["Last commit", "Current"] }: { path: string; rows: DiffRow[]; labels?: [string, string] }) {
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
 
@@ -87,8 +87,8 @@ export function DiffView({ path, rows }: { path: string; rows: DiffRow[] }) {
         )}
       </div>
       <div className="diff-head">
-        <div>Last commit</div>
-        <div>Current</div>
+        <div>{labels[0]}</div>
+        <div>{labels[1]}</div>
       </div>
       <div className="diff-rows" role="table" aria-label="Side-by-side diff">
         {items.map((item) =>

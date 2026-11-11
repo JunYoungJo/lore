@@ -2,6 +2,7 @@
 .onboard-top { height: 80px; flex: none; display: flex; align-items: center; justify-content: space-between; padding: 0 38px; }
 .onboard-logo { display: flex; gap: 9px; align-items: center; font-size: 18px; font-weight: 630; letter-spacing: -.5px; }
 .onboard-logo .brand { width: 28px; height: 28px; }
+.onboard-logo > * { pointer-events: none; }
 .onboard-dismiss, .onboard-back { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: none; border: 0; color: var(--text3); font-size: 11px; cursor: pointer; padding: 8px; border-radius: 5px; }
 .onboard-dismiss:hover, .onboard-back:hover { color: var(--text); background: var(--surface2); }
 .onboard-scroll { flex: 1; min-height: 0; overflow: auto; scrollbar-gutter: stable both-edges; }

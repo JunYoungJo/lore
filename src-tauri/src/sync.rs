@@ -3,6 +3,7 @@ use lore_core::error::{Error, Result};
 use lore_core::qmd::Qmd;
 use lore_core::queue::{Queue, Status};
 use lore_core::recorder::CliRecorder;
+use lore_core::review::{self, DiffRow, RowKind};
 use lore_core::run;
 use lore_core::settings::{self, Paths, Settings};
 use lore_core::sync::{self, Choice, Plan, Summary};
@@ -19,6 +20,36 @@ pub struct Snapshot {
     busy: bool,
     summary: Summary,
     plan: Option<Plan>,
+    tracking: Option<String>,
+    model: String,
+    review: Option<usize>,
+    changes: Vec<FileLines>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Lines {
+    added: usize,
+    removed: usize,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileLines {
+    path: String,
+    local: Lines,
+    remote: Lines,
+}
+
+fn lines(old: Option<&str>, new: Option<&str>) -> Lines {
+    let rows = review::side_by_side(old.unwrap_or(""), new.unwrap_or(""));
+    let count = |kinds: &[RowKind]| rows.iter().filter(|row| kinds.contains(&row.kind)).count();
+    Lines { added: count(&[RowKind::Added, RowKind::Changed]), removed: count(&[RowKind::Removed, RowKind::Changed]) }
+}
+
+fn model_label(settings: &Settings) -> String {
+    let (name, chosen) = if settings.backend == "claude" { ("Claude", &settings.models.claude) } else { ("Codex", &settings.models.codex) };
+    chosen.as_deref().map_or_else(|| name.to_string(), |model| format!("{name} {model}"))
 }
 
 fn changed(app: &AppHandle) {
@@ -34,9 +65,10 @@ pub async fn open_sync(app: AppHandle) -> std::result::Result<(), String> {
         return Ok(());
     }
     WebviewWindowBuilder::new(&app, "sync", WebviewUrl::App("index.html".into()))
-        .title("Review memory sync")
+        .title("Memory sync")
         .inner_size(1120.0, 820.0)
         .min_inner_size(740.0, 620.0)
+        .decorations(false)
         .center()
         .build()
         .map_err(|e| e.to_string())?;
@@ -48,12 +80,26 @@ pub fn get_sync(state: State<'_, AppState>) -> std::result::Result<Snapshot, Str
     let settings = state.settings();
     let root = settings.knowledge_root();
     let path = sync::journal(&state.paths, &root);
+    let plan = sync::load(&path).map_err(|e| e.to_string())?;
+    let changes = plan
+        .iter()
+        .flat_map(|plan| plan.files.iter())
+        .map(|file| FileLines {
+            path: file.path.clone(),
+            local: lines(file.base.as_deref(), file.local.as_deref()),
+            remote: lines(file.base.as_deref(), file.remote.as_deref()),
+        })
+        .collect();
     Ok(Snapshot {
         root: root.to_string_lossy().into(),
         enabled: settings.sync_enabled,
         busy: state.syncing(),
         summary: sync::summary(&path),
-        plan: sync::load(&path).map_err(|e| e.to_string())?,
+        tracking: sync::tracking(&root),
+        model: model_label(&settings),
+        review: review::working_changes(&root).ok().flatten().map(|changes| changes.notes.len()),
+        changes,
+        plan,
     })
 }
 
@@ -161,7 +207,8 @@ pub async fn analyze_sync(app: AppHandle) -> std::result::Result<(), String> {
                 settings,
                 &paths.recorder_workdir(),
                 run::fixed(settings.model_timeout_secs),
-            );
+            )
+            .defaulting_to(app.state::<AppState>().catalog().default_model(&settings.backend));
             let plan = sync::load(&path)?
                 .ok_or_else(|| Error::permanent("Check the remote for changes first."))?;
             sync::analyze(
@@ -182,6 +229,7 @@ pub async fn analyze_sync(app: AppHandle) -> std::result::Result<(), String> {
 #[serde(rename_all = "camelCase")]
 pub struct Preview {
     files: BTreeMap<String, String>,
+    diffs: BTreeMap<String, Vec<DiffRow>>,
     token: String,
 }
 fn preview_token(id: &str, files: &BTreeMap<String, String>) -> Result<String> {
@@ -207,7 +255,12 @@ pub async fn preview_sync(
         }
         let files = sync::preview(&plan, &choices).map_err(|e| e.to_string())?;
         let token = preview_token(&id, &files).map_err(|e| e.to_string())?;
-        Ok(Preview { files, token })
+        let diffs = plan
+            .files
+            .iter()
+            .map(|file| (file.path.clone(), review::side_by_side(file.local.as_deref().unwrap_or(""), files.get(&file.path).map_or("", String::as_str))))
+            .collect();
+        Ok(Preview { files, diffs, token })
     })
     .await
     .map_err(|e| e.to_string())?
@@ -249,6 +302,23 @@ pub async fn resume_sync(app: AppHandle) -> std::result::Result<(), String> {
         .map_err(|e| e.to_string())
 }
 
+fn advance(settings: &Settings, paths: &Paths) -> Result<()> {
+    let path = sync::journal(paths, &settings.knowledge_root());
+    match sync::load(&path)? {
+        Some(plan) if plan.phase == "review" => Ok(()),
+        Some(_) => finish(settings, paths),
+        None => prepare(settings, paths),
+    }
+}
+
+#[tauri::command]
+pub async fn sync_now(app: AppHandle) -> std::result::Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || run_exclusive(&app, advance))
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())
+}
+
 pub fn automatic(app: &AppHandle) {
     let before = {
         let state = app.state::<AppState>();
@@ -257,14 +327,7 @@ pub fn automatic(app: &AppHandle) {
             &state.settings().knowledge_root(),
         ))
     };
-    let result = run_exclusive(app, |settings, paths| {
-        let path = sync::journal(paths, &settings.knowledge_root());
-        match sync::load(&path)? {
-            Some(plan) if plan.phase == "review" => Ok(()),
-            Some(_) => finish(settings, paths),
-            None => prepare(settings, paths),
-        }
-    });
+    let result = run_exclusive(app, advance);
     let state = app.state::<AppState>();
     if let Err(error) = result {
         state.set_problem(Some(format!("Auto-sync pending: {error}")));

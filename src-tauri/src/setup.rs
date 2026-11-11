@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use lore_core::{diagnostics, hooks, platform, qmd::Qmd, queue::Queue, run, settings, setup, transcript::Provider, worker};
+use lore_core::{diagnostics, hooks, platform, qmd::{self, Qmd}, queue::Queue, run, settings, setup, transcript::Provider, worker};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -9,7 +9,6 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::{commands, setup_terminal, state::AppState};
 
-const QWEN: &str = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
 fn err(e: impl std::fmt::Display) -> String { e.to_string() }
 fn provider(value: &str) -> Result<Provider, String> { Provider::parse(value).ok_or_else(|| "Unknown AI tool.".into()) }
 fn changed(app: &AppHandle) { let _ = app.emit("state-changed", ()); }
@@ -21,7 +20,7 @@ pub fn create_window(app: &AppHandle, visible: bool) -> Result<(), String> {
     }
     let window = WebviewWindowBuilder::new(app, "setup", WebviewUrl::App("index.html".into()))
         .title("Set up Lore").inner_size(1040.0, 790.0).min_inner_size(760.0, 640.0)
-        .center().visible(visible).build().map_err(err)?;
+        .decorations(false).center().visible(visible).build().map_err(err)?;
     // Closing retains the running command and saved step. Reopen from Settings.
     let handle = window.clone();
     window.on_window_event(move |event| {
@@ -69,14 +68,21 @@ pub fn get_setup(state: State<'_, AppState>) -> Result<Value, String> {
         json!({"name": name, "path": found})
     }).collect();
     let recent = Queue::open(&state.paths.database()).map_err(err)?.recent_activity(30).map_err(err)?;
+    let index_config = std::fs::read_to_string(settings.qmd_config_dir().join(format!("{}.yml", settings.qmd_index))).unwrap_or_default();
+    let root = settings.knowledge_root();
     Ok(json!({
         "progress": setup::progress(&state.paths).map_err(err)?, "settings": settings,
         "diagnostics": diagnostics::inspect(&state.paths, &cli), "tools": tools,
         "clients": clients, "platform": std::env::consts::OS,
         "recorded": recent.iter().filter(|a| a.kind == "recorded").count(),
         "testRecorded": setup::progress(&state.paths).map_err(err)?.test_started_at.is_some_and(|start| recent.iter().any(|a| a.kind == "recorded" && a.at >= start)),
-        "rootExists": settings.knowledge_root().is_dir(),
-        "qwenModel": QWEN,
+        "rootExists": root.is_dir(),
+        "qwenModel": qmd::QWEN_EMBED,
+        "embedModel": qmd::embed_model(&index_config),
+        "embedModels": qmd::EMBED_MODELS,
+        "collections": qmd::collection_names(&index_config),
+        "repository": root.join(".git").exists(),
+        "tracking": lore_core::sync::tracking(&root),
     }))
 }
 
@@ -133,11 +139,17 @@ pub async fn setup_check_tools(app: AppHandle) -> Result<Value, String> {
 }
 
 #[tauri::command]
-pub async fn open_integrations(app: AppHandle) -> Result<(), String> {
-    if let Some(window) = app.get_webview_window("integrations") { window.show().map_err(err)?; return window.set_focus().map_err(err); }
-    WebviewWindowBuilder::new(&app, "integrations", WebviewUrl::App("index.html".into()))
+pub async fn open_integrations(app: AppHandle, section: Option<String>) -> Result<(), String> {
+    let section = section.filter(|section| section == "folder");
+    if let Some(window) = app.get_webview_window("integrations") {
+        window.show().map_err(err)?;
+        if let Some(section) = &section { app.emit_to("integrations", "integrations-section", section).map_err(err)?; }
+        return window.set_focus().map_err(err);
+    }
+    let page = section.map_or_else(|| "index.html".to_string(), |section| format!("index.html?section={section}"));
+    WebviewWindowBuilder::new(&app, "integrations", WebviewUrl::App(page.into()))
         .title("Lore integrations").inner_size(1040.0, 790.0).min_inner_size(760.0, 640.0)
-        .center().build().map_err(err)?;
+        .decorations(false).center().build().map_err(err)?;
     Ok(())
 }
 
@@ -170,6 +182,7 @@ pub fn setup_detect(app: AppHandle, state: State<'_, AppState>) -> Result<(), St
     }
     settings::save(&state.paths.settings(), &settings).map_err(err)?;
     state.replace_settings(settings);
+    commands::refresh_catalog(&app);
     changed(&app);
     Ok(())
 }
@@ -248,7 +261,7 @@ pub async fn setup_index(app: AppHandle) -> Result<(), String> {
         // Only fresh indexes receive the multilingual model. An existing index's
         // model and embeddings are preserved during setup and repair.
         if !config.exists() {
-            settings::atomic_write(&config, format!("models:\n  embed: \"{QWEN}\"\ncollections: {{}}\n").as_bytes()).map_err(err)?;
+            settings::atomic_write(&config, format!("models:\n  embed: \"{}\"\ncollections: {{}}\n", qmd::QWEN_EMBED).as_bytes()).map_err(err)?;
         }
         let live = app.clone();
         let limit: run::Limit = std::sync::Arc::new(move || std::time::Duration::from_secs(live.state::<AppState>().read_settings(|s| s.qmd_timeout_secs)));
@@ -257,6 +270,28 @@ pub async fn setup_index(app: AppHandle) -> Result<(), String> {
         qmd.refresh().map_err(err)?;
         changed(&app);
         Ok(())
+    }).await.map_err(err)?
+}
+
+#[tauri::command]
+pub async fn setup_embed_model(app: AppHandle, model: String) -> Result<(), String> {
+    tauri::async_runtime::spawn_blocking(move || {
+        if setup_terminal::running(&app) { return Err("Finish the setup terminal command before changing the model.".into()); }
+        if !qmd::EMBED_MODELS.iter().any(|known| known.uri == model) { return Err("Choose one of the listed embedding models.".into()); }
+        let state = app.state::<AppState>();
+        let _busy = state.begin_setup().ok_or("Another setup operation is running.")?;
+        if state.operation_busy() || state.syncing() || state.reviewing() { return Err("Wait for recording or sync to finish and close review windows.".into()); }
+        let _gate = state.operation();
+        let settings = state.settings();
+        let live = app.clone();
+        let limit: run::Limit = std::sync::Arc::new(move || std::time::Duration::from_secs(live.state::<AppState>().read_settings(|s| s.qmd_timeout_secs)));
+        let qmd = Qmd::new(&settings, &state.paths.recorder_workdir(), limit);
+        let config = std::fs::read_to_string(qmd.config_path()).map_err(|_| "Build the search index first.".to_string())?;
+        settings::atomic_write(&qmd.config_path(), qmd::with_embed_model(&config, &model).as_bytes()).map_err(err)?;
+        changed(&app);
+        let rebuilt = qmd.rebuild_vectors().map_err(err);
+        changed(&app);
+        rebuilt
     }).await.map_err(err)?
 }
 

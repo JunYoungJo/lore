@@ -2,6 +2,8 @@
 .setup-terminal-head { display: flex; align-items: center; gap: 9px; padding: 12px 14px; color: #a3b2c5; background: #151e2c; font-size: 10px; border-bottom: 1px solid #263242; }
 .terminal-state { font-size: 9px; }
 .terminal-stop { display: flex; align-items: center; gap: 5px; color: #f19595; border: 1px solid #5c3e44; border-radius: 4px; font-size: 9px; padding: 3px 6px; background: none; cursor: pointer; }
+.terminal-close { display: grid; place-items: center; width: 22px; height: 22px; border: 0; border-radius: 5px; background: none; color: #a3b2c5; cursor: pointer; }
+.terminal-close:hover { background: #22304a; }
 .setup-command { display: flex; gap: 12px; align-items: center; padding: 12px 14px; border-bottom: 1px solid #263242; }
 .setup-command code { flex: 1; min-width: 0; overflow-wrap: anywhere; color: #b3c7df; font-size: 10px; line-height: 1.7; user-select: text; }
 .setup-command .btn { flex: none; font-size: 10px; }

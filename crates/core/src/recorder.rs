@@ -10,6 +10,7 @@ use crate::settings::{atomic_write, Settings};
 pub const PROMPT: &str = include_str!("recorder-prompt.md");
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-6.1-sol";
 pub const DEFAULT_CLAUDE_MODEL: &str = "haiku";
+pub const DEFAULT_CODEX_EFFORT: &str = "low";
 
 pub trait Recorder {
     fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal>;
@@ -64,6 +65,7 @@ pub fn build_prompt(payload: &Value) -> String {
 pub struct CliRecorder {
     pub backend: String,
     pub model: Option<String>,
+    pub effort: Option<String>,
     pub command: Vec<String>,
     pub workdir: PathBuf,
     pub limit: Limit,
@@ -72,7 +74,14 @@ pub struct CliRecorder {
 impl CliRecorder {
     pub fn from_settings(settings: &Settings, workdir: &Path, limit: Limit) -> Self {
         let command = if settings.backend == "claude" { settings.commands.claude.clone() } else { settings.commands.codex.clone() };
-        Self { backend: settings.backend.clone(), model: settings.model().map(str::to_string), command, workdir: workdir.to_path_buf(), limit }
+        Self { backend: settings.backend.clone(), model: settings.model().map(str::to_string), effort: settings.effort().map(str::to_string), command, workdir: workdir.to_path_buf(), limit }
+    }
+
+    pub fn defaulting_to(mut self, model: Option<String>) -> Self {
+        if self.model.is_none() {
+            self.model = model;
+        }
+        self
     }
 
     #[cfg(test)]
@@ -87,12 +96,12 @@ impl CliRecorder {
         if self.backend == "claude" {
             let model = self.model.clone().unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into());
             let schema_text = schema.to_string();
+            command.extend(["--safe-mode", "--print", "--model", model.as_str()].map(str::to_string));
+            if let Some(effort) = &self.effort {
+                command.extend(["--effort".to_string(), effort.clone()]);
+            }
             command.extend(
                 [
-                    "--safe-mode",
-                    "--print",
-                    "--model",
-                    model.as_str(),
                     "--tools",
                     "",
                     "--strict-mcp-config",
@@ -110,6 +119,7 @@ impl CliRecorder {
             );
         } else {
             let model = self.model.clone().unwrap_or_else(|| DEFAULT_CODEX_MODEL.into());
+            let effort = format!("model_reasoning_effort=\"{}\"", self.effort.as_deref().unwrap_or(DEFAULT_CODEX_EFFORT));
             command.extend(
                 [
                     "exec",
@@ -128,7 +138,7 @@ impl CliRecorder {
                     "-c",
                     "features.multi_agent=false",
                     "-c",
-                    "model_reasoning_effort=\"low\"",
+                    effort.as_str(),
                     "--output-schema",
                     schema_file.as_str(),
                     "--output-last-message",
@@ -214,6 +224,34 @@ mod tests {
         assert_eq!(model_in(&settings), "gpt-x");
         settings.models = Models::default();
         assert_eq!(model_in(&settings), DEFAULT_CODEX_MODEL);
+    }
+
+    #[test]
+    fn a_listed_default_applies_only_when_no_model_is_chosen() {
+        let mut settings = Settings { backend: "codex".into(), ..Settings::default() };
+        settings.commands.codex = vec!["codex.exe".into()];
+        let chosen = |settings: &Settings| CliRecorder::from_settings(settings, Path::new("w"), run::fixed(1)).defaulting_to(Some("gpt-listed".into())).model;
+        assert_eq!(chosen(&settings).as_deref(), Some("gpt-listed"));
+        settings.models.codex = Some("gpt-mine".into());
+        assert_eq!(chosen(&settings).as_deref(), Some("gpt-mine"));
+    }
+
+    #[test]
+    fn effort_is_passed_to_each_cli_and_codex_keeps_low_by_default() {
+        let mut settings = Settings { backend: "codex".into(), ..Settings::default() };
+        settings.commands.codex = vec!["codex.exe".into()];
+        settings.commands.claude = vec!["claude.exe".into()];
+        let args = |settings: &Settings| CliRecorder::from_settings(settings, Path::new("w"), run::fixed(1)).arguments(Path::new("s.json"), Path::new("r.json"));
+        assert!(args(&settings).contains(&"model_reasoning_effort=\"low\"".to_string()));
+        settings.efforts.codex = Some("high".into());
+        assert!(args(&settings).contains(&"model_reasoning_effort=\"high\"".to_string()));
+
+        settings.backend = "claude".into();
+        assert!(!args(&settings).contains(&"--effort".to_string()));
+        settings.efforts.claude = Some("max".into());
+        let claude = args(&settings);
+        let at = claude.iter().position(|arg| arg == "--effort").unwrap();
+        assert_eq!(claude[at + 1], "max");
     }
 
     #[test]

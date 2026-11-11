@@ -1,12 +1,14 @@
 use std::path::{Path, PathBuf};
 
-use lore_core::hooks::{self, HookStatus};
+use lore_core::catalog::{self, Catalog};
+use lore_core::hooks::{self, HookState, HookStatus};
 use lore_core::pipeline;
 use lore_core::queue::{Activity, Counts, Job, Queue, Status};
+use lore_core::recorder::{DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_EFFORT, DEFAULT_CODEX_MODEL};
 use lore_core::review;
-use lore_core::settings::{self, EditableSettings, Settings};
+use lore_core::settings::{self, EditableSettings, Efforts, Models, Paths, Settings};
 use lore_core::transcript::Provider;
-use lore_core::worker;
+use lore_core::{platform, setup, worker};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
@@ -27,11 +29,22 @@ pub struct Snapshot {
     pub settings: Settings,
     pub autostart: bool,
     pub hooks: Vec<HookStatus>,
+    pub connections: Vec<Connection>,
     pub review: Option<usize>,
     pub reviewing: bool,
     pub version: &'static str,
     pub sync: lore_core::sync::Summary,
     pub syncing: bool,
+    pub catalog: Catalog,
+    pub default_models: Models,
+    pub default_efforts: Efforts,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Connection {
+    pub provider: Provider,
+    pub state: &'static str,
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -55,26 +68,21 @@ fn hook_statuses() -> Vec<HookStatus> {
     [Provider::Claude, Provider::Codex].into_iter().map(|provider| hooks::status_at(&hooks::config_path(provider), provider, &cli)).collect()
 }
 
-#[tauri::command]
-pub fn connect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
-    let provider = Provider::parse(&provider).ok_or("Unknown provider.")?;
-    let cli = cli_path();
-    if !lore_core::platform::is_executable(&cli) {
-        return Err(format!("Hook CLI not found: {}", cli.display()));
-    }
-    let config = hooks::config_path(provider);
-    hooks::register_at(&config, provider, &cli, worker::now()).map_err(error)?;
-    let _ = app.emit("state-changed", ());
-    Ok(hooks::status_at(&config, provider, &cli))
-}
-
-#[tauri::command]
-pub fn disconnect_hook(app: AppHandle, provider: String) -> Result<HookStatus, String> {
-    let provider = Provider::parse(&provider).ok_or("Unknown provider.")?;
-    let config = hooks::config_path(provider);
-    hooks::unregister_at(&config, provider, worker::now()).map_err(error)?;
-    let _ = app.emit("state-changed", ());
-    Ok(hooks::status_at(&config, provider, &cli_path()))
+fn connections(settings: &Settings, paths: &Paths, hooks: &[HookStatus]) -> Vec<Connection> {
+    hooks
+        .iter()
+        .map(|hook| {
+            let states: Option<Vec<String>> = setup::plan(&platform::home(), paths, hook.provider, settings).ok().map(|plan| plan.resources.into_iter().map(|resource| resource.state).collect());
+            let ready = states.as_ref().is_some_and(|states| states.iter().all(|state| state == "ready" || state == "preserved"));
+            let untouched = states.as_ref().map_or(true, |states| states.iter().all(|state| state == "add"));
+            let state = match hook.state {
+                HookState::Connected if ready => "connected",
+                HookState::Missing if untouched => "missing",
+                _ => "partial",
+            };
+            Connection { provider: hook.provider, state }
+        })
+        .collect()
 }
 
 #[tauri::command]
@@ -97,6 +105,10 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     };
     let review = review::working_changes(&settings.knowledge_root()).ok().flatten().map(|changes| changes.notes.len());
     let counts = queue.counts(now, current.as_ref().map(|current| current.job_id.as_str())).map_err(error)?;
+    let hooks = hook_statuses();
+    let connections = connections(&settings, &state.paths, &hooks);
+    let catalog = state.catalog();
+    let default_models = Models { codex: Some(catalog.default_model("codex").unwrap_or_else(|| DEFAULT_CODEX_MODEL.into())), claude: Some(DEFAULT_CLAUDE_MODEL.into()) };
     Ok(Snapshot {
         state: label,
         current,
@@ -111,13 +123,29 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         problem: state.problem(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         settings,
-        hooks: hook_statuses(),
+        hooks,
+        connections,
         review,
         reviewing,
         version: env!("CARGO_PKG_VERSION"),
         sync,
         syncing,
+        catalog,
+        default_models,
+        default_efforts: Efforts { codex: Some(DEFAULT_CODEX_EFFORT.into()), claude: None },
     })
+}
+
+// Model lists are read once at launch and again after setup commands finish;
+// the CLIs take seconds to answer, so this never runs on a settings view.
+pub fn refresh_catalog(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let state = app.state::<AppState>();
+        let fetched = catalog::fetch(&state.settings(), &state.paths.recorder_workdir());
+        state.set_catalog(fetched);
+        let _ = app.emit("state-changed", ());
+    });
 }
 
 #[tauri::command]
@@ -224,6 +252,12 @@ pub fn open_folder(app: AppHandle, state: State<'_, AppState>, kind: String) -> 
 #[tauri::command]
 pub fn hide_window(window: WebviewWindow) {
     let _ = window.hide();
+}
+
+#[tauri::command]
+pub fn open_settings(app: AppHandle) -> Result<(), String> {
+    tray::open_popover(&app);
+    app.emit_to(tray::POPOVER, "show-settings", ()).map_err(error)
 }
 
 

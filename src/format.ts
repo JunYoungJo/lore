@@ -12,6 +12,11 @@ export function relativeTime(seconds: number, now: number): string {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(date);
 }
 
+export function relativePhrase(seconds: number, now: number): string {
+  const when = relativeTime(seconds, now);
+  return when === "Just now" || when === "Yesterday" ? when.toLowerCase() : when;
+}
+
 export function elapsed(seconds: number, now: number): string {
   const diff = Math.max(0, now - seconds);
   if (diff < 60) return "Just started";

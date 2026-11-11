@@ -111,6 +111,7 @@ pub struct Summary {
     pub message: Option<String>,
     pub issues: usize,
     pub blocked: bool,
+    pub last_synced_at: Option<i64>,
 }
 
 pub fn journal(paths: &Paths, root: &Path) -> PathBuf {
@@ -130,22 +131,35 @@ pub fn load(path: &Path) -> Result<Option<Plan>> {
     }
 }
 
+fn last_sync_path(path: &Path) -> PathBuf {
+    path.with_file_name("last-sync.json")
+}
+
+fn last_synced_at(path: &Path) -> Option<i64> {
+    let bytes = std::fs::read(last_sync_path(path)).ok()?;
+    serde_json::from_slice::<Value>(&bytes).ok()?.get("at")?.as_i64()
+}
+
 pub fn summary(path: &Path) -> Summary {
+    let last_synced_at = last_synced_at(path);
     match load(path) {
         Ok(Some(plan)) => Summary {
             phase: plan.phase.clone(),
             message: plan.message.clone(),
             issues: plan.analysis.as_ref().map(|a| a.issues.len()).unwrap_or(0),
             blocked: plan.blocks_recording(),
+            last_synced_at,
         },
         Ok(None) => Summary {
             phase: "idle".into(),
+            last_synced_at,
             ..Summary::default()
         },
         Err(error) => Summary {
             phase: "error".into(),
             message: Some(error.to_string()),
             blocked: true,
+            last_synced_at,
             ..Summary::default()
         },
     }
@@ -187,6 +201,13 @@ fn branch(root: &Path) -> Result<String> {
     Ok(git(root, &["symbolic-ref", "--short", "HEAD"])?
         .trim()
         .to_string())
+}
+
+pub fn tracking(root: &Path) -> Option<String> {
+    let branch = branch(root).ok()?;
+    let remote = git(root, &["config", "--get", &format!("branch.{branch}.remote")]).ok()?;
+    let merge = git(root, &["config", "--get", &format!("branch.{branch}.merge")]).ok()?;
+    Some(format!("{branch} ↔ {}/{}", remote.trim(), merge.trim().trim_start_matches("refs/heads/")))
 }
 fn clean(root: &Path) -> Result<()> {
     if !git(
@@ -971,6 +992,10 @@ pub fn finish(
         }
         let backup = path.with_file_name(format!("completed-{}.json", plan.id));
         atomic_write(&backup, &serde_json::to_vec_pretty(&plan)?)?;
+        atomic_write(
+            &last_sync_path(path),
+            &serde_json::to_vec(&json!({ "at": chrono::Utc::now().timestamp() }))?,
+        )?;
         std::fs::remove_file(path)?;
         return Ok(None);
     }

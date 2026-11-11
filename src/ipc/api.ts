@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import type { DiffRow, EditableSettings, HookStatus, Job, Provider, ReviewSnapshot, Snapshot } from "./contract";
+import type { DiffRow, EditableSettings, Job, Provider, ReviewSnapshot, Snapshot } from "./contract";
 
 export type { Activity, Counts, Current, DiffRow, EditableSettings, HookStatus, Job, ReviewSnapshot, Settings, Snapshot } from "./contract";
 
@@ -19,14 +19,14 @@ export const reviewDiff = (path: string): Promise<DiffRow[]> => invoke("review_d
 export const commitReview = (message: string, notes: string[]): Promise<string> => invoke("commit_review", { message, notes });
 export const saveSettings = (settings: EditableSettings): Promise<void> => invoke("save_settings", { settings });
 export const setAutostart = (enabled: boolean): Promise<void> => invoke("set_autostart", { enabled });
-export const connectHook = (provider: Provider): Promise<HookStatus> => invoke("connect_hook", { provider });
-export const disconnectHook = (provider: Provider): Promise<HookStatus> => invoke("disconnect_hook", { provider });
 export const openNote = (path: string): Promise<void> => invoke("open_note", { path });
 export const openFolder = (kind: "knowledge" | "data"): Promise<void> => invoke("open_folder", { kind });
 export const hideWindow = (): Promise<void> => invoke("hide_window");
+export const openSettings = (): Promise<void> => invoke("open_settings");
 
 export const onStateChanged = (handler: () => void): Promise<UnlistenFn> => listen("state-changed", handler);
 export const onPopoverShown = (handler: () => void): Promise<UnlistenFn> => listen("popover-shown", handler);
+export const onShowSettings = (handler: () => void): Promise<UnlistenFn> => listen("show-settings", handler);
 
 export const openSync = (): Promise<void> => invoke("open_sync");
 export const getSync = (): Promise<import("./contract").SyncSnapshot> => invoke("get_sync");
@@ -36,10 +36,12 @@ export const analyzeSync = (): Promise<void> => invoke("analyze_sync");
 export const previewSync = (id: string, choices: import("./contract").SyncChoice[]): Promise<import("./contract").SyncPreview> => invoke("preview_sync", { id, choices });
 export const applySync = (id: string, choices: import("./contract").SyncChoice[], token: string): Promise<void> => invoke("apply_sync", { id, choices, token });
 export const resumeSync = (): Promise<void> => invoke("resume_sync");
+export const syncNow = (): Promise<void> => invoke("sync_now");
 export const deferSync = (): Promise<void> => invoke("defer_sync");
 
 export const openSetup = (): Promise<void> => invoke("open_setup");
-export const openIntegrations = (): Promise<void> => invoke("open_integrations");
+export const openIntegrations = (section?: "folder"): Promise<void> => invoke("open_integrations", { section: section ?? null });
+export const onIntegrationsSection = (handler: (section: string) => void): Promise<UnlistenFn> => listen<string>("integrations-section", (event) => handler(event.payload));
 export const setupCheckTools = (): Promise<import("./contract").ToolChecks> => invoke("setup_check_tools");
 export const setupPickFolder = (): Promise<string | null> => invoke("setup_pick_folder");
 export const getSetup = (): Promise<import("./contract").SetupSnapshot> => invoke("get_setup");
@@ -49,6 +51,7 @@ export const setupRepository = (path: string, create: boolean): Promise<void> =>
 export const setupConnect = (provider: Provider, token: string): Promise<void> => invoke("setup_connect", { provider, token });
 export const setupDisconnect = (provider: Provider): Promise<string[]> => invoke("setup_disconnect", { provider });
 export const setupIndex = (): Promise<void> => invoke("setup_index");
+export const setupEmbedModel = (model: string): Promise<void> => invoke("setup_embed_model", { model });
 export const setupBeginTest = (): Promise<void> => invoke("setup_begin_test");
 const commandArgs = ({ task, remote = "", path = "", query = "" }: import("./contract").SetupCommand) => ({ task, remote, path, query });
 export const setupPrepare = (command: import("./contract").SetupCommand): Promise<import("./contract").PreparedCommand> => invoke("setup_prepare", commandArgs(command));

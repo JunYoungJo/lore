@@ -96,6 +96,10 @@ input::placeholder {
   font-feature-settings: "tnum" 1;
 }
 
+:root:not(.keyboard-nav) :focus-visible:not(input, textarea, select) {
+  outline: none;
+}
+
 ::-webkit-scrollbar {
   width: 12px;
   height: 12px;

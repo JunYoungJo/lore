@@ -56,10 +56,22 @@ export type Backend = "codex" | "claude";
 
 export type Models = Record<Backend, string | null>;
 
+export type Efforts = Record<Backend, string | null>;
+
+export interface ModelChoice {
+  value: string;
+  label: string;
+  resolved: string | null;
+  efforts: string[];
+}
+
+export type Catalog = Record<Backend, ModelChoice[] | null>;
+
 export interface Settings {
   knowledgeRoot: string;
   backend: Backend;
   models: Models;
+  efforts: Efforts;
   modelTimeoutSecs: number;
   qmdTimeoutSecs: number;
   claudeProjectsDir: string;
@@ -67,13 +79,14 @@ export interface Settings {
   idleSecs: number;
   since: number;
   paused: boolean;
+  syncEnabled: boolean;
   maxChars: number;
   notesBudget: number;
   qmdIndex: string;
   commands: Commands;
 }
 
-export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "models" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
+export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
 
 export type HookState = "connected" | "other_path" | "missing";
 
@@ -84,6 +97,13 @@ export interface HookStatus {
   command: string;
   found: string | null;
   error: string | null;
+}
+
+export type ConnectionState = "connected" | "partial" | "missing";
+
+export interface Connection {
+  provider: Provider;
+  state: ConnectionState;
 }
 
 export type ChangeKind = "modified" | "added" | "deleted";
@@ -140,9 +160,13 @@ export interface Snapshot {
   settings: Settings;
   autostart: boolean;
   hooks: HookStatus[];
+  connections: Connection[];
   review: number | null;
   reviewing: boolean;
   version: string;
+  catalog: Catalog;
+  defaultModels: Record<Backend, string>;
+  defaultEfforts: Efforts;
 }
 
 export interface SetupProgress {
@@ -182,7 +206,14 @@ export interface SetupSnapshot {
   testRecorded: boolean;
   rootExists: boolean;
   qwenModel: string;
+  embedModel: string | null;
+  embedModels: EmbedModel[];
+  collections: string[];
+  repository: boolean;
+  tracking: string | null;
 }
+
+export interface EmbedModel { uri: string; name: string; size: string; note: string }
 
 export interface SetupCommand { task: string; remote?: string; path?: string; query?: string }
 export interface PreparedCommand { command: string; argv: string[]; cwd: string; env: [string, string][]; token: string }
@@ -193,7 +224,7 @@ export interface ToolChecks {
   auth: Record<Provider, "ready" | "signed_out" | "unavailable" | "unknown">;
 }
 
-export interface SyncSummary { phase: string; message: string | null; issues: number; blocked: boolean }
+export interface SyncSummary { phase: string; message: string | null; issues: number; blocked: boolean; lastSyncedAt: number | null }
 export interface SyncFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; textConflict: boolean }
 export interface SyncSource { id: string; side: string; path: string; text: string }
 export interface SyncEdit { path: string; find: string; text: string }
@@ -206,6 +237,8 @@ export interface SyncPlan {
   files: SyncFile[]; sources: SyncSource[]; unsupported: string[]; otherFiles: string[];
   analysis: SyncAnalysis | null; approved: string | null; message: string | null;
 }
-export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null }
+export interface LineCount { added: number; removed: number }
+export interface SyncFileLines { path: string; local: LineCount; remote: LineCount }
+export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null; tracking: string | null; model: string; review: number | null; changes: SyncFileLines[] }
 export interface SyncChoice { issue: number; option: number; customText: string | null }
-export interface SyncPreview { files: Record<string, string>; token: string }
+export interface SyncPreview { files: Record<string, string>; diffs: Record<string, DiffRow[]>; token: string }

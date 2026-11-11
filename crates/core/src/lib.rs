@@ -1,4 +1,5 @@
 pub mod batch;
+pub mod catalog;
 pub mod copy;
 pub mod diagnostics;
 pub mod error;
