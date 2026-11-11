@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { existingOrCreatedDraft, requireDraft, selectArtifacts, validateTag } from './release.mjs';
+import { existingOrCreatedDraft, platformEntry, requireDraft, selectArtifacts, validateTag } from './release.mjs';
 
 const names = ['Lore_0.1.0_aarch64.app.tar.gz', 'Lore_0.1.0_x64.app.tar.gz', 'Lore_0.1.0_x64-setup.exe', 'Lore_0.1.0_amd64.AppImage'];
 const assets = names.flatMap((name, id) => [
@@ -39,4 +39,12 @@ test('uses the created draft immediately without depending on a stale list', () 
   assert.equal(calls, 1);
   assert.equal(existingOrCreatedDraft([created], 'v0.1.1', create), created);
   assert.equal(calls, 1);
+});
+
+test('pins updater URLs to the published tag instead of the temporary draft path', () => {
+  const artifact = { name: 'Lore_0.1.1_x64.app.tar.gz', browser_download_url: 'https://github.com/JunYoungJo/lore/releases/download/untagged-example/Lore_0.1.1_x64.app.tar.gz' };
+  const entry = platformEntry('v0.1.1', artifact, 'example-signature');
+  assert.equal(entry.url, 'https://github.com/JunYoungJo/lore/releases/download/v0.1.1/Lore_0.1.1_x64.app.tar.gz');
+  assert.equal(entry.signature, 'example-signature');
+  assert.throws(() => platformEntry('v0.1.1', { name: '../installer' }, 'signature'), /Invalid release asset name/);
 });

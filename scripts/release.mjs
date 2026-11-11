@@ -38,6 +38,13 @@ export function selectArtifacts(assets) {
   }));
 }
 
+export function platformEntry(tag, artifact, signature) {
+  // Draft asset URLs can contain a temporary "untagged-..." path that stops
+  // working after publication. The updater must use the final version tag.
+  assert(!/[\\/]/.test(artifact.name), 'Invalid release asset name');
+  return { url: `https://github.com/JunYoungJo/lore/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(artifact.name)}`, signature };
+}
+
 export function requireDraft(releases, tag) {
   const release = releases.find(release => release.tag_name === tag);
   assert(release, `No release found for ${tag}`);
@@ -86,7 +93,7 @@ export function manifest(tag) {
       gh('release', 'download', tag, '--pattern', signature.name, '--dir', temporary);
       const signed = readFileSync(join(temporary, signature.name), 'utf8').trim();
       assert(/^[-A-Za-z0-9+/=\r\n]+$/.test(signed), `Invalid signature encoding for ${target}`);
-      platforms[target] = { url: artifact.browser_download_url, signature: signed };
+      platforms[target] = platformEntry(tag, artifact, signed);
     }
     const output = join(temporary, 'latest.json');
     writeFileSync(output, JSON.stringify({ version, notes: read(`releases/${tag}.md`).trim(), pub_date: release.created_at, platforms }, null, 2) + '\n');
