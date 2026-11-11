@@ -175,10 +175,10 @@ Git으로는 **기억 저장소에 커밋한 모든 파일**이 공유됩니다.
 | 운영체제 | 빌드 구성 | 이 브랜치에서 확인한 범위 |
 | --- | --- | --- |
 | macOS | app / dmg | 11월 10일 Apple Silicon app 빌드·격리 기동 확인. 서명·공증 미확인 |
-| Windows | NSIS 설치본 | 11월 11일 릴리스 실행 파일·설치본 빌드. 자동 검사와 기존 Windows 테스트 실패는 VALIDATION.md에 기록 |
+| Windows | NSIS 설치본 | 11월 11일 릴리스 실행 파일·설치본 빌드 |
 | Linux | deb / AppImage | 플랫폼 코드와 CI 구성. 실제 데스크톱 실행 미확인 |
 
-빌드와 자동 검사만으로 모든 운영체제의 훅·알림·데스크톱 연동을 확인한 것은 아닙니다. 최신 UI 캡처는 프런트엔드 예제 응답으로 렌더링했습니다. 자세한 결과와 한계는 [VALIDATION.md](VALIDATION.md)에 있습니다.
+빌드와 자동 검사만으로 모든 운영체제의 훅·알림·데스크톱 연동을 확인한 것은 아닙니다. 최신 UI 캡처는 프런트엔드 예제 응답으로 렌더링했습니다. 운영체제별 실제 설치·업그레이드 흐름은 별도로 확인해야 합니다.
 
 ## 개발과 검증
 
@@ -211,9 +211,7 @@ node scripts/evaluate-sync.mjs --backend codex
 - [상세 사용법과 CLI](docs/usage.md)
 - [여러 PC 설정·경로·기억 이전](docs/multiplatform.md)
 - [동기화 검토와 복구](docs/sync-review.md)
-- [검증 결과](VALIDATION.md)
 - [데스크톱 릴리즈와 앱 업데이트](docs/releasing.md) — 영어
-- [분리 경위와 이전 결정](docs/origin-and-scope.md) — 당시의 기록
 
 ## 라이선스
 

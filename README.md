@@ -179,10 +179,10 @@ Git sharing sends **all committed files in the memory repository**. Conversation
 | Platform | Build configuration | Verification on this branch |
 | --- | --- | --- |
 | macOS | App / DMG | Apple Silicon app build and isolated startup checked on Nov 10; signing and notarization not checked |
-| Windows | NSIS installer | Nov 11 release executable and installer built; automated checks and known Windows test failures are recorded in VALIDATION.md |
+| Windows | NSIS installer | Nov 11 release executable and installer built |
 | Linux | DEB / AppImage | Platform code and CI configured; desktop runtime not checked |
 
-Build and automated-test results do not establish that every hook, notification, or desktop integration works on every OS. The latest UI screenshots use frontend fixtures. Full results and remaining limits are in [VALIDATION.md](VALIDATION.md).
+Build and automated-test results do not establish that every hook, notification, or desktop integration works on every OS. The latest UI screenshots use frontend fixtures. Native installation and upgrade flows still need platform-specific checks.
 
 ## Development
 
@@ -216,9 +216,7 @@ Both evaluations substitute an indexing fixture for qmd. They test model output 
 - [Detailed usage and CLI reference](docs/usage.md) — Korean
 - [Multiple PCs, platform paths, and migration](docs/multiplatform.md) — Korean
 - [Synchronization review and recovery](docs/sync-review.md) — Korean
-- [Validation results](VALIDATION.md) — Korean
 - [Desktop releases and app updates](docs/releasing.md)
-- [Project history and original scope](docs/origin-and-scope.md) — historical notes
 
 ## License
 

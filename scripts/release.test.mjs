@@ -1,5 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { selectArtifacts, validateTag } from './release.mjs';
 
 const names = ['Lore_0.1.0_aarch64.app.tar.gz', 'Lore_0.1.0_x64.app.tar.gz', 'Lore_0.1.0_x64-setup.exe', 'Lore_0.1.0_amd64.AppImage'];
@@ -18,6 +19,7 @@ test('rejects missing builds, missing signatures, ambiguous files, and foreign U
   assert.throws(() => selectArtifacts(assets.map(a => a === assets[0] ? { ...a, browser_download_url: 'https://example.com/installer' } : a)), /Unexpected artifact URL/);
 });
 test('requires release tag, app, frontend and Rust versions to agree', () => {
-  assert.equal(validateTag('v0.1.0'), '0.1.0');
-  assert.throws(() => validateTag('v0.2.0'), /Release tag/);
+  const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  assert.equal(validateTag(`v${version}`), version);
+  assert.throws(() => validateTag('not-a-version-tag'), /Release tag/);
 });

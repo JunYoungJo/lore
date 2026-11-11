@@ -47,13 +47,23 @@ fn fixture() -> Fixture {
         root,
         &["init", "--bare", "--initial-branch=main", "remote.git"],
     );
-    git(root, &["clone", "remote.git", "local"]);
+    // Exercise Windows-style machine settings on every OS. A clone must set
+    // its line-ending policy before checkout; changing it afterwards makes
+    // existing notes appear dirty and invalidates the divergence scenarios.
+    let global = root.join("clone.gitconfig");
+    std::fs::write(&global, "[core]\n\tautocrlf = true\n").unwrap();
+    let clone = |name: &str| {
+        let output = Command::new("git").env("GIT_CONFIG_GLOBAL", &global)
+            .args(["clone", "--config", "core.autocrlf=false", "remote.git", name]).current_dir(root).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    };
+    clone("local");
     let local = root.join("local");
     config(&local);
     write(&local, NOTE, BASE);
     commit(&local);
     git(&local, &["push", "-u", "origin", "main"]);
-    git(root, &["clone", "remote.git", "other"]);
+    clone("other");
     let other = root.join("other");
     config(&other);
     Fixture {

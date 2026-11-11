@@ -11,5 +11,3 @@ All screenshots show the implemented React UI in English, captured with headless
 The capture script checks browser exceptions, visible error banners, page-width overflow, and unexpected Korean text. It selects a resolution and opens the final check, but never applies or shares it. Source conversation content can still be in any language during ordinary use.
 
 To reproduce, start `pnpm exec vite --host 127.0.0.1 --port 1462`, then run `node scripts/capture-readme.mjs` in another terminal. The script uses a temporary browser profile; set `LORE_SCREENSHOT_BROWSER` to a Chromium-based executable on another system, or `LORE_SCREENSHOT_URL` to use a different Vite URL. No authenticated CLI, model, qmd, or real Git repository is used by the fixtures.
-
-The real model/Git evaluations, native build checks, and their limits are recorded separately in [VALIDATION.md](../../VALIDATION.md).

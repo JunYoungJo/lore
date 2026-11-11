@@ -82,7 +82,3 @@ lore-cli refresh-copies [--apply]   # 큐에 있는 세션의 대화 사본을 �
 ```
 
 `work`, `sync`, `index`, `portable-links`, `refresh-copies`는 트레이 앱이 실행 중이면 거부합니다(같은 잠금 파일을 씁니다).
-
-## 이전 Python 프로토타입
-
-`memory.py`, `runtime.py`, `tests/test_memory.py`, `build.ps1`, `standalone/`, `work/`, `work-auto/`, `examples/`, 루트의 `recorder-prompt.md`는 작업 스케줄러로 실행하던 이전 프로토타입입니다. 새 앱은 이 파일을 쓰지 않습니다. 검증 기록은 [VALIDATION.md](../VALIDATION.md)에 있습니다.

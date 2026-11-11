@@ -12,3 +12,17 @@ src-tauri/gen/schemas/*
 !src-tauri/gen/schemas/.gitkeep
 *.log
 .playwright-mcp/
+
+# Local/internal material is not part of the public app source.
+/VALIDATION.md
+/docs/research/
+/docs/superpowers/
+/docs/origin-and-scope.md
+/portfolio/
+/github-pages/
+.env
+.env.*
+!.env.example
+*.key
+*.p12
+*.pfx
