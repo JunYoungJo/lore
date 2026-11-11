@@ -363,7 +363,8 @@ mod tests {
         install(&home, &paths, Provider::Codex, &new_settings);
         let config = resource_path(&home, Provider::Codex, &Kind::Mcp);
         let root = toml(&read(&config).unwrap().unwrap()).unwrap();
-        assert_eq!(root["mcp_servers"]["qmd"]["env"]["QMD_CONFIG_DIR"].as_str().unwrap(), new_settings.qmd_config_dir().to_str().unwrap());
+        // MCP environment paths use forward slashes on every platform.
+        assert_eq!(root["mcp_servers"]["qmd"]["env"]["QMD_CONFIG_DIR"].as_str().unwrap(), new_settings.qmd_config_dir().to_string_lossy().replace('\\', "/"));
         let custom = "[mcp_servers.qmd]\ncommand = 'my-qmd'\n";
         atomic_write(&config, custom.as_bytes()).unwrap();
         assert!(!plan(&home, &paths, Provider::Codex, &settings).unwrap().can_apply);
