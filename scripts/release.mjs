@@ -51,13 +51,27 @@ export function loadDraft(tag) {
   return requireDraft(JSON.parse(gh('api', 'repos/JunYoungJo/lore/releases?per_page=100')), tag);
 }
 
+export function existingOrCreatedDraft(releases, tag, create) {
+  const existing = releases.find(release => release.tag_name === tag);
+  return requireDraft([existing ?? create()], tag);
+}
+
+function createDraft(tag) {
+  gh('api', `repos/JunYoungJo/lore/git/ref/tags/${tag}`);
+  const temporary = mkdtempSync(join(tmpdir(), 'lore-draft-'));
+  try {
+    const input = join(temporary, 'release.json');
+    writeFileSync(input, JSON.stringify({ tag_name: tag, name: `Lore ${tag}`, body: read(`releases/${tag}.md`).trim(), draft: true, prerelease: false }));
+    // Use the POST response directly: a freshly created draft may not appear
+    // in GitHub's cached releases list immediately.
+    return JSON.parse(gh('api', '--method', 'POST', 'repos/JunYoungJo/lore/releases', '--input', input));
+  } finally { rmSync(temporary, { recursive: true, force: true }); }
+}
+
 export function prepare(tag) {
   validateTag(tag);
   const releases = JSON.parse(gh('api', 'repos/JunYoungJo/lore/releases?per_page=100'));
-  const existing = releases.find(release => release.tag_name === tag);
-  if (existing) assert(existing.draft, 'Refusing to rebuild a published release');
-  else gh('release', 'create', tag, '--verify-tag', '--draft', '--title', `Lore ${tag}`, '--notes-file', `releases/${tag}.md`);
-  const release = loadDraft(tag);
+  const release = existingOrCreatedDraft(releases, tag, () => createDraft(tag));
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\nid=${release.id}\n`);
   console.log(`Draft release ready: ${release.html_url}`);
 }

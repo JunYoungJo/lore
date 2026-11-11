@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { requireDraft, selectArtifacts, validateTag } from './release.mjs';
+import { existingOrCreatedDraft, requireDraft, selectArtifacts, validateTag } from './release.mjs';
 
 const names = ['Lore_0.1.0_aarch64.app.tar.gz', 'Lore_0.1.0_x64.app.tar.gz', 'Lore_0.1.0_x64-setup.exe', 'Lore_0.1.0_amd64.AppImage'];
 const assets = names.flatMap((name, id) => [
@@ -29,4 +29,14 @@ test('finds unpublished drafts in the authenticated list and refuses published r
   assert.equal(requireDraft(releases, 'v0.1.1').id, 12);
   assert.throws(() => requireDraft(releases, 'v0.1.0'), /published release/);
   assert.throws(() => requireDraft(releases, 'v0.2.0'), /No release found/);
+});
+
+test('uses the created draft immediately without depending on a stale list', () => {
+  let calls = 0;
+  const created = { tag_name: 'v0.1.1', draft: true, id: 12 };
+  const create = () => { calls++; return created; };
+  assert.equal(existingOrCreatedDraft([], 'v0.1.1', create), created);
+  assert.equal(calls, 1);
+  assert.equal(existingOrCreatedDraft([created], 'v0.1.1', create), created);
+  assert.equal(calls, 1);
 });
