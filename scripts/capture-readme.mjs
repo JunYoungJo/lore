@@ -30,7 +30,7 @@ const snapshot = {
   update: { phase: 'idle', version: null, notes: null, downloaded: 0, total: null, error: null },
   settings: { knowledgeRoot: root, backend: 'codex', models: { codex: null, claude: null }, efforts: { codex: null, claude: null }, modelTimeoutSecs: 600, qmdTimeoutSecs: 900, claudeProjectsDir: '~/.claude/projects', codexSessionsDir: '~/.codex/sessions', idleSecs: 600, since: now - 86400, paused: false, syncEnabled: false, maxChars: 30000, notesBudget: 60000, qmdIndex: 'index', commands: { codex: ['codex'], claude: ['claude'], qmd: ['qmd'] } },
   autostart: false, hooks: [hook('claude'), hook('codex')], connections: [{ provider: 'claude', state: 'connected' }, { provider: 'codex', state: 'connected' }],
-  review: 3, reviewing: false, version: '0.1.0', sync: { phase: 'idle', message: null, issues: 0, blocked: false, lastSyncedAt: now - 300 }, syncing: false,
+  review: 3, reviewing: false, version: '0.1.1', sync: { phase: 'idle', message: null, issues: 0, blocked: false, lastSyncedAt: now - 300 }, syncing: false,
   catalog: { codex: [{ value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', resolved: null, efforts: ['low', 'medium', 'high'] }], claude: [{ value: 'haiku', label: 'Haiku', resolved: null, efforts: [] }] },
   defaultModels: { codex: 'gpt-6.1-sol', claude: 'haiku' }, defaultEfforts: { codex: 'low', claude: null },
 };

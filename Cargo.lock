@@ -2227,7 +2227,7 @@ checksum = "5d15f86d12da44cd8d4ec3c73984537eb7f4cadcb9776a575a0a8a05ca11005c"
 
 [[package]]
 name = "lore-app"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lore-core",
  "portable-pty",
@@ -2247,7 +2247,7 @@ dependencies = [
 
 [[package]]
 name = "lore-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lore-core",
  "serde_json",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "lore-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "chrono",
  "libc",

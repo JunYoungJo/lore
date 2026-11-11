@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { selectArtifacts, validateTag } from './release.mjs';
+import { requireDraft, selectArtifacts, validateTag } from './release.mjs';
 
 const names = ['Lore_0.1.0_aarch64.app.tar.gz', 'Lore_0.1.0_x64.app.tar.gz', 'Lore_0.1.0_x64-setup.exe', 'Lore_0.1.0_amd64.AppImage'];
 const assets = names.flatMap((name, id) => [
@@ -22,4 +22,11 @@ test('requires release tag, app, frontend and Rust versions to agree', () => {
   const version = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   assert.equal(validateTag(`v${version}`), version);
   assert.throws(() => validateTag('not-a-version-tag'), /Release tag/);
+});
+
+test('finds unpublished drafts in the authenticated list and refuses published releases', () => {
+  const releases = [{ tag_name: 'v0.1.0', draft: false }, { tag_name: 'v0.1.1', draft: true, id: 12 }];
+  assert.equal(requireDraft(releases, 'v0.1.1').id, 12);
+  assert.throws(() => requireDraft(releases, 'v0.1.0'), /published release/);
+  assert.throws(() => requireDraft(releases, 'v0.2.0'), /No release found/);
 });

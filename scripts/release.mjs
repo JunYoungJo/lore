@@ -38,10 +38,17 @@ export function selectArtifacts(assets) {
   }));
 }
 
-function draft(tag) {
-  const release = JSON.parse(gh('api', `repos/JunYoungJo/lore/releases/tags/${tag}`));
+export function requireDraft(releases, tag) {
+  const release = releases.find(release => release.tag_name === tag);
+  assert(release, `No release found for ${tag}`);
   assert(release.draft, 'Refusing to modify a published release');
   return release;
+}
+
+export function loadDraft(tag) {
+  // GitHub's release-by-tag endpoint can return 404 for an unpublished draft.
+  // The authenticated releases list includes drafts owned by this repository.
+  return requireDraft(JSON.parse(gh('api', 'repos/JunYoungJo/lore/releases?per_page=100')), tag);
 }
 
 export function prepare(tag) {
@@ -50,13 +57,13 @@ export function prepare(tag) {
   const existing = releases.find(release => release.tag_name === tag);
   if (existing) assert(existing.draft, 'Refusing to rebuild a published release');
   else gh('release', 'create', tag, '--verify-tag', '--draft', '--title', `Lore ${tag}`, '--notes-file', `releases/${tag}.md`);
-  const release = draft(tag);
+  const release = loadDraft(tag);
   if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `tag=${tag}\nid=${release.id}\n`);
   console.log(`Draft release ready: ${release.html_url}`);
 }
 
 export function manifest(tag) {
-  const version = validateTag(tag), release = draft(tag);
+  const version = validateTag(tag), release = loadDraft(tag);
   const artifacts = selectArtifacts(release.assets);
   const temporary = mkdtempSync(join(tmpdir(), 'lore-release-'));
   try {
