@@ -5,7 +5,7 @@ import type { DiffRow, SyncPlan, SyncSnapshot } from "@/ipc/contract";
 
 const api = vi.hoisted(() => ({
   getSync: vi.fn(), setSyncEnabled: vi.fn(), prepareSync: vi.fn(), analyzeSync: vi.fn(), previewSync: vi.fn(), applySync: vi.fn(), resumeSync: vi.fn(), deferSync: vi.fn(),
-  openReview: vi.fn(), openSettings: vi.fn(), syncNow: vi.fn(), onStateChanged: vi.fn(() => Promise.resolve(() => {})),
+  openReview: vi.fn(), openSettings: vi.fn(), syncNow: vi.fn(), onStateChanged: vi.fn(() => Promise.resolve(() => {})), onSyncComparisonProgress: vi.fn((_handler: (progress: unknown) => void) => Promise.resolve(() => {})),
 }));
 vi.mock("@/ipc/api", () => api);
 import { SyncApp } from "@/SyncApp";
@@ -33,6 +33,7 @@ const diff = (text: string): DiffRow[] => [{ kind: "changed", leftNo: 1, left: [
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
   api.onStateChanged.mockResolvedValue(() => {});
+  api.onSyncComparisonProgress.mockResolvedValue(() => {});
   api.getSync.mockResolvedValue(snapshot());
   api.previewSync.mockImplementation((_id: string, choices: { option: number; customText: string | null }[]) => {
     const text = choices[0]?.customText ?? (choices[0]?.option === 0 ? "최종: 로그만" : "최종: 팝업");
@@ -130,6 +131,32 @@ describe("sync review", () => {
     const raw = screen.getByRole("region", { name: `Differences in ${note}` });
     expect(within(raw).getByText("로그만")).toBeInTheDocument();
     expect(within(raw).getByText("팝업")).toBeInTheDocument();
+  });
+
+  it("resumes a saved comparison and shows its previous failure", async () => {
+    api.getSync.mockResolvedValueOnce(snapshot({ plan: { ...plan(), analysis: null }, comparison: { completed: 2, total: 6, stage: "paused", reads: 5, error: "Provider unavailable" } })).mockResolvedValue(snapshot());
+    api.analyzeSync.mockResolvedValue(undefined);
+    render(<SyncApp />);
+    expect(await screen.findByRole("status")).toHaveTextContent("2 of 6 groups compared");
+    expect(screen.getByRole("alert")).toHaveTextContent("Provider unavailable");
+    await userEvent.click(screen.getByRole("button", { name: "Resume comparison" }));
+    expect(api.analyzeSync).toHaveBeenCalledOnce();
+    expect(await screen.findByRole("region", { name: "오류 알림 방침" })).toBeInTheDocument();
+    expect(api.applySync).not.toHaveBeenCalled();
+  });
+
+  it("updates comparison progress without downloading the whole review again", async () => {
+    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), analysis: null } }));
+    api.analyzeSync.mockImplementation(() => new Promise(() => {}));
+    render(<SyncApp />);
+    await userEvent.click(await screen.findByRole("button", { name: "Compare with model" }));
+    const update = api.onSyncComparisonProgress.mock.calls[0][0] as (value: unknown) => void;
+    await act(async () => update({ completed: 2, total: 6, stage: "comparing", reads: 8, error: null }));
+    expect(screen.getAllByRole("status").some((node) => node.textContent?.includes("2 of 6 groups compared"))).toBe(true);
+    await act(async () => update({ completed: 6, total: 6, stage: "checking", reads: 9, error: null }));
+    expect(screen.getAllByRole("status").some((node) => node.textContent?.includes("Checking consistency across 6 groups"))).toBe(true);
+    expect(api.getSync).toHaveBeenCalledOnce();
+    expect(api.applySync).not.toHaveBeenCalled();
   });
 
   it("blocks the comparison when a conflict must be resolved outside Lore and offers to check again", async () => {

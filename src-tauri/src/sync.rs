@@ -24,6 +24,7 @@ pub struct Snapshot {
     model: String,
     review: Option<usize>,
     changes: Vec<FileLines>,
+    comparison: Option<sync::ComparisonProgress>,
 }
 
 #[derive(Serialize)]
@@ -99,6 +100,7 @@ pub fn get_sync(state: State<'_, AppState>) -> std::result::Result<Snapshot, Str
         model: model_label(&settings),
         review: review::working_changes(&root).ok().flatten().map(|changes| changes.notes.len()),
         changes,
+        comparison: plan.as_ref().and_then(|plan| sync::comparison_progress(&path, plan)),
         plan,
     })
 }
@@ -211,11 +213,16 @@ pub async fn analyze_sync(app: AppHandle) -> std::result::Result<(), String> {
             .defaulting_to(app.state::<AppState>().catalog().default_model(&settings.backend));
             let plan = sync::load(&path)?
                 .ok_or_else(|| Error::permanent("Check the remote for changes first."))?;
-            sync::analyze(
+            sync::analyze_with_progress(
                 &root,
                 &path,
                 &recorder,
-                &path.parent().unwrap().join(format!("analysis-{}", plan.id)),
+                &sync::analysis_artifacts(&path, &plan.id),
+                || {
+                    if let Some(progress) = sync::comparison_progress(&path, &plan) {
+                        let _ = app.emit("sync-comparison-progress", progress);
+                    }
+                },
             )?;
             Ok(())
         })

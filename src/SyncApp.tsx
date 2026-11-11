@@ -239,15 +239,24 @@ export function SyncApp() {
     alive.current = true;
     void load().catch((failure) => setError(String(failure)));
     const stop = api.onStateChanged(() => void load().catch((failure) => setError(String(failure))));
+    const stopProgress = api.onSyncComparisonProgress((comparison) => {
+      if (alive.current) setSnapshot((current) => current ? { ...current, comparison } : current);
+    });
     return () => {
       alive.current = false;
       void stop.then((unlisten) => unlisten());
+      void stopProgress.then((unlisten) => unlisten());
     };
   }, [load]);
 
   const plan = snapshot?.plan;
   const analysis = plan?.analysis ?? null;
   const busy = pending !== null || snapshot?.busy === true;
+  const comparison = snapshot?.comparison;
+  const resumable = !analysis && comparison && comparison.stage !== "complete";
+  const comparisonStatus = comparison?.stage === "checking"
+    ? `Checking consistency across ${comparison.total} groups…`
+    : comparison ? `${comparison.completed} of ${comparison.total} groups compared${busy && comparison.reads ? " · Reading supporting context" : ""}` : null;
   useEffect(() => {
     setChoices({});
     setPreview(null);
@@ -464,10 +473,12 @@ export function SyncApp() {
                     </span>
                     <div>
                       <h2>Compare with the recording model</h2>
-                      <p>{snapshot.model} reads both versions and the conversations behind them, then lists each disagreement with choices. Usually 1–3 minutes. Uses your account’s allowance.</p>
+                      <p>{snapshot.model} reads both versions and the relevant conversation passages, compares related notes in groups, then checks the results together. Larger reviews can take several minutes. Uses your account’s allowance.</p>
+                      {resumable && <p role="status">{comparisonStatus}{!busy && " · Progress saved. Resume to continue."}</p>}
+                      {!busy && comparison?.error && !error && <p role="alert">{comparison.error}</p>}
                       <div className="sync-card-actions">
                         <button type="button" className="btn primary" disabled={busy || plan.unsupported.length > 0} onClick={() => void run("Comparing documents and evidence", api.analyzeSync)}>
-                          Compare with model
+                          {resumable ? "Resume comparison" : "Compare with model"}
                         </button>
                         {plan.files.length > 0 && (
                           <button type="button" className="btn ghost" onClick={() => setView({ kind: "file", path: plan.files[0].path })}>
@@ -490,7 +501,7 @@ export function SyncApp() {
           {busy ? (
             <span className="sync-busy" role="status">
               <LoaderCircle size={15} className="spin" />
-              {pending ?? "Sync will start after the current recording finishes."}
+              {pending === "Comparing documents and evidence" && comparisonStatus ? comparisonStatus : pending ?? "Sync will start after the current recording finishes."}
             </span>
           ) : analysis ? (
             <span className="sync-progress-bar">

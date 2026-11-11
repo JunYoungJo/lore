@@ -249,6 +249,7 @@ export interface SyncPlan {
 }
 export interface LineCount { added: number; removed: number }
 export interface SyncFileLines { path: string; local: LineCount; remote: LineCount }
-export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null; tracking: string | null; model: string; review: number | null; changes: SyncFileLines[] }
+export interface SyncComparisonProgress { completed: number; total: number; stage: string; reads: number; error: string | null }
+export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null; tracking: string | null; model: string; review: number | null; changes: SyncFileLines[]; comparison?: SyncComparisonProgress | null }
 export interface SyncChoice { issue: number; option: number; customText: string | null }
 export interface SyncPreview { files: Record<string, string>; diffs: Record<string, DiffRow[]>; token: string }

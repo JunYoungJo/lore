@@ -27,6 +27,7 @@ export const checkAppUpdate = (): Promise<void> => invoke("check_app_update");
 export const installAppUpdate = (): Promise<void> => invoke("install_app_update");
 
 export const onStateChanged = (handler: () => void): Promise<UnlistenFn> => listen("state-changed", handler);
+export const onSyncComparisonProgress = (handler: (progress: import("./contract").SyncComparisonProgress) => void): Promise<UnlistenFn> => listen<import("./contract").SyncComparisonProgress>("sync-comparison-progress", (event) => handler(event.payload));
 export const onPopoverShown = (handler: () => void): Promise<UnlistenFn> => listen("popover-shown", handler);
 export const onShowSettings = (handler: () => void): Promise<UnlistenFn> => listen("show-settings", handler);
 
