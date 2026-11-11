@@ -6,8 +6,8 @@
 
 **Keep the decisions. Remember the reasons.**
 
-Turn Claude Code and Codex conversations into source-linked project knowledge.<br />
-Keep it in Markdown, find it with qmd, and carry it between PCs with Git.
+A desktop app for keeping decisions, reasons, and lessons from Claude Code and Codex.<br />
+Follow the sources, review the changes, and carry the same Markdown memory between tools and PCs.
 
 [Get started](#getting-started) · [Sync across PCs](#sync-across-pcs) · [Documentation](#documentation) · [한국어](README.ko.md)
 
@@ -17,7 +17,7 @@ Keep it in Markdown, find it with qmd, and carry it between PCs with Git.
 ![React](https://img.shields.io/badge/React-18-61DAFB?logo=react&logoColor=black)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
 
-<img src="docs/screenshots/main.png" alt="Lore main tray window in dark mode: recording status, queue counts, and recent memory notes" width="400" />
+<img src="docs/screenshots/main.png" alt="Lore main tray window in dark mode: current recording, work needing attention, recent notes, and sync status" width="400" />
 <img src="docs/screenshots/main-light.png" alt="Lore main tray window in light mode" width="400" />
 
 <sub>The main tray window in dark and light themes. Screenshots use synthetic example data; the UI is in English.</sub>
@@ -28,7 +28,11 @@ Keep it in Markdown, find it with qmd, and carry it between PCs with Git.
 
 “Why did we choose this?” often takes longer to answer than “What does the code do?” A new coding session may have the files but miss the rejected approach, the constraint behind a decision, or the reason yesterday's plan changed.
 
-Lore preserves that context as topic-based notes: decisions and their reasons, problems worth remembering, and failures and solutions. Each note links back to the conversation that supports it. When a decision changes, the aim is to retain its history and explain the change.
+Lore is built for developers who work across coding tools, long-running projects, or multiple PCs. It preserves that context as topic-based notes, with the supporting conversations and Git history alongside them.
+
+- **Decisions with their context** — Recording instructions distinguish user decisions from agent proposals and reports, retain their scope, and preserve earlier reasons when a decision changes. These distinctions depend on the recording model; the source remains available to check.
+- **Memory you can inspect** — Follow a note back to the conversation, compare changes side by side, and choose which notes to commit. Recording is automatic; reviewing local changes controls the Git commit, not whether a note is initially written.
+- **Continuity across tools and PCs** — Claude Code and Codex can search the same notes through qmd MCP. Git carries the notes and their evidence between PCs; diverged histories have a separate comparison, decision, and final-preview workflow.
 
 ## Features
 
@@ -37,20 +41,31 @@ Lore preserves that context as topic-based notes: decisions and their reasons, p
 - **Checkable sources** — Relative links point to saved conversation copies and stable turn anchors, so evidence can travel with the notes.
 - **Local Markdown, searchable context** — Notes live in a folder you choose. [qmd](https://github.com/tobi/qmd) indexes them for search and retrieval through its MCP server.
 - **Review before committing** — Compare local changes side by side and choose which notes to commit. Conversation recording itself writes notes automatically; this review controls the Git commit.
-- **Git sharing with conflict review** — Compare diverged histories, inspect the supporting conversations, choose a proposed resolution, and preview the resulting documents before applying and sharing.
+- **Git sharing with conflict review** — Move through changed notes, evidence-backed choices, and a side-by-side final result. Compare related changes even when Git reports no line conflict, then confirm before applying and sharing.
 - **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. Synchronization also retains its state after indexing or push failures.
-- **Tray controls** — See what needs your attention, pause recording, sync memory, choose the recording model and effort from the CLI's list, and choose a system, light, or dark appearance.
-- **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, connect AI clients, and test recording and recall. Reopen the guide to repair or remove Lore integrations.
+- **A tray view of the work** — See the current recording, waiting sessions, and recent notes. **Needs attention** collects connection problems, notes to review, failed recordings, and unshared memory; the footer shows sync status and a sync action. Open updated notes from an activity row.
+- **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure recording limits.
+- **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
+- **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, and connect AI clients. Setup readiness and successful recording/recall are shown separately; ongoing management has its own window.
 
 <img src="docs/screenshots/onboarding.png" alt="Lore first-run introduction with an interactive example of remembering a project decision" width="720" />
 
 The first-run introduction. Ongoing repair and removal have a separate integration-management window.
 
 <details>
-<summary>Settings and session queue</summary>
+<summary>Settings, session queue, and updated notes</summary>
 
-<img src="docs/screenshots/settings.png" alt="Recording model and hook connection settings" width="400" />
+<img src="docs/screenshots/settings.png" alt="Recording model and effort, memory sync, and connection settings" width="400" />
 <img src="docs/screenshots/queue.png" alt="Session queue with recording and pending groups" width="400" />
+<img src="docs/screenshots/notes.png" alt="An activity row opens a card listing the notes changed by that recording" width="400" />
+
+</details>
+
+<details>
+<summary>Manage connections and local search</summary>
+
+<img src="docs/screenshots/integrations.png" alt="Manage Lore lists Codex connection files and hooks with their current state" width="900" />
+<img src="docs/screenshots/search-index.png" alt="Manage Lore shows this PC's embedding model, collections, and local index paths" width="900" />
 
 </details>
 
@@ -102,7 +117,9 @@ The build includes `lore-cli` as a sidecar. The app executable is `lore` (`lore.
 6. New indexes use Qwen3-Embedding-0.6B for multilingual search. Existing model choices are preserved; **Manage Lore → Search index** can switch to embeddinggemma-300M and back, rebuilding the index on that PC. The guide shows when preparation is complete.
 7. Start using Lore. For your first memory, make a decision in a normal Git-project session and recall it through qmd in a new session. This exercise can happen after setup; configuration readiness is not presented as proof of successful recording and recall.
 
-Use **Set up later** to save your place. Repairs, disconnection, and advanced controls are in the separate **Manage integrations** window. See [Setup and integrations](docs/setup.md) for ownership, platform details, and limitations.
+Use **Set up later** to save your place. Open **Settings → Connections → Manage connections** for the separate **Manage Lore** window. It shows each client's MCP, guidance, search skill, and hooks with their current state; memory-folder, index, and tool controls are separate pages. See [Setup and integrations](docs/setup.md) for ownership, platform details, and limitations.
+
+In **Settings → Recording**, model and effort choices come from the signed-in CLI's reported list. If it cannot be read, the model field falls back to text entry. Settings apply immediately; text fields save on blur or Enter. **General → Appearance** offers System, Light, and Dark. The recording model writes notes; qmd handles indexing and search, using an embedding model configured separately under **Manage Lore → Search index**.
 
 For manual setup, the bundled `lore-cli doctor` reports this PC's command and index paths. Run `lore-cli index` with the tray app closed to initialize or refresh the index outside the guide.
 
@@ -114,20 +131,20 @@ To bring existing memory documents from another PC, follow the [portability guid
 
 Clone the same **memory repository** on each PC and set each app's memory folder to its local checkout. Give source projects a stable [project ID](docs/multiplatform.md#고정-프로젝트-id) when checkout names differ.
 
-1. Review and commit your local notes.
-2. Open **Sync** and check the configured upstream.
-3. If only one side has new commits, Lore synchronizes that history and refreshes this PC's index.
-4. If the histories diverge, inspect the comparison. Changes within the same project, or involving shared notes, require a model comparison even when Git reports no line conflict.
-5. Read the evidence, choose a resolution for each issue, inspect the full preview, and apply it. Lore creates a merge commit, refreshes the index, and pushes without force.
+1. In **Needs attention**, use **Review** to compare and commit changed notes. Uncommitted files must be handled before synchronization.
+2. Use the footer sync button or **Settings → Memory & sync → Sync now**. If only one side has new commits, Lore synchronizes that history and refreshes this PC's index.
+3. If the histories diverge, open the review from the status card. Inspect the changed-note list and raw differences, then choose **Compare with model**. Related project or shared-note changes are compared even when Git reports no line conflict.
+4. Work through the decisions in the sidebar: inspect the source quotations and choose what each note should say. The footer tracks how many decisions are complete.
+5. Choose **Check result** to compare **This PC now** with **After applying**. Confirm with **Apply & share**. Lore creates a merge commit, refreshes the index, and pushes without force.
 
-<img src="docs/screenshots/sync-review.png" alt="English sync review showing source evidence and resolution options" width="900" />
+<img src="docs/screenshots/sync-review.png" alt="Memory sync with a decision sidebar, source evidence, resolution choices, and a fixed action bar" width="900" />
 
 You can resolve an issue by choosing an option; editing a document by hand is optional. **Sync every five minutes is off by default.** When enabled, it checks committed history and pauses new memory recording when review is needed. Model comparison and final approval remain manual. Uncommitted files are not automatically committed or stashed.
 
 <details>
 <summary>See the final document preview</summary>
 
-<img src="docs/screenshots/sync-preview.png" alt="Full document preview showing the chosen policy, preserved history, and source links before applying" width="900" />
+<img src="docs/screenshots/sync-preview.png" alt="Final check compares this PC's current note and the result after applying, before sharing" width="900" />
 
 </details>
 
@@ -150,11 +167,11 @@ Git sharing sends **all committed files in the memory repository**. Conversation
 
 | Platform | Build configuration | Verification on this branch |
 | --- | --- | --- |
-| macOS | App / DMG | Apple Silicon app build and isolated startup checked; signing and notarization not checked |
-| Windows | NSIS installer | Platform code and CI configured; not run on Windows during this branch's validation |
+| macOS | App / DMG | Apple Silicon app build and isolated startup checked on Nov 10; signing and notarization not checked |
+| Windows | NSIS installer | Nov 11 release executable and installer built; automated checks and known Windows test failures are recorded in VALIDATION.md |
 | Linux | DEB / AppImage | Platform code and CI configured; desktop runtime not checked |
 
-Windows was the original development platform. Current Mac validation does not establish that every hook, notification, or desktop integration works on every OS. Full results and remaining limits are in [VALIDATION.md](VALIDATION.md).
+Build and automated-test results do not establish that every hook, notification, or desktop integration works on every OS. The latest UI screenshots use frontend fixtures. Full results and remaining limits are in [VALIDATION.md](VALIDATION.md).
 
 ## Development
 
