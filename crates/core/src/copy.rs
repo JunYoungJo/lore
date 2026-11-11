@@ -26,11 +26,11 @@ pub fn copy_path(knowledge_root: &Path, provider: Provider, session_id: &str, fa
 
 fn speaker(role: &str, origin: Origin) -> &'static str {
     match (role, origin) {
-        ("assistant", _) => "어시스턴트",
-        (_, Origin::User) => "사용자",
-        (_, Origin::Context) => "시스템 문맥",
-        (_, Origin::Agent) => "에이전트 전달 메시지",
-        _ => "확인되지 않은 입력",
+        ("assistant", _) => "Assistant",
+        (_, Origin::User) => "User",
+        (_, Origin::Context) => "System context",
+        (_, Origin::Agent) => "Agent message",
+        _ => "Unverified input",
     }
 }
 
@@ -55,7 +55,7 @@ fn quoted_turn_text(text: &str) -> String {
 
 pub fn render(parsed: &Parsed, provider: Provider, transcript: &Path, end_line: usize) -> DialogueCopy {
     let mut text = format!(
-        "# {} 세션 {}\n\n- 원본: `{}`\n- 작업 폴더: `{}`\n\n기억 문서의 근거를 확인하기 위한 대화 사본입니다. 사용자·어시스턴트 발언과 다른 에이전트가 보낸 메시지를 원본 줄 번호(L)와 함께 담았습니다. 시각은 UTC입니다. 도구 실행 결과는 들어 있지 않습니다.\n",
+        "# {} session {}\n\n- Original: `{}`\n- Working folder: `{}`\n\nA copy of the conversation, kept so that the sources of memory notes can be checked. It holds what the user and the assistant said and the messages other agents sent, each with its line number (L) in the original file. Times are UTC. Tool output is not included.\n",
         provider_label(provider),
         parsed.session_id,
         transcript.to_string_lossy().replace('\\', "/"),
@@ -164,11 +164,12 @@ mod tests {
     fn copy_lists_turns_with_original_line_numbers_and_maps_them() {
         let copy = render(&parsed(), Provider::Claude, Path::new("C:\\Users\\me\\.claude\\projects\\x\\abc-123.jsonl"), 5);
         let lines: Vec<&str> = copy.text.lines().collect();
-        assert!(lines[0].starts_with("# Claude 세션 abc-123"));
-        assert!(copy.text.contains("- 원본: `C:/Users/me/.claude/projects/x/abc-123.jsonl`"));
-        assert_eq!(lines[copy.lines[&2] - 1], "## L2 · 사용자 · 2026-11-04T01:00:00Z");
+        assert_eq!(lines[0], "# Claude session abc-123");
+        assert!(copy.text.contains("- Original: `C:/Users/me/.claude/projects/x/abc-123.jsonl`"));
+        assert!(copy.text.contains("- Working folder: `D:/src/demo`"));
+        assert_eq!(lines[copy.lines[&2] - 1], "## L2 · User · 2026-11-04T01:00:00Z");
         assert_eq!(lines[copy.lines[&2] + 1], "경고는 빼고");
-        assert_eq!(lines[copy.lines[&5] - 1], "## L5 · 어시스턴트 · 2026-11-04T01:00:00Z");
+        assert_eq!(lines[copy.lines[&5] - 1], "## L5 · Assistant · 2026-11-04T01:00:00Z");
         assert!(!copy.lines.contains_key(&9));
         assert!(!copy.text.contains("나중 발언"));
     }
@@ -177,7 +178,7 @@ mod tests {
     fn headings_can_be_read_back_from_a_saved_copy() {
         let copy = render(&parsed(), Provider::Codex, Path::new("C:/s.jsonl"), 9);
         assert_eq!(parse_headings(&copy.text), copy.lines);
-        assert!(copy.text.contains("## L9 · 확인되지 않은 입력"));
+        assert!(copy.text.contains("## L9 · Unverified input"));
     }
 
     #[test]
@@ -231,16 +232,16 @@ mod tests {
         changed.turns[0].text.push_str("\n여러 줄\n추가");
         let after = render(&changed, Provider::Claude, Path::new("/new/s.jsonl"), 9);
         assert_ne!(before.lines[&5], after.lines[&5]);
-        for text in [&before.text, &after.text] { assert!(text.contains("<a id=\"L5\"></a>\n## L5 · 어시스턴트")); }
+        for text in [&before.text, &after.text] { assert!(text.contains("<a id=\"L5\"></a>\n## L5 · Assistant")); }
     }
 
     #[test]
     fn examples_inside_a_conversation_do_not_duplicate_turn_markers() {
         let mut input = parsed();
-        input.turns[0].text = "예시:\n<a id=\"L5\"></a>\n## L5 · 어시스턴트\n인용문".into();
+        input.turns[0].text = "예시:\n<a id=\"L5\"></a>\n## L5 · Assistant\n인용문".into();
         let copy = render(&input, Provider::Claude, Path::new("/s.jsonl"), 9);
         assert_eq!(parse_headings(&copy.text), copy.lines);
         assert_eq!(copy.text.matches("<a id=\"L5\"></a>").count(), 1);
-        assert!(copy.text.contains("\\## L5 · 어시스턴트"));
+        assert!(copy.text.contains("\\## L5 · Assistant"));
     }
 }

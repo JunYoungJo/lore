@@ -56,12 +56,33 @@ pub struct Scope<'a> {
 
 const KINDS: [&str; 3] = ["decision", "lesson", "issue"];
 const AUTHORITIES: [&str; 3] = ["user_decision", "assistant_report", "mixed_evidence"];
-pub const EDIT_OPS: [&str; 3] = ["replace", "append", "add_section"];
+pub const EDIT_OPS: [&str; 4] = ["replace", "append", "add_section", "replace_section"];
 const RESERVED: [&str; 22] = [
     "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7",
     "lpt8", "lpt9",
 ];
-pub const SOURCES_HEADING: &str = "\n## 원문 근거\n";
+pub const SOURCES_HEADING: &str = "\n## Sources\n";
+// Notes written before the heading became English end with this one (Korean for "Sources").
+// It is still read, and a note is given the English heading the next time it is changed.
+const EARLIER_SOURCES_HEADING: &str = "\n## \u{c6d0}\u{bb38} \u{adfc}\u{ac70}\n";
+
+fn split_sources(text: &str) -> (&str, Option<&str>) {
+    let found = [SOURCES_HEADING, EARLIER_SOURCES_HEADING].into_iter().filter_map(|heading| text.find(heading).map(|at| (at, heading.len()))).min();
+    match found {
+        Some((at, length)) => (&text[..at], Some(&text[at + length..])),
+        None => (text, None),
+    }
+}
+
+/// A note as the recording model is shown it. The program owns the source list, and the model
+/// cannot edit it, so the list is left out rather than spent on the model's input.
+pub fn without_sources(note: &str) -> String {
+    let text = note.replace("\r\n", "\n");
+    match split_sources(&text) {
+        (main, Some(_)) => format!("{}\n", main.trim_end()),
+        (main, None) => main.to_string(),
+    }
+}
 
 pub fn validate_note_path(path: &str, project: &str) -> Result<()> {
     let fail = || Error::rejected(format!("Invalid memory path: {path}"));
@@ -136,6 +157,7 @@ fn validate_edit(edit: &Edit, path: &str) -> Result<()> {
         "replace" => !blank(&edit.find),
         "append" => !blank(&edit.section) && !blank(&edit.text),
         "add_section" => !blank(&edit.heading) && !blank(&edit.text),
+        "replace_section" => !blank(&edit.section) && !blank(&edit.text),
         _ => false,
     };
     if complete {
@@ -169,9 +191,9 @@ fn without_leading_title(body: &str, title: Option<&str>) -> String {
 
 fn split_note(old: &str) -> NoteParts {
     let text = old.replace("\r\n", "\n");
-    let (main, sources) = match text.split_once(SOURCES_HEADING) {
-        Some((main, rest)) => (main.to_string(), rest.trim().lines().map(str::to_string).collect()),
-        None => (text.clone(), Vec::new()),
+    let (main, sources) = match split_sources(&text) {
+        (main, Some(rest)) => (main.to_string(), rest.trim().lines().map(str::to_string).collect()),
+        (main, None) => (main.to_string(), Vec::new()),
     };
     let (header, main) = match main.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n")) {
         Some((header, rest)) => (Some(header.to_string()), rest.to_string()),
@@ -225,9 +247,17 @@ fn section_ranges(body: &str) -> Vec<(String, usize, usize)> {
 }
 
 fn section_end(body: &str, name: &str, path: &str) -> Result<usize> {
-    let matches: Vec<usize> = section_ranges(body).into_iter().filter(|(found, _, _)| found == name).map(|(_, _, end)| end).collect();
+    section_span(body, name, path).map(|(_, end)| end)
+}
+
+fn section_span(body: &str, name: &str, path: &str) -> Result<(usize, usize)> {
+    let matches: Vec<(usize, usize)> = section_ranges(body).into_iter().filter(|(found, _, _)| found == name).map(|(_, start, end)| (start, end)).collect();
     match matches.as_slice() {
-        [end] => Ok(*end),
+        [span] => Ok(*span),
+        // The usual slip is naming a deeper heading; say so, so a retry can fix it.
+        [] if body.lines().any(|line| line.starts_with("###") && heading_name(line) == name) => {
+            Err(Error::rejected(format!("Section \"{name}\" is a subsection. Only \"## \" sections can be targeted; name its \"## \" section or use replace: {path}")))
+        }
         [] => Err(Error::rejected(format!("Section \"{name}\" was not found: {path}"))),
         _ => Err(Error::rejected(format!("Section \"{name}\" is ambiguous: {path}"))),
     }
@@ -274,6 +304,11 @@ fn apply_edit(body: &str, edit: &Edit, path: &str) -> Result<String> {
             let end = if after.is_empty() { body.len() } else { section_end(body, &after, path)? };
             Ok(insert_at(body, end, &format!("## {heading}\n\n{}", edit.text.replace("\r\n", "\n").trim())))
         }
+        "replace_section" => {
+            let (start, end) = section_span(body, &heading_name(&edit.section), path)?;
+            let heading_end = body[start..end].find('\n').map_or(end, |at| start + at);
+            Ok(format!("{}\n\n{}\n\n{}", &body[..heading_end], edit.text.replace("\r\n", "\n").trim(), &body[end..]))
+        }
         other => Err(Error::rejected(format!("Unknown edit kind ({other}): {path}"))),
     }
 }
@@ -303,12 +338,12 @@ pub fn render_note(change: &Change, project: &str, link: &dyn Fn(&Evidence) -> S
     let mut seen = BTreeSet::new();
     sources.retain(|line| seen.insert(line.clone()));
     let body = body.trim();
-    let body = body.split_once(SOURCES_HEADING).map(|(before, _)| before).unwrap_or(body).trim();
+    let body = split_sources(body).0.trim();
     if body.is_empty() {
         return Err(Error::rejected(format!("The edited note body is empty: {}", change.path)));
     }
     let title = title.replace(['\r', '\n'], " ");
-    Ok(format!("{header}# {}\n\n{body}\n\n## 원문 근거\n{}\n", title.trim(), sources.join("\n")))
+    Ok(format!("{header}# {}\n\n{body}\n{SOURCES_HEADING}{}\n", title.trim(), sources.join("\n")))
 }
 
 pub fn check_snapshot(current: &BTreeMap<String, String>, base: &BTreeMap<String, String>, rendered: &BTreeMap<String, String>) -> Result<()> {
@@ -385,6 +420,37 @@ mod tests {
 
     fn link(evidence: &Evidence) -> String {
         format!("<D:/k/sources/claude/s.md:{}>", &evidence.reference[1..])
+    }
+
+    #[test]
+    fn notes_end_with_an_english_sources_section_and_older_notes_are_converted_when_edited() {
+        let rendered = render_note(&proposal().changes[0], "demo", &link, None).unwrap();
+        assert!(rendered.ends_with("\n\n## Sources\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n"), "{rendered}");
+        let edited = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", &link, Some(OLD_NOTE)).unwrap();
+        assert!(!edited.contains("원문 근거"), "{edited}");
+        assert!(edited.ends_with("보관 기간\n\n## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n"), "{edited}");
+    }
+
+    #[test]
+    fn replace_section_restates_one_section_and_leaves_the_rest() {
+        let restate = |section: &str, text: &str| render_note(&editing(vec![edit("replace_section", "", section, "", text)]), "demo", &link, Some(OLD_NOTE));
+        let rendered = restate("결정", "TP 로그만 남깁니다.\n").unwrap();
+        assert!(rendered.contains("# BG 불일치 처리\n\n## 결정\n\nTP 로그만 남깁니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n## Sources"), "{rendered}");
+        assert!(!rendered.contains("경고 팝업을 띄웁니다."));
+        let last = restate("남은 점", "없습니다.").unwrap();
+        assert!(last.contains("## 남은 점\n\n없습니다.\n\n## Sources"), "{last}");
+        assert!(restate("없는 절", "x").unwrap_err().to_string().contains("was not found"));
+        let mut blank = proposal();
+        blank.changes[0] = editing(vec![edit("replace_section", "", "결정", "", " ")]);
+        assert!(check(&blank, &turns(), &["projects/demo/bg-policy.md"], &["projects/demo/bg-policy.md"]).is_err());
+    }
+
+    #[test]
+    fn the_text_shown_to_the_model_leaves_out_the_source_list() {
+        assert_eq!(without_sources("# A\n\nBody.\n\n## Sources\n- [L1](<x>) — q\n"), "# A\n\nBody.\n");
+        let earlier = without_sources(OLD_NOTE);
+        assert!(earlier.ends_with("로그 위치는 정하지 않았습니다.\n") && earlier.starts_with("---\nqmd:"), "{earlier}");
+        assert_eq!(without_sources("# A\n\nNo sources yet.\n"), "# A\n\nNo sources yet.\n");
     }
 
     #[test]
@@ -516,7 +582,7 @@ mod tests {
         ]);
         change.authority = "user_decision".into();
         let rendered = render_note(&change, "demo", &link, Some(OLD_NOTE)).unwrap();
-        let expected = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업 없이 TP 로그만 남깁니다. 장비 화면은 그대로 둡니다.\n\n## 변경 이유\n\n장비 쓰는 사람에게 방해가 됩니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n로그 보관 기간도 정하지 않았습니다.\n\n## 원문 근거\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n";
+        let expected = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업 없이 TP 로그만 남깁니다. 장비 화면은 그대로 둡니다.\n\n## 변경 이유\n\n장비 쓰는 사람에게 방해가 됩니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n로그 보관 기간도 정하지 않았습니다.\n\n## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n";
         assert_eq!(rendered, expected);
     }
 
@@ -524,12 +590,12 @@ mod tests {
     fn appended_list_items_continue_the_list() {
         let old = "# 방침\n\n## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n\n## 원문 근거\n- [L1](<x>) — y\n";
         let rendered = render_note(&editing(vec![append("남은 점", "- 보관 기간")]), "demo", &link, Some(old)).unwrap();
-        assert!(rendered.contains("## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n- 보관 기간\n\n## 원문 근거"), "{rendered}");
+        assert!(rendered.contains("## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n- 보관 기간\n\n## Sources"), "{rendered}");
         let numbered = "# 방침\n\n## 순서\n\n1. 확인\n\n## 원문 근거\n- [L1](<x>) — y\n";
         let rendered = render_note(&editing(vec![append("순서", "2. 반영")]), "demo", &link, Some(numbered)).unwrap();
-        assert!(rendered.contains("1. 확인\n2. 반영\n\n## 원문 근거"), "{rendered}");
+        assert!(rendered.contains("1. 확인\n2. 반영\n\n## Sources"), "{rendered}");
         let paragraph = render_note(&editing(vec![append("순서", "반영은 나중에 합니다.")]), "demo", &link, Some(numbered)).unwrap();
-        assert!(paragraph.contains("1. 확인\n\n반영은 나중에 합니다.\n\n## 원문 근거"), "{paragraph}");
+        assert!(paragraph.contains("1. 확인\n\n반영은 나중에 합니다.\n\n## Sources"), "{paragraph}");
     }
 
     #[test]
@@ -538,7 +604,16 @@ mod tests {
         change.title = "BG 불일치 처리 방침".into();
         let rendered = render_note(&change, "demo", &link, Some(OLD_NOTE)).unwrap();
         assert!(rendered.contains("# BG 불일치 처리 방침\n\n## 결정"), "{rendered}");
-        assert!(rendered.contains("로그 위치는 정하지 않았습니다.\n\n## 후속 확인\n\n11/5에 다시 봅니다.\n\n## 원문 근거"), "{rendered}");
+        assert!(rendered.contains("로그 위치는 정하지 않았습니다.\n\n## 후속 확인\n\n11/5에 다시 봅니다.\n\n## Sources"), "{rendered}");
+    }
+
+    #[test]
+    fn naming_a_subsection_says_that_only_second_level_sections_can_be_targeted() {
+        let body = "## 결정\n\n본문입니다.\n\n### 주의할 점\n\n세부입니다.\n";
+        let error = section_end(body, "주의할 점", "projects/demo/bg.md").unwrap_err().to_string();
+        assert!(error.contains("is a subsection") && error.contains("\"## \""), "{error}");
+        assert!(section_end(body, "없는 절", "projects/demo/bg.md").unwrap_err().to_string().contains("was not found"));
+        assert!(section_end(body, "결정", "projects/demo/bg.md").is_ok());
     }
 
     #[test]
@@ -584,7 +659,7 @@ mod tests {
         new_note.body = "# BG 불일치 처리\n\n## 현재 결정\nTP 로그만 남깁니다.".into();
         let rendered = render_note(&new_note, "demo", &link, None).unwrap();
         assert_eq!(rendered.matches("# BG 불일치 처리\n").count(), 1, "{rendered}");
-        assert!(rendered.contains("# BG 불일치 처리\n\n## 현재 결정\nTP 로그만 남깁니다.\n\n## 원문 근거"), "{rendered}");
+        assert!(rendered.contains("# BG 불일치 처리\n\n## 현재 결정\nTP 로그만 남깁니다.\n\n## Sources"), "{rendered}");
 
         let doubled = OLD_NOTE.replace("# BG 불일치 처리\n\n", "# BG 불일치 처리\n\n# BG 불일치 처리\n\n");
         let edited = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", &link, Some(&doubled)).unwrap();
@@ -619,10 +694,10 @@ mod tests {
     #[test]
     fn model_written_sources_section_is_replaced_by_the_program() {
         let mut change = proposal().changes[0].clone();
-        change.body = "본문\n## 원문 근거\n- 모델이 만든 근거".into();
+        change.body = "본문\n## Sources\n- 모델이 만든 근거".into();
         let rendered = render_note(&change, "demo", &link, None).unwrap();
         assert!(!rendered.contains("모델이 만든 근거"));
-        assert!(rendered.contains("본문\n\n## 원문 근거\n- [L3]"));
+        assert!(rendered.contains("본문\n\n## Sources\n- [L3]"));
         let appended = render_note(&editing(vec![append("남은 점", "보관 기간\n## 원문 근거\n- 모델이 만든 근거")]), "demo", &link, Some(OLD_NOTE)).unwrap();
         assert!(!appended.contains("모델이 만든 근거"), "{appended}");
     }

@@ -137,7 +137,7 @@ impl Qmd {
     // shared Markdown tree rather than copying another PC's absolute paths.
     pub fn ensure_index(&self, root: &Path) -> Result<()> {
         std::fs::create_dir_all(root.join("common"))?;
-        self.ensure_named_collection("common", &root.join("common"), "여러 프로젝트에 공통으로 적용되는 결정과 경험.")?;
+        self.ensure_named_collection("common", &root.join("common"), "Decisions and lessons that apply across projects.")?;
         let projects = root.join("projects");
         let entries = match std::fs::read_dir(projects) {
             Ok(entries) => entries,
@@ -199,7 +199,7 @@ impl Qmd {
 
     pub fn ensure_collection(&self, project: &str, folder: &Path) -> Result<()> {
         let name = collection_name(project);
-        let description = format!("{project} 프로젝트의 결정·문제·해결 및 변경 이력. 사용자 지시와 당시 에이전트 보고를 구분.");
+        let description = format!("Decisions, lessons and open issues of the {project} project. Each note says whether a statement is the user's decision or an agent's report.");
         self.ensure_named_collection(&name, folder, &description)
     }
 

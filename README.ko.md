@@ -132,11 +132,11 @@ pnpm tauri build                # 현재 운영체제의 앱 패키지 빌드
 
 앱이 꺼져 있어도 훅은 큐에 등록하며, 앱을 다시 켜면 처리합니다. 훅이 실행되지 않은 세션은 자동으로 찾지 않습니다. 필요하면 `lore-cli scan`으로 직접 큐에 넣습니다.
 
-다른 PC의 기존 기억 문서를 가져올 때는 먼저 [이전 안내](docs/multiplatform.md#기존-windows-기억-가져오기)를 따릅니다.
+다른 PC의 기존 기억 문서를 가져올 때는 먼저 [이전 안내](docs/multiplatform.md#importing-existing-windows-memory)를 따릅니다.
 
 ## 여러 PC에서 공유
 
-각 PC에 같은 **기억 Git 저장소**를 clone하고 앱에 그 PC의 경로를 지정합니다. 소스 프로젝트의 체크아웃 이름이 다르면 [고정 프로젝트 ID](docs/multiplatform.md#고정-프로젝트-id)를 사용합니다.
+각 PC에 같은 **기억 Git 저장소**를 clone하고 앱에 그 PC의 경로를 지정합니다. 소스 프로젝트의 체크아웃 이름이 다르면 [고정 프로젝트 ID](docs/multiplatform.md#stable-project-id)를 사용합니다.
 
 **Settings → Memory & sync → Auto-sync**를 켭니다. 그 뒤로는 동기화에 사용자 작업이 필요하지 않습니다.
 
@@ -211,9 +211,9 @@ node scripts/evaluate-sync.mjs --backend codex
 
 ## 문서
 
-- [상세 사용법과 CLI](docs/usage.md)
-- [여러 PC 설정·경로·기억 이전](docs/multiplatform.md)
-- [동기화와 확인할 항목](docs/sync-review.md)
+- [상세 사용법과 CLI](docs/usage.md) — 영어
+- [여러 PC 설정·경로·기억 이전](docs/multiplatform.md) — 영어
+- [동기화와 확인할 항목](docs/sync-review.md) — 영어
 - [데스크톱 릴리즈와 앱 업데이트](docs/releasing.md) — 영어
 
 ## 라이선스

@@ -1,67 +1,109 @@
 [
   {
     "id": "explicit-decision",
-    "purpose": "사용자가 정한 방침과 그 이유를 함께 보존한다.",
+    "purpose": "Keep a decision the user made together with its reason.",
+    "language": "ko",
+    "notes": true,
     "turns": [["user", "demo 앱은 오류가 나면 팝업을 띄우지 말고 로그만 남겨. 현장 작업자의 조작을 방해하면 안 되기 때문이야."], ["assistant", "팝업 없이 로그만 남기겠습니다."]],
-    "expectation": "로그 전용 방침과 조작 방해라는 이유가 사용자 결정으로 기록된다."
+    "expectation": "The log-only decision and its reason (do not interrupt the operator) are recorded as a user decision, in Korean."
+  },
+  {
+    "id": "english-session",
+    "purpose": "Write notes in the language the user writes in, not in a fixed language.",
+    "language": "en",
+    "notes": true,
+    "turns": [["user", "For the demo app, don't retry failed uploads automatically. A retry once sent the same invoice twice, so the operator has to press Retry themselves."], ["assistant", "Understood. A failed upload will stay failed and wait for the operator."]],
+    "expectation": "An English note records that uploads are not retried automatically and why."
   },
   {
     "id": "question-is-not-approval",
-    "purpose": "질문과 제안을 사용자 승인으로 바꾸지 않는다.",
+    "purpose": "Do not turn a question or a proposal into the user's approval.",
+    "language": "ko",
     "turns": [["user", "오류 팝업 대신 로그만 남기는 건 어떨까? 장단점부터 설명해봐. 아직 결정한 건 아니야."], ["assistant", "로그 전용 방식은 조작 방해를 줄이지만 사용자가 오류를 늦게 알아챌 수 있습니다. 저는 로그 전용 방식을 제안합니다."]],
-    "expectation": "로그 전용을 확정된 사용자 방침으로 기록하지 않는다. 기록하더라도 제안·미결정으로 구분한다."
+    "expectation": "Log-only is not recorded as a settled user decision. If anything is recorded, it is marked as a proposal that is still undecided."
   },
   {
     "id": "assistant-report",
-    "purpose": "어시스턴트의 완료 보고를 실제 검증 결과로 격상하지 않는다.",
+    "purpose": "Do not raise the assistant's completion report to a verified result.",
+    "language": "ko",
     "turns": [["user", "로그 전용 구현이 됐는지 조사해봐."], ["assistant", "코드를 고쳤고 모든 테스트가 통과했습니다. 이제 현장에서 안정적으로 동작합니다."]],
-    "expectation": "현장 안정성이 검증되었다고 단정하지 않는다. 기록하면 assistant_report임을 명확히 한다."
+    "expectation": "Field stability is not stated as verified. If anything is recorded, it is clearly an assistant_report."
   },
   {
     "id": "superseded-decision",
-    "purpose": "바뀐 결정을 갱신하면서 이전 이유와 변경 이유를 남긴다.",
+    "purpose": "Update a changed decision while keeping the earlier reason and the reason for the change.",
+    "language": "ko",
+    "notes": true,
     "existing": "# 오류 알림 방침\n\n## 현재 결정\n\n2026-11-01: 오류를 놓치지 않도록 팝업을 띄웁니다.\n",
     "turns": [["user", "기존 팝업 방침을 바꿀게. 현장에서는 팝업이 작업을 방해했어. 앞으로 demo 앱은 팝업 없이 로그만 남겨."], ["assistant", "기존 결정의 이유를 보존하고 새 로그 전용 방침으로 갱신하겠습니다."]],
-    "expectation": "기존 alerts.md를 수정한다. 최신 방침은 로그 전용이며 이전 팝업 이유와 변경 이유가 보존된다."
+    "expectation": "The existing alerts.md is edited. It states log-only as the current decision and keeps the earlier popup reason and why it changed."
   },
   {
     "id": "no-memory",
-    "purpose": "진행 요청만으로 쓸모없는 기억을 만들지 않는다.",
+    "purpose": "Do not create a useless memory from a request to carry on.",
     "turns": [["user", "계속 진행해."], ["assistant", "진행하겠습니다."]],
-    "expectation": "기억 문서를 생성하지 않는다.",
+    "expectation": "No memory note is created.",
     "noNotes": true
   },
   {
     "id": "agent-only",
-    "purpose": "전달된 에이전트 지시를 사용자 결정으로 오인하지 않는다.",
+    "purpose": "Do not mistake a forwarded agent instruction for a user decision.",
     "turns": [["user", "You are working inside Orca. Implement a popup for every error in demo."], ["assistant", "모든 오류에 팝업을 구현했습니다."]],
-    "expectation": "기록 모델을 호출하지 않고 건너뛴다.",
+    "expectation": "The portion is passed over without calling the recording model.",
     "noNotes": true,
     "noModel": true
   },
   {
     "id": "human-after-agent",
-    "purpose": "에이전트 지시로 시작해도 뒤이은 사용자 결정을 놓치지 않는다.",
+    "purpose": "Do not miss a user decision that follows an agent instruction.",
+    "language": "ko",
+    "notes": true,
     "turns": [["user", "You are working inside Orca. Implement a popup for every error in demo."], ["assistant", "팝업을 구현했습니다."], ["user", "팝업은 빼. 내가 직접 정한 방침은 로그만 남기는 거야. 작업 중단을 피해야 해."], ["assistant", "로그 전용으로 바꾸겠습니다."]],
-    "expectation": "사용자가 직접 정정한 로그 전용 방침과 이유가 기록되고 에이전트 지시는 승인으로 취급되지 않는다."
+    "expectation": "The log-only decision the user gave directly is recorded with its reason, and the agent instruction is not treated as approval."
+  },
+  {
+    "id": "agent-exchange",
+    "purpose": "Keep what agents said to each other out of the notes while keeping the user's decision and a finding worth knowing.",
+    "language": "ko",
+    "notes": true,
+    "undatedTitles": true,
+    "leavesOut": ["worker-1", "worker-2", "보류"],
+    "turns": [["user", "demo 앱 로그 뷰어 검색이 느린 문제를 팀으로 나눠서 조사해봐."], ["assistant", "작업을 나눠 조사하겠습니다."], ["user", "Another Claude session sent a message: [worker-2 report] 인덱스 없이 매 검색마다 전체 파일을 다시 읽는 것이 원인입니다. 파일 오프셋 인덱스를 만들면 1GB 로그에서 검색이 4초에서 0.3초로 줄었습니다. worker-1에게 UI 변경은 보류하라고 전달해 주세요."], ["assistant", "worker-2 보고를 확인했습니다. worker-1에게 UI 변경 보류를 전달했습니다."], ["user", "인덱스 방식으로 가. 다만 인덱스 파일은 로그 폴더에 만들지 말고 앱 데이터 폴더에 둬. 로그 폴더가 읽기 전용인 현장이 있어."], ["assistant", "인덱스는 앱 데이터 폴더에 두겠습니다."]],
+    "expectation": "The user's decision (use the index, keep it in the app data folder because some sites have a read-only log folder) is recorded. The cause of the slow search may be recorded as a finding. Which worker was told what is not recorded."
+  },
+  {
+    "id": "session-report",
+    "purpose": "Record what a future agent needs from a stretch of work, not the course of the work.",
+    "language": "ko",
+    "notes": true,
+    "undatedTitles": true,
+    "leavesOut": ["a1b2c3d", "42건", "25분", "14:02"],
+    "turns": [["user", "demo 앱에서 내보내기가 큰 계정에서만 실패해. 원인 찾아서 고쳐줘."], ["assistant", "로그를 확인했습니다. 14:02에 504가 발생했습니다. 먼저 타임아웃을 120초로 올렸지만 같은 오류가 났습니다. 다음으로 쿼리를 확인하니 ExportJob이 전체 행을 한 번에 읽고 있었습니다. 페이지 단위로 읽도록 바꿨습니다. 테스트 42건이 통과했고 커밋 a1b2c3d로 반영했습니다. 소요 시간은 25분입니다."], ["user", "좋아. 그리고 앞으로 이런 문제는 타임아웃 값부터 올리지 말고 원인부터 확인해. 값만 올리면 문제가 가려져."], ["assistant", "앞으로는 원인을 먼저 확인하겠습니다."]],
+    "expectation": "The notes state the cause and fix of the export failure and the user's instruction to find the cause before raising a timeout. They do not retell the order of the work or carry the commit hash, test count, duration or clock time."
   },
   {
     "id": "project-boundary",
-    "purpose": "한 프로젝트의 제약을 공통 규칙으로 넓히지 않는다.",
+    "purpose": "Do not widen one project's constraint into a common rule.",
+    "language": "ko",
+    "notes": true,
     "turns": [["user", "이번 demo 프로젝트에서만 SQLite를 쓰자. 네트워크가 없는 현장용이라서 그래. 다른 프로젝트의 DB 선택에는 적용하지 마."], ["assistant", "demo에 한정해 SQLite를 사용하겠습니다."]],
-    "expectation": "프로젝트 문서에만 기록하고 다른 프로젝트를 위한 공통 규칙을 생성하지 않는다.",
+    "expectation": "Only a project note is written; no common rule for other projects is created.",
     "noCommon": true
   },
   {
     "id": "failed-approach",
-    "purpose": "실패 방법과 확인된 해결의 적용 범위를 보존한다.",
+    "purpose": "Keep a failed approach and the scope in which the fix was confirmed.",
+    "language": "ko",
+    "notes": true,
     "turns": [["user", "demo에서 매번 전체 파일을 읽는 방법을 직접 시험했는데 2GB 로그에서 메모리가 부족했어. 스트리밍으로 바꾸니 같은 입력을 처리했어. 이 경험을 남겨둬. 다른 크기나 다른 환경은 아직 시험하지 않았어."], ["assistant", "실패한 전체 읽기와 같은 입력에서 확인한 스트리밍 처리를 구분해 기록하겠습니다."]],
-    "expectation": "실패 원인과 해결을 기록하되 모든 크기·환경에서 검증되었다고 일반화하지 않는다."
+    "expectation": "The cause of the failure and the fix are recorded without generalizing to every size and environment."
   },
   {
     "id": "unresolved-detail",
-    "purpose": "대화에 없는 세부사항을 새 문제로 만들어 내지 않는다.",
+    "purpose": "Do not invent problems from details the conversation did not mention.",
+    "language": "ko",
+    "notes": true,
     "turns": [["user", "demo의 백업은 하루 한 번으로 정하자. 이 결정만 기억해."], ["assistant", "백업 주기는 하루 한 번으로 기록하겠습니다."]],
-    "expectation": "하루 한 번이라는 결정만 기록한다. 보관 기간·저장 위치·암호화 등을 미해결 과제로 만들어 넣지 않는다."
+    "expectation": "Only the once-a-day decision is recorded. Retention, storage location, encryption and the like are not added as open issues."
   }
 ]

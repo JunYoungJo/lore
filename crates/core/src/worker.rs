@@ -112,10 +112,10 @@ fn process(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Rec
         Vec::new()
     };
     let artifacts = paths.reviews().join(format!("{}-{}", job.id, prepared.batch.end_line));
-    let mut request = pipeline::build_request(&prepared, &scope, &ranked, &[], settings.notes_budget);
+    let mut request = pipeline::after_failure(pipeline::build_request(&prepared, &scope, &ranked, &[], settings.notes_budget), job);
     let mut proposal = recorder.record(&request.payload, &artifacts)?;
     if proposal.changes.is_empty() && !proposal.needs_notes.is_empty() {
-        request = pipeline::build_request(&prepared, &scope, &ranked, &proposal.needs_notes, settings.notes_budget);
+        request = pipeline::after_failure(pipeline::build_request(&prepared, &scope, &ranked, &proposal.needs_notes, settings.notes_budget), job);
         proposal = recorder.record(&request.payload, &artifacts.join("followup"))?;
         if proposal.changes.is_empty() && !proposal.needs_notes.is_empty() {
             return Err(Error::rejected("The model requested the existing note body again."));

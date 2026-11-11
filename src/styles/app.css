@@ -570,6 +570,7 @@ svg.kind-deleted {
   padding-bottom: 16px;
   font-size: 12.5px;
   line-height: 1.7;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -594,6 +595,7 @@ svg.kind-deleted {
   font-family: var(--font-mono);
   font-size: 11px;
   color: var(--text3);
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -667,12 +669,6 @@ svg.kind-deleted {
 .review-foot {
   padding: 4px 20px 14px;
   border-top: 1px solid var(--line);
-}
-
-.review-message {
-  resize: vertical;
-  font-family: inherit;
-  line-height: 1.5;
 }
 
 .review-actions {
@@ -779,6 +775,7 @@ svg.kind-deleted {
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -798,6 +795,7 @@ svg.kind-deleted {
   font-size: 12px;
   line-height: 1.45;
   color: var(--text2);
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -1000,6 +998,7 @@ svg.kind-deleted {
   white-space: nowrap;
   font-size: 11px;
   color: var(--text3);
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -1261,6 +1260,7 @@ svg.kind-deleted {
   font-size: 12.5px;
   color: var(--text);
   outline: none;
+  -webkit-user-select: text;
   user-select: text;
 }
 
@@ -1397,7 +1397,7 @@ svg.kind-deleted {
 .sync-opt small { display: block; margin-top: 3px; font-size: 12.5px; line-height: 1.5; color: var(--text2); }
 .sync-check { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 12.5px; color: var(--text2); cursor: pointer; }
 .sync-custom { display: block; margin-top: 10px; font-size: 12px; color: var(--text2); }
-.sync-custom textarea { display: block; width: 100%; margin-top: 6px; resize: vertical; }
+.sync-custom textarea { display: block; width: 100%; margin-top: 6px; resize: none; }
 .sync-compare { margin-top: 12px; }
 .sync-docs { margin-top: 14px; }
 .sync-path { margin: 12px 0 6px; overflow-wrap: anywhere; font-size: 12px; color: var(--text2); }

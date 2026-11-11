@@ -28,7 +28,7 @@
 .setup-card p { font-size: 12px; line-height: 1.8; color: var(--text2); margin: 6px 0 14px; }
 .setup-card p:last-child { margin-bottom: 0; }
 .setup-card .btn { min-height: 34px; }
-.setup-card code, .setup-example { user-select: text; font-family: var(--font-mono); }
+.setup-card code, .setup-example { -webkit-user-select: text; user-select: text; font-family: var(--font-mono); }
 .setup-subtle { display: flex; align-items: center; gap: 9px; color: var(--text2); line-height: 1.7; font-size: 11px; margin: 18px 0; }
 .setup-subtle svg { color: var(--ok); flex: none; }
 .setup-flow { display: flex; align-items: center; gap: 12px; padding: 18px 0 30px; }
@@ -57,7 +57,7 @@
 .setup-badge { display: inline-flex; font-weight: 500; font-size: 9px; line-height: 1.6; padding: 2px 7px; color: var(--text2); background: var(--surface2); border-radius: 5px; vertical-align: middle; }
 .setup-badge.ok { color: var(--ok); background: var(--ok-soft); }
 .setup-badge.danger { color: var(--danger); background: var(--danger-soft); }
-.setup-path { display: block; overflow-wrap: anywhere; color: var(--text3); font-size: 10px; line-height: 1.7; user-select: text; }
+.setup-path { display: block; overflow-wrap: anywhere; color: var(--text3); font-size: 10px; line-height: 1.7; -webkit-user-select: text; user-select: text; }
 .setup-options { display: flex; padding: 4px; gap: 4px; border-radius: 8px; background: var(--surface2); margin-bottom: 24px; }
 .setup-options button { flex: 1; background: none; color: var(--text2); border: 0; border-radius: 5px; padding: 9px 8px; font-size: 11px; cursor: pointer; }
 .setup-options button.selected { color: var(--accent); background: var(--surface); box-shadow: var(--sh1); font-weight: 600; }
@@ -78,7 +78,7 @@
 .setup-preview { border-top: 1px solid var(--line2); padding-top: 18px; margin-top: 20px; }
 .setup-resource { margin-bottom: 20px; }
 .setup-resource h3 { display: flex; align-items: center; gap: 10px; }
-.setup-resource pre, .setup-example { padding: 14px; border: 1px solid var(--line2); border-radius: 6px; background: var(--surface2); font-size: 10px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.setup-resource pre, .setup-example { padding: 14px; border: 1px solid var(--line2); border-radius: 6px; background: var(--surface2); font-size: 10px; line-height: 1.8; white-space: pre-wrap; overflow-wrap: anywhere; -webkit-user-select: text; user-select: text; }
 .setup-resource p { margin: 7px 0; font-size: 11px; }
 .setup-resource summary, .setup-card > summary { cursor: pointer; font-size: 11px; color: var(--accent); }
 .setup-model-row { display: flex; gap: 12px; align-items: end; }

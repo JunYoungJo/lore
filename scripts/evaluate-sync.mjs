@@ -9,8 +9,8 @@ const args = process.argv.slice(2);
 const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
 const output = resolve(option("--output", join(root, "work-sync-evaluation", new Date().toISOString().replaceAll(":", "-"))));
 const backend = option("--backend", "codex");
-if (!["codex", "claude"].includes(backend)) throw new Error("backend는 codex 또는 claude여야 합니다.");
-if (existsSync(output)) throw new Error(`기존 평가 폴더를 덮어쓰지 않습니다: ${output}`);
+if (!["codex", "claude"].includes(backend)) throw new Error("--backend must be codex or claude.");
+if (existsSync(output)) throw new Error(`The evaluation folder already exists and is not overwritten: ${output}`);
 mkdirSync(output, { recursive: true });
 const cli = join(root, "target/release", `lore-cli${process.platform === "win32" ? ".exe" : ""}`);
 function run(program, argv, cwd, env) {
@@ -50,7 +50,7 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   const sharedBeforeComparison = git(local, "rev-parse", "HEAD") === git(local, "ls-remote", "origin", "refs/heads/main").split(/\s+/)[0];
   const compared = command("compare");
   const decisions = compared.state.items.filter((item) => item.kind === "decision");
-  if (!decisions.length) throw new Error("모델이 상반된 방침의 확인 항목을 제시하지 않았습니다.");
+  if (!decisions.length) throw new Error("The model did not report the conflicting decisions as an item to check.");
   for (const item of decisions) command("resolve", item.id, "0");
   const resolved = command("now");
   const finalText = readFileSync(join(local, note), "utf8");
@@ -58,7 +58,7 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   const checks = { sharedBeforeComparison, bothHistories, noConflictMarkers: !/^(<<<<<<<|>>>>>>>)/m.test(mergedText), decisionsCleared: resolved.state.items.every((item) => item.kind !== "decision"), unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
   reports.push({ kind, backend, listedAfterSync: synced.state.items, decisions, mergedText, finalText, checks, actualQmd: false });
   writeFileSync(join(output, "report.json"), JSON.stringify(reports, null, 2));
-  process.stdout.write(`${Object.values(checks).every(Boolean) ? "통과" : "확인 필요"} · 모델이 찾은 항목 ${decisions.length}건\n`);
+  process.stdout.write(`${Object.values(checks).every(Boolean) ? "passed" : "needs a look"} · ${decisions.length} item(s) found by the model\n`);
   if (!Object.values(checks).every(Boolean)) process.exitCode = 1;
 }
-process.stdout.write(`결과: ${join(output, "report.json")}\n`);
+process.stdout.write(`Report: ${join(output, "report.json")}\n`);

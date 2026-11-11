@@ -67,6 +67,7 @@ pub async fn open_review(app: AppHandle) -> Result<(), String> {
         .center()
         .build()
         .map_err(error)?;
+    crate::webview::harden(&window);
     let handle = app.clone();
     window.on_window_event(move |event| {
         if let WindowEvent::Destroyed = event {

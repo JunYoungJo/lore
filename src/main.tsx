@@ -9,8 +9,10 @@ import { App } from "@/App";
 import { trackKeyboardFocus } from "@/keyboardFocus";
 import { ReviewApp } from "@/ReviewApp";
 import { SyncApp } from "@/SyncApp";
+import { suppressWebDefaults } from "@/webDefaults";
 
 trackKeyboardFocus();
+suppressWebDefaults();
 
 const isReview = getCurrentWindow().label === "review";
 const isSync = getCurrentWindow().label === "sync";

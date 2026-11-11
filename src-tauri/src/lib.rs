@@ -13,6 +13,7 @@ mod watch;
 mod setup;
 mod setup_terminal;
 mod updates;
+mod webview;
 
 pub fn run() {
     let paths = Paths::standard();

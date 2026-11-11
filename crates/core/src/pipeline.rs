@@ -10,7 +10,7 @@ use crate::copy;
 use crate::error::{Error, Result};
 use crate::notes::{self, CatalogEntry};
 use crate::project;
-use crate::proposal::{check_snapshot, render_note, validate, Change, Edit, Proposal, Scope};
+use crate::proposal::{check_snapshot, render_note, validate, without_sources, Change, Edit, Proposal, Scope};
 use crate::queue::Job;
 use crate::settings::atomic_write;
 use crate::transcript::{check_prefix, parse, prefix_hash, read_identity, read_transcript, Origin, Parsed, Provider, Turn};
@@ -104,6 +104,7 @@ fn in_local_time(turns: &[Turn]) -> Vec<Turn> {
     turns.iter().map(|turn| Turn { timestamp: local_stamp(&turn.timestamp, &Local), ..turn.clone() }).collect()
 }
 
+#[derive(Clone)]
 pub struct Request {
     pub payload: Value,
     pub base: BTreeMap<String, String>,
@@ -111,9 +112,19 @@ pub struct Request {
     pub editable: BTreeSet<String>,
 }
 
+/// On a retry, tell the model why the previous attempt at this batch failed.
+/// Without it a rejected proposal is retried blind and repeats the mistake.
+pub fn after_failure(mut request: Request, job: &Job) -> Request {
+    if let (true, Some(reason)) = (job.attempts > 0, job.last_error.as_deref()) {
+        request.payload["previous_failure"] = json!(reason);
+    }
+    request
+}
+
 pub fn build_request(prepared: &Prepared, scope_notes: &BTreeMap<String, String>, ranked: &[String], required: &[String], budget: usize) -> Request {
     let selection = notes::select(scope_notes, ranked, required, budget);
     let catalog: Vec<CatalogEntry> = selection.catalog.into_iter().filter(|entry| !selection.bodies.contains_key(&entry.path)).collect();
+    let shown: BTreeMap<&String, String> = selection.bodies.iter().map(|(path, text)| (path, without_sources(text))).collect();
     let payload = json!({
         "project": prepared.project,
         "provider": prepared.provider.as_str(),
@@ -121,7 +132,7 @@ pub fn build_request(prepared: &Prepared, scope_notes: &BTreeMap<String, String>
         "new_turns": in_local_time(&prepared.batch.new_turns),
         "context_turns": in_local_time(&prepared.batch.context_turns),
         "omitted_context_turns": prepared.batch.omitted_context_turns,
-        "existing_notes": selection.bodies,
+        "existing_notes": shown,
         "note_catalog": catalog,
     });
     Request {
@@ -420,6 +431,42 @@ mod tests {
     }
 
     #[test]
+    fn a_retry_tells_the_model_why_the_previous_attempt_failed() {
+        let fixture = fixture_with_two_lines();
+        let prepared = ready(&fixture, 0, "");
+        let first = build_request(&prepared, &BTreeMap::new(), &[], &[], 60_000);
+        let mut waiting = job(&fixture.dir.path().join("s.jsonl"), 0, "");
+        assert!(after_failure(first.clone(), &waiting).payload.get("previous_failure").is_none());
+        waiting.attempts = 1;
+        waiting.last_error = Some("Invalid memory path: projects/other/site.md".into());
+        let retry = after_failure(first, &waiting);
+        assert_eq!(retry.payload["previous_failure"], "Invalid memory path: projects/other/site.md");
+        assert_eq!(retry.payload["project"], "demo");
+    }
+
+    #[test]
+    fn the_prompt_limits_project_paths_to_the_session_project_and_explains_retries() {
+        let prompt = include_str!("recorder-prompt.md");
+        assert!(prompt.contains("`<project>` is exactly the `project` value"));
+        assert!(prompt.contains("previous_failure"));
+    }
+
+    #[test]
+    fn existing_notes_reach_the_model_without_their_source_lists() {
+        let fixture = fixture_with_two_lines();
+        let prepared = ready(&fixture, 0, "");
+        let mut scope = BTreeMap::new();
+        scope.insert("projects/demo/new.md".to_string(), "# New\n\nKeep logs only.\n\n## Sources\n- [L3](<x>) — a long quotation\n".to_string());
+        scope.insert("projects/demo/old.md".to_string(), "# Old\n\nShow a warning.\n\n## \u{c6d0}\u{bb38} \u{adfc}\u{ac70}\n- [L1](<y>) — an older quotation\n".to_string());
+        let request = build_request(&prepared, &scope, &[], &[], 60_000);
+        assert_eq!(request.payload["existing_notes"]["projects/demo/new.md"], "# New\n\nKeep logs only.\n");
+        assert_eq!(request.payload["existing_notes"]["projects/demo/old.md"], "# Old\n\nShow a warning.\n");
+        // The program still edits and compares against the stored text.
+        assert_eq!(request.base, scope);
+        assert_eq!(request.editable.len(), 2);
+    }
+
+    #[test]
     fn plan_writes_a_dialogue_copy_and_links_evidence_to_it() {
         let fixture = fixture_with_two_lines();
         let prepared = ready(&fixture, 0, "");
@@ -428,7 +475,7 @@ mod tests {
         let copy_file = PathBuf::from(plan.copy_file.as_ref().unwrap());
         assert_eq!(copy_file, fixture.knowledge.join("sources").join("claude").join("sess-1.md"));
         let copy_text = plan.copy_text.as_ref().unwrap();
-        assert!(copy_text.contains("<a id=\"L1\"></a>\n## L1 · 사용자"));
+        assert!(copy_text.contains("<a id=\"L1\"></a>\n## L1 · User"));
         let note = &plan.rendered["projects/demo/bg.md"];
         let expected = "- [L1](<../../sources/claude/sess-1.md#L1>) — 로그만 남기십시오";
         assert!(note.contains(&expected), "{note}");
@@ -452,7 +499,7 @@ mod tests {
 
         let wide = build_request(&prepared, &scope, &[], &[], 60_000);
         let planned = plan(&prepared, &wide, &edit, &fixture.knowledge, "job1").unwrap();
-        assert!(planned.rendered["projects/demo/bg.md"].contains("# 기존\n\n## 결정\n\n경고를 띄웁니다.\n\nTP 로그만 남깁니다.\n\n## 원문 근거"));
+        assert!(planned.rendered["projects/demo/bg.md"].contains("# 기존\n\n## 결정\n\n경고를 띄웁니다.\n\nTP 로그만 남깁니다.\n\n## Sources"));
         let unplaceable = appended("projects/demo/bg.md", "없는 절", "TP 로그만 남깁니다.");
         assert_eq!(plan(&prepared, &wide, &unplaceable, &fixture.knowledge, "job1").unwrap_err().failure, crate::error::Failure::Rejected);
         let note = fixture.knowledge.join("projects/demo/bg.md");
@@ -506,7 +553,7 @@ mod tests {
 
         apply(&fixture.knowledge, &planned).unwrap();
         assert_eq!(fs::read_to_string(fixture.knowledge.join("projects/other/o.md")).unwrap(), planned.rendered["projects/other/o.md"]);
-        assert!(fs::read_to_string(&copy_file).unwrap().contains("## L2 · 사용자"));
+        assert!(fs::read_to_string(&copy_file).unwrap().contains("## L2 · User"));
     }
 
     #[test]

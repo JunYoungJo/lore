@@ -84,19 +84,6 @@ pub fn open_popover(app: &AppHandle) {
     }
 }
 
-#[cfg(windows)]
-fn harden_webview(window: &WebviewWindow) {
-    let _ = window.with_webview(|webview| unsafe {
-        let Ok(core) = webview.controller().CoreWebView2() else { return };
-        let Ok(settings) = core.Settings() else { return };
-        let _ = settings.SetIsZoomControlEnabled(false);
-        let _ = settings.SetAreDefaultContextMenusEnabled(false);
-    });
-}
-
-#[cfg(not(windows))]
-fn harden_webview(_window: &WebviewWindow) {}
-
 // Built hidden during setup: building a window inside a command deadlocks the event loop,
 // and the popover should already hold the current status when it is first opened.
 pub fn create_popover(app: &AppHandle) {
@@ -111,7 +98,7 @@ pub fn create_popover(app: &AppHandle) {
         .build();
     match built {
         Ok(window) => {
-            harden_webview(&window);
+            crate::webview::harden(&window);
             let handle = window.clone();
             window.on_window_event(move |event| {
                 if let WindowEvent::Focused(false) = event {

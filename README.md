@@ -136,11 +136,11 @@ For manual setup, the bundled `lore-cli doctor` reports this PC's command and in
 
 Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `lore-cli scan` is available for manual recovery.
 
-To bring existing memory documents from another PC, follow the [portability guide](docs/multiplatform.md#기존-windows-기억-가져오기) before recording on another PC.
+To bring existing memory documents from another PC, follow the [portability guide](docs/multiplatform.md#importing-existing-windows-memory) before recording on another PC.
 
 ## Sync across PCs
 
-Clone the same **memory repository** on each PC and set each app's memory folder to its local checkout. Give source projects a stable [project ID](docs/multiplatform.md#고정-프로젝트-id) when checkout names differ.
+Clone the same **memory repository** on each PC and set each app's memory folder to its local checkout. Give source projects a stable [project ID](docs/multiplatform.md#stable-project-id) when checkout names differ.
 
 Turn on **Settings → Memory & sync → Auto-sync**. From then on sync needs no action from you:
 
@@ -216,9 +216,9 @@ Both evaluations substitute an indexing fixture for qmd. They test model output 
 ## Documentation
 
 - [한국어 소개와 시작하기](README.ko.md)
-- [Detailed usage and CLI reference](docs/usage.md) — Korean
-- [Multiple PCs, platform paths, and migration](docs/multiplatform.md) — Korean
-- [Synchronization and notes to check](docs/sync-review.md) — Korean
+- [Detailed usage and CLI reference](docs/usage.md)
+- [Multiple PCs, platform paths, and migration](docs/multiplatform.md)
+- [Synchronization and notes to check](docs/sync-review.md)
 - [Desktop releases and app updates](docs/releasing.md)
 
 ## License

@@ -327,6 +327,30 @@ fn a_rejected_model_reply_is_sent_back_with_the_reason_instead_of_stopping_the_c
 }
 
 #[test]
+fn a_read_request_the_program_cannot_serve_is_sent_back_instead_of_stopping_the_comparison() {
+    let f = fixture();
+    contradict(&f);
+    run(&f);
+    let mut prompts = Vec::new();
+    let id = sync::pending_comparison(&f.folder).unwrap();
+    let mut calls = 0;
+    let found = sync::compare(&f.folder, &id, "fixture", &mut |prompt, _, _| {
+        calls += 1;
+        prompts.push(prompt.to_string());
+        Ok(if calls == 1 {
+            json!({"summary":"Reading.","issues":[],"notes":"","reads":[{"source":format!("local:{NOTE}"),"offset":0,"length":200,"anchor":"문서에 없는 문구"}],"replace_issues":[]})
+        } else {
+            reply(decision(&format!("remote:{NOTE}"), "오류 팝업을 표시합니다."))
+        })
+    }, &mut || {})
+    .unwrap();
+    assert_eq!(found, 1);
+    assert_eq!(calls, 2);
+    assert!(prompts[1].contains("문서에 없는 문구"));
+    assert!(sync::state(&f.folder).comparisons.is_empty());
+}
+
+#[test]
 fn a_comparison_that_keeps_failing_is_reported_without_touching_sync() {
     let f = fixture();
     contradict(&f);

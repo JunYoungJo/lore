@@ -76,7 +76,7 @@ pub async fn open_sync(app: AppHandle) -> std::result::Result<(), String> {
         let _ = window.set_focus();
         return Ok(());
     }
-    WebviewWindowBuilder::new(&app, "sync", WebviewUrl::App("index.html".into()))
+    let window = WebviewWindowBuilder::new(&app, "sync", WebviewUrl::App("index.html".into()))
         .title("Memory sync")
         .inner_size(1120.0, 820.0)
         .min_inner_size(740.0, 620.0)
@@ -84,6 +84,7 @@ pub async fn open_sync(app: AppHandle) -> std::result::Result<(), String> {
         .center()
         .build()
         .map_err(|e| e.to_string())?;
+    crate::webview::harden(&window);
     Ok(())
 }
 

@@ -8,11 +8,16 @@ const args = process.argv.slice(2);
 const option = (name, fallback) => args.includes(name) ? args[args.indexOf(name) + 1] : fallback;
 const output = resolve(option("--output", join(root, "work-evaluation", new Date().toISOString().replaceAll(":", "-"))));
 const backend = option("--backend", "codex");
-if (!["codex", "claude"].includes(backend)) throw new Error("--backend는 codex 또는 claude여야 합니다.");
+if (!["codex", "claude"].includes(backend)) throw new Error("--backend must be codex or claude.");
 const cli = join(root, "target", "release", `lore-cli${process.platform === "win32" ? ".exe" : ""}`);
-if (!existsSync(cli)) throw new Error("먼저 pnpm build:cli를 실행하십시오.");
-const cases = JSON.parse(readFileSync(join(root, "examples/evaluation/cases.json"), "utf8"));
+if (!existsSync(cli)) throw new Error("Run pnpm build:cli first.");
+const only = option("--only", "");
+const cases = JSON.parse(readFileSync(join(root, "examples/evaluation/cases.json"), "utf8")).filter((fixture) => !only || only.split(",").includes(fixture.id));
 const reports = [];
+const korean = /[가-힣]/;
+// What the model wrote: the title and body, without the front matter and the program's source list.
+const written = (text) => text.replace(/^---\n[\s\S]*?\n---\n/, "").split("\n## Sources\n")[0];
+const titleOf = (text) => /^# (.*)$/m.exec(written(text))?.[1] ?? "";
 
 function run(command, env) {
   const result = spawnSync(cli, command, { env, encoding: "utf8", timeout: 360_000 });
@@ -30,7 +35,7 @@ for (const fixture of cases) {
   const data = join(folder, "app");
   const knowledge = join(folder, "knowledge");
   const repository = join(folder, "demo");
-  if (existsSync(data)) throw new Error(`기존 평가 데이터를 덮어쓸 수 없습니다: ${data}`);
+  if (existsSync(data)) throw new Error(`Evaluation data already exists and is not overwritten: ${data}`);
   mkdirSync(join(repository, ".git"), { recursive: true });
   mkdirSync(data, { recursive: true });
   const transcript = join(folder, "session.jsonl");
@@ -56,8 +61,15 @@ for (const fixture of cases) {
   const status = run(["status"], env);
   const files = [...notesIn(join(knowledge, "common")), ...notesIn(join(knowledge, "projects"))];
   const reviewArtifacts = existsSync(join(data, "reviews")) ? readdirSync(join(data, "reviews")) : [];
+  const texts = files.map((file) => written(readFileSync(file, "utf8")));
   const checks = {
     processed: !error && !/"failed": [1-9]|"waiting": [1-9]|"ready": [1-9]/.test(status),
+    ...(fixture.notes ? { notes: files.length > 0 } : {}),
+    // Notes follow the language the user wrote in, whatever language the prompt is in.
+    ...(fixture.language === "ko" ? { korean: texts.every((text) => korean.test(text)) } : {}),
+    ...(fixture.language === "en" ? { english: texts.every((text) => !korean.test(text)) } : {}),
+    ...(fixture.leavesOut ? { leavesOut: fixture.leavesOut.filter((word) => texts.some((text) => text.toLowerCase().includes(word.toLowerCase()))) } : {}),
+    ...(fixture.undatedTitles ? { undatedTitles: files.every((file) => !/\d{4}-\d{2}-\d{2}|\d{1,2}\/\d{1,2}/.test(titleOf(readFileSync(file, "utf8")))) } : {}),
     ...(fixture.noNotes ? { noNotes: files.length === 0 } : {}),
     ...(fixture.noCommon ? { noCommon: notesIn(join(knowledge, "common")).length === 0 } : {}),
     ...(fixture.noModel ? { noModel: reviewArtifacts.length === 0 } : {}),
@@ -65,7 +77,8 @@ for (const fixture of cases) {
   reports.push({ id: fixture.id, purpose: fixture.purpose, expectation: fixture.expectation, checks, error, status,
     notes: files.map((file) => ({ file, text: readFileSync(file, "utf8") })), semanticReview: "pending" });
   writeFileSync(join(output, "report.json"), JSON.stringify({ backend, model: model ?? "default", indexing: "fixture; real qmd retrieval not tested", cases: reports }, null, 2));
-  process.stdout.write(Object.values(checks).every(Boolean) ? "처리 완료 (내용 검토 필요)\n" : "확인 필요\n");
+  const failed = Object.entries(checks).filter(([, value]) => Array.isArray(value) ? value.length : !value).map(([name, value]) => Array.isArray(value) ? `${name}: ${value.join(", ")}` : name);
+  process.stdout.write(failed.length ? `needs a look (${failed.join("; ")})\n` : "processed (read the notes to judge the content)\n");
 }
-process.stdout.write(`결과: ${join(output, "report.json")}\n`);
+process.stdout.write(`Report: ${join(output, "report.json")}\n`);
 if (reports.some((report) => !Object.values(report.checks).every(Boolean))) process.exitCode = 1;

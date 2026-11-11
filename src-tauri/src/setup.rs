@@ -21,6 +21,7 @@ pub fn create_window(app: &AppHandle, visible: bool) -> Result<(), String> {
     let window = WebviewWindowBuilder::new(app, "setup", WebviewUrl::App("index.html".into()))
         .title("Set up Lore").inner_size(1040.0, 790.0).min_inner_size(760.0, 640.0)
         .decorations(false).center().visible(visible).build().map_err(err)?;
+    crate::webview::harden(&window);
     // Closing retains the running command and saved step. Reopen from Settings.
     let handle = window.clone();
     window.on_window_event(move |event| {
@@ -147,9 +148,10 @@ pub async fn open_integrations(app: AppHandle, section: Option<String>) -> Resul
         return window.set_focus().map_err(err);
     }
     let page = section.map_or_else(|| "index.html".to_string(), |section| format!("index.html?section={section}"));
-    WebviewWindowBuilder::new(&app, "integrations", WebviewUrl::App(page.into()))
+    let window = WebviewWindowBuilder::new(&app, "integrations", WebviewUrl::App(page.into()))
         .title("Lore integrations").inner_size(1040.0, 790.0).min_inner_size(760.0, 640.0)
         .decorations(false).center().build().map_err(err)?;
+    crate::webview::harden(&window);
     Ok(())
 }
 

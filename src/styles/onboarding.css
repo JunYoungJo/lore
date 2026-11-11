@@ -32,7 +32,7 @@
 .onboard-error { display: flex; align-items: start; gap: 10px; justify-content: space-between; padding: 12px 15px; border-radius: 8px; color: var(--danger); background: var(--danger-soft); font-size: 12px; line-height: 1.8; margin-bottom: 22px; overflow-wrap: anywhere; }
 .onboard-error > button { border: 0; background: none; color: inherit; cursor: pointer; flex: none; padding: 0; }
 .onboard-small { color: var(--text3); font-size: 10px; line-height: 1.9; text-align: center; margin: 20px auto 0; max-width: 445px; }
-.onboard code { font-family: var(--font-mono); user-select: text; }
+.onboard code { font-family: var(--font-mono); -webkit-user-select: text; user-select: text; }
 .onboard button:focus-visible { outline: 2px solid var(--accent); outline-offset: 4px; }
 .onboard button:disabled { cursor: default; opacity: .4; }
 .onboard .setup-spin { animation: spin 1s linear infinite; }

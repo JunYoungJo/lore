@@ -219,7 +219,12 @@ fn page(docs: &Documents<'_>, read: &Read) -> Result<Page> {
             .nth(offset)
             .map_or(doc.text.len(), |(i, _)| i);
         let found = doc.text[start..].find(&read.anchor).ok_or_else(|| {
-            Error::rejected("The requested anchor does not occur after that source offset.")
+            Error::rejected(format!(
+                "The anchor \"{}\" does not occur in {} after offset {}. Use an exact phrase from text you have read, or an empty anchor with an offset.",
+                super::short(&read.anchor),
+                read.source,
+                read.offset
+            ))
         })?;
         offset = doc.text[..start + found]
             .chars()
@@ -792,10 +797,17 @@ fn execute(
                 task.feedback = "Continue from your saved findings. Review every remaining change page before completing.".into();
                 checkpoint.progress.reads += reads.len();
             }
+            // A read the program cannot serve is the model's mistake, like a
+            // rejected result: say why and let it ask again.
             Err(error) => {
-                task.feedback = error.to_string();
+                rejections += 1;
+                task.feedback = format!("Your previous read request was rejected: {error} Request the reads again.");
+                task.draft = reply;
                 save(folder, checkpoint, changed)?;
-                return Err(error);
+                if rejections >= MAX_REJECTIONS {
+                    return Err(error);
+                }
+                continue;
             }
         }
         save(folder, checkpoint, changed)?;

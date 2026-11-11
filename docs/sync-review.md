@@ -1,71 +1,71 @@
-# 여러 PC의 기억 동기화
+# Syncing memory across PCs
 
-## 처음 연결하기
+## First-time setup
 
-각 PC에서 동일한 기억 Git 저장소를 clone하고, 앱의 기억 저장소 경로를 그 PC의 경로로 지정합니다. 현재 브랜치에 remote/upstream이 연결돼 있어야 합니다. 기존 저장소라면 `git remote -v`, `git branch -vv`로 확인합니다. 앱은 remote나 인증 정보를 새로 만들지 않습니다. 터미널에서 fetch/push가 가능하도록 먼저 인증합니다. Git 2.38 이상이 필요하고, 커밋을 만들 수 있도록 `user.name`과 `user.email`이 설정돼 있어야 합니다.
+On each PC, clone the same memory Git repository and set the app's memory repository path to that PC's checkout. The current branch must have a remote/upstream. For an existing repository, check with `git remote -v` and `git branch -vv`. The app does not create remotes or credentials. Authenticate first so fetch/push works from a terminal. Git 2.38 or later is required, and `user.name` and `user.email` must be set so commits can be created.
 
-공유되는 것은 **기억 저장소의 모든 파일**입니다. 기억 문서뿐 아니라 `sources/` 대화 사본의 인용하지 않은 부분도 포함됩니다. 공유하지 않을 파일은 `.gitignore`에 적습니다. 큐·설정·모델 실행 자료와 qmd 색인은 PC별 앱 데이터에 둡니다. 소스 프로젝트의 고정 ID와 qmd MCP 연결은 [여러 PC에서 사용하기](multiplatform.md)를 따릅니다.
+What is shared is **every file in the memory repository**. That includes not only memory notes but also the unquoted parts of the `sources/` session copies. List files you do not want to share in `.gitignore`. The queue, settings, model run data and the qmd index stay in per-PC app data. For stable source project IDs and the qmd MCP connection, follow [Using Lore on multiple PCs](multiplatform.md).
 
-## 동기화는 사용자 작업 없이 끝납니다
+## Sync finishes without user action
 
-기록이 끝나면 앱이 바뀐 파일을 바로 커밋합니다. 설정의 **Auto-sync**가 켜져 있으면 대기 중인 기록이 모두 끝난 직후와 5분마다 다음 순서로 동기화합니다. 꺼져 있으면 커밋까지만 하고, 팝오버 하단 바의 동기화 버튼이나 설정의 **Sync now**를 누를 때 같은 순서로 동기화합니다.
+When a recording finishes, the app commits the changed files right away. If **Auto-sync** is on in settings, it syncs in the order below right after all pending recordings finish and every 5 minutes. If it is off, the app only commits, and syncs in the same order when you click the sync button in the popover's bottom bar or **Sync now** in settings.
 
-1. 커밋하지 않은 변경이 있으면 커밋합니다.
-2. 다른 PC의 커밋을 가져옵니다.
-3. 양쪽에 새 커밋이 있으면 병합합니다. 서로 다른 문서를 고쳤거나 같은 문서의 다른 위치를 고친 경우는 그대로 합칩니다.
-4. 두 PC가 같은 문서의 같은 위치를 고친 경우에는 **양쪽 줄을 모두 남겨** 합치고, 그 문서를 "확인할 항목"에 올립니다.
-5. 다른 PC의 문서가 들어왔으면 이 PC의 검색 색인을 갱신합니다.
-6. 결과를 push합니다. 그 사이 다른 PC가 먼저 push했으면 그 커밋을 가져와 다시 합친 뒤 보냅니다. 강제 push는 하지 않습니다.
+1. Commit any uncommitted changes.
+2. Fetch commits from other PCs.
+3. If both sides have new commits, merge. Changes to different notes, or to different places in the same note, are combined as is.
+4. If two PCs changed the same place in the same note, merge **keeping both sides' lines**, and add that note to "items to check".
+5. If notes from other PCs came in, update this PC's search index.
+6. Push the result. If another PC pushed first in the meantime, fetch that commit, merge again, then push. No force push is used.
 
-어느 단계에서도 사용자에게 묻지 않고, 동기화 때문에 기록이 멈추지 않습니다. 이전 버전에서 검토 대기로 남아 있던 동기화도 다음 동기화 때 이 순서로 처리합니다. 그때의 검토 자료는 앱 데이터에 `superseded-*.json`으로 남습니다.
+No step asks the user anything, and sync never stops recording. A sync left pending review by an earlier version is also handled in this order on the next sync. The review data from that time is kept in app data as `superseded-*.json`.
 
-한쪽이 문서를 지우고 다른 쪽이 고친 경우에는 고친 문서를 남기고 확인할 항목에 올립니다. 파일 이름을 바꾼 경우는 삭제와 추가로 다룹니다. 공통 기준이 없는 이력처럼 Git이 병합안을 만들 수 없는 경우에만 동기화가 실패하며, 한 번 외부 Git 도구로 합친 뒤 다시 동기화합니다.
+If one side deleted a note and the other edited it, the edited note is kept and added to the items to check. Renamed files are handled as a delete plus an add. Sync fails only when Git cannot produce a merge, such as histories with no common base; merge once with an external Git tool, then sync again.
 
-## 확인할 항목
+## Items to check
 
-확인할 항목은 **이미 병합되어 공유된 문서** 가운데 사용자가 한 번 봐 두면 좋은 것입니다. 항목이 남아 있어도 기록과 동기화는 계속됩니다. 항목이 있으면 팝오버 하단 바에 "2 to check"처럼 표시하고, **Needs attention**에도 올립니다. 눌러서 동기화 창(**Memory sync**)을 엽니다.
+Items to check are **notes that are already merged and shared** that are worth a look. Recording and sync continue while items remain. When there are items, the popover's bottom bar shows something like "2 to check", and they are also listed in **Needs attention**. Click to open the sync window (**Memory sync**).
 
-- **Both PCs' lines kept:** 두 PC가 같은 위치를 고쳐 양쪽 줄을 모두 남긴 문서입니다. 이 PC의 동기화 전 문서와 병합된 문서를 나란히 보여 줍니다. 같은 내용이 두 번 적혔거나 맞지 않는 문장이 나란히 남았으면 **Open note**로 문서를 열어 고칩니다. 고친 내용은 다른 변경처럼 동기화됩니다. 확인을 마치면 **Mark as checked**로 목록에서 지웁니다.
-- **Edited note kept:** 한쪽에서 지우고 다른 쪽에서 고친 문서입니다. 지워야 하면 문서를 직접 지웁니다.
-- **Notes disagree:** 모델이 찾은 서로 맞지 않는 내용입니다. **양쪽 근거와 인용**(This PC / Other PCs), 설명, **선택지**를 보여 줍니다. 선택지를 고르면 지금 문서와 적용 후 문서를 나란히 보여 주고, **Apply**를 누르면 문서를 고쳐 커밋합니다. 단일 수정으로 구성된 선택지는 **Edit the selected wording**로 문구를 고칠 수 있습니다. 그대로 두려면 **Keep the note as it is**를 누릅니다.
+- **Both PCs' lines kept:** A note where both PCs changed the same place and both sides' lines were kept. Shows this PC's note before the sync side by side with the merged note. If the same content was written twice or conflicting sentences remain next to each other, open the note with **Open note** and fix it. Your fix syncs like any other change. When you are done, remove it from the list with **Mark as checked**.
+- **Edited note kept:** A note deleted on one side and edited on the other. If it should be deleted, delete the note yourself.
+- **Notes disagree:** Conflicting content found by the model. Shows **evidence and quotes from both sides** (This PC / Other PCs), an explanation, and **options**. Choosing an option shows the current note and the note after applying it side by side; **Apply** edits the note and commits. For an option made of a single edit, you can change the wording with **Edit the selected wording**. To leave it alone, click **Keep the note as it is**.
 
-**Later**나 머리글의 **Close**로 창을 닫아도 항목은 남습니다.
+Closing the window with **Later** or **Close** in the header keeps the items.
 
-## 모델 비교
+## Model comparison
 
-동기화가 끝난 뒤, **두 PC가 모두 고친 문서**가 있으면 앱이 그 문서만 기록 모델(Codex 또는 Claude)로 비교합니다. 한쪽에서만 바뀐 문서는 비교하지 않습니다. 비교는 병합 시점에 저장한 자료만 읽으므로 그동안 기록과 동기화는 계속됩니다. 모델 호출은 계정 사용량을 소비합니다.
+After a sync, if there are **notes changed on both PCs**, the app compares only those notes with the recording model (Codex or Claude). Notes changed on only one side are not compared. The comparison reads only data saved at merge time, so recording and sync continue meanwhile. Model calls use your account's usage.
 
-모델은 변경 부분을 먼저 읽고, 판단에 필요한 원문·앞뒤 대화를 구간별로 추가 요청합니다. 프로그램은 인용문이 실제 제공 자료에 있는지, 수정할 구간이 병합된 문서에 정확히 한 번 나오는지를 검사하고, 맞지 않으면 그 이유를 모델에 돌려보내 다시 답하게 합니다. 선택지를 적용할 때는 기존 근거 링크가 그대로 남는지 다시 검사합니다. 문장의 진실·적용 범위·최신 결정 여부까지 이 검사로 증명하지는 않습니다. 모델이 놓치는 모순은 남을 수 있습니다.
+The model reads the changed parts first, then requests additional source text and surrounding conversation segment by segment as needed. The program checks that quotes actually appear in the provided material and that each passage to edit appears exactly once in the merged note; if not, it sends the reason back to the model and asks it to answer again. When an option is applied, it checks again that existing source links are kept. These checks do not prove whether a statement is true, its scope, or whether it is the latest decision. Contradictions the model misses can remain.
 
-비교가 끝나지 못하면 동기화 창에 오류와 함께 **Try again**과 **Skip**을 보여 줍니다. 문서는 이미 동기화된 상태이므로 건너뛰어도 잃는 것은 없습니다. 앱을 다시 켜면 진행하던 비교를 저장된 위치부터 이어 갑니다.
+If a comparison cannot finish, the sync window shows the error with **Try again** and **Skip**. The notes are already synced, so skipping loses nothing. When the app restarts, an in-progress comparison resumes from its saved position.
 
-비교한 뒤 문서가 다시 바뀌어 선택지의 수정 구간을 찾을 수 없으면 적용을 거부합니다. 이때는 문서를 직접 고치고 항목을 지웁니다.
+If a note changed again after the comparison and an option's edit passage can no longer be found, applying it is refused. In that case, edit the note yourself and remove the item.
 
-## 검토 창과의 관계
+## Relationship to the review window
 
-검토 창은 동기화의 조건이 아닙니다. 팝오버의 "Review N changed notes"는 **마지막으로 검토한 뒤 이 PC에서 기록된 문서 수**입니다. 검토 창에서 문서를 체크하고 **Mark reviewed**를 누르면 그 문서가 목록에서 빠집니다. 문서는 이미 커밋·공유된 상태이므로 검토하지 않아도 동기화됩니다. 다른 PC에서 받은 문서는 이 PC의 검토 대기에 넣지 않습니다. 이 PC에 검토하지 않은 변경이 있는 문서를 다른 PC도 고쳤다면 그 문서는 계속 검토 대기에 남습니다.
+The review window is not a condition for sync. "Review N changed notes" in the popover is **the number of notes recorded on this PC since the last review**. Checking notes in the review window and clicking **Mark reviewed** removes them from the list. Notes are already committed and shared, so they sync whether or not you review them. Notes received from other PCs are not added to this PC's pending review. If another PC also changed a note that has unreviewed changes on this PC, that note stays pending review.
 
-검토 상태는 기억 저장소의 로컬 ref `refs/lore/reviewed`에 저장하며 push하지 않습니다.
+Review state is stored in the local ref `refs/lore/reviewed` in the memory repository and is not pushed.
 
-## 실패와 재시도
+## Failures and retries
 
-- **네트워크·인증 실패:** 기록은 계속하고 다음 주기에 다시 시도합니다. 연속 3번 실패하면 한 번 알리고, 하단 바에 "Sync needs attention"을 표시합니다. 동기화 창에서 Git 오류를 확인하고 **Try again**을 누릅니다. 이 PC의 커밋은 그대로 남아 있습니다.
-- **검색 갱신 실패:** 문서는 이미 받았고 push도 진행합니다. 다음 동기화 때 색인 갱신만 다시 시도합니다. qmd 설치·경로를 확인합니다.
-- **외부 Git 작업 중:** 기억 폴더에 끝나지 않은 merge나 rebase가 있으면 동기화하지 않습니다. 끝낸 뒤 다시 동기화합니다.
-- **검토 창이 열려 있는 동안:** 동기화하지 않습니다. 창을 닫으면 다음 주기에 동기화합니다.
+- **Network or authentication failure:** Recording continues and sync is retried on the next cycle. After 3 consecutive failures, you are notified once and the bottom bar shows "Sync needs attention". Check the Git error in the sync window and click **Try again**. This PC's commits remain in place.
+- **Search update failure:** The notes have already been received and the push still proceeds. The next sync retries only the index update. Check the qmd installation and path.
+- **External Git operation in progress:** If the memory folder has an unfinished merge or rebase, the app does not sync. Finish it, then sync again.
+- **While the review window is open:** The app does not sync. After you close the window, it syncs on the next cycle.
 
-앱은 기록·검토·동기화를 같은 실행 잠금으로 보호합니다. 앱 밖에서 실행한 Git 도구나 다른 PC를 잠그지는 않습니다.
+The app protects recording, review and sync with the same run lock. It does not lock Git tools run outside the app or other PCs.
 
-## 저장 위치와 CLI
+## Storage and CLI
 
-PC별 앱 데이터의 `sync/<기억 경로 해시>/state.json`에 마지막 동기화 시각, 실패 횟수, 확인할 항목을 저장합니다. `merge-<ID>.json`은 두 PC가 모두 고친 문서의 버전과 근거 자료이고, `analysis-<ID>/`는 모델 비교의 진행 상태입니다. 항목과 비교가 모두 끝나면 지웁니다. 이 자료는 Git 동기화 대상이 아닙니다.
+Per-PC app data stores the last sync time, failure count and items to check in `sync/<memory path hash>/state.json`. `merge-<ID>.json` holds the versions of notes changed on both PCs and their source material, and `analysis-<ID>/` holds the progress of the model comparison. They are deleted once the items and comparisons are all done. This data is not synced through Git.
 
-CLI는 트레이 앱을 끈 뒤 사용합니다.
+Use the CLI after quitting the tray app.
 
 ```sh
-lore-cli sync status               # 동기화 상태와 확인할 항목
-lore-cli sync now                  # 커밋·가져오기·병합·보내기
-lore-cli sync compare              # 두 PC가 모두 고친 문서를 모델로 비교
-lore-cli sync resolve <항목 ID> <선택지 번호>   # 선택지를 적용하고 커밋 (번호는 0부터)
-lore-cli sync dismiss <항목 ID>    # 항목을 목록에서 지움
+lore-cli sync status               # Sync status and items to check
+lore-cli sync now                  # Commit, fetch, merge, push
+lore-cli sync compare              # Compare notes changed on both PCs with the model
+lore-cli sync resolve <item ID> <option number>   # Apply an option and commit (numbers start at 0)
+lore-cli sync dismiss <item ID>    # Remove an item from the list
 ```

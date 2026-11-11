@@ -3,7 +3,7 @@ use serde::Serialize;
 use crate::transcript::{Parsed, Turn};
 
 pub const TURN_LIMIT: usize = 12_000;
-pub const OMISSION_MARK: &str = "[… 중략 …]";
+pub const OMISSION_MARK: &str = "[… omitted …]";
 
 #[derive(Debug, Clone, Serialize)]
 pub struct Batch {
@@ -27,7 +27,7 @@ pub fn excerpt(text: &str, limit: usize) -> String {
     let start: String = text.chars().take(head).collect();
     let end: String = text.chars().skip(length - tail).collect();
     let omitted = length - head - tail;
-    format!("{start}\n\n{OMISSION_MARK} 원문 {length}자 중 가운데 {omitted}자를 생략했습니다.\n\n{end}")
+    format!("{start}\n\n{OMISSION_MARK} {omitted} of {length} characters were left out of the middle.\n\n{end}")
 }
 
 pub fn make_batch(parsed: &Parsed, after_line: usize, max_chars: usize) -> Batch {
@@ -109,7 +109,7 @@ mod tests {
         let shown = &batch.new_turns[0].text;
         assert!(shown.starts_with(&"가".repeat(20)));
         assert!(shown.ends_with(&"다".repeat(10)));
-        assert!(shown.contains(OMISSION_MARK));
+        assert!(shown.contains("[… omitted …] 60 of 100 characters were left out of the middle."), "{shown}");
         assert!(!shown.contains(&"나".repeat(60)));
     }
 

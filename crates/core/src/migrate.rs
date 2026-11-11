@@ -303,7 +303,7 @@ mod tests {
         refresh_copies(&knowledge, &jobs, true).unwrap();
         let rebuilt = fs::read_to_string(&copy_file).unwrap();
         let lines = copy::parse_headings(&rebuilt);
-        assert!(rebuilt.contains("## L2 · 사용자") && !rebuilt.contains("아직 기록 전인 말"));
+        assert!(rebuilt.contains("## L2 · User") && !rebuilt.contains("아직 기록 전인 말"));
         assert_eq!(fs::read_to_string(&note).unwrap(), format!("- [L3]({}) — 그렇게 하겠습니다\n", copy::link_target(&copy_file, lines[&3])));
         assert!(refresh_copies(&knowledge, &jobs, true).unwrap().copies.is_empty());
     }

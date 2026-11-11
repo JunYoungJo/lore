@@ -1,84 +1,86 @@
-# Lore 사용 안내
+# Using Lore
 
-[Lore 소개와 시작하기](../README.ko.md) · [여러 PC 설정](multiplatform.md) · [동기화 검토](sync-review.md)
+[About Lore and getting started](../README.md) · [Multiple PCs](multiplatform.md) · [Sync review](sync-review.md)
 
-앱은 `lore`, CLI는 `lore-cli`, 앱 식별자는 `io.github.junyoungjo.lore`입니다. 아래 명령과 경로는 이 이름을 기준으로 합니다.
+The app is `lore`, the CLI is `lore-cli`, and the app identifier is `io.github.junyoungjo.lore`. The commands and paths below use these names.
 
-처음 실행할 때는 설정 안내를 따릅니다. 기존 설치에서는 **Settings → Advanced → Run setup guide again**으로 다시 열 수 있습니다. 도구 설치·로그인용 내장 터미널, 기억 폴더, MCP·규칙·스킬·훅 연결, 색인과 실제 기록·검색 테스트를 제공합니다. 연결 관리와 보존 범위는 [설정 안내](setup.md)를 참고하십시오. 아래의 CLI connect/disconnect는 훅만 관리합니다.
+On first launch, follow the setup guide. On an existing install you can reopen it with **Settings → Advanced → Run setup guide again**. The guide provides a built-in terminal for installing tools and signing in, the memory folder, MCP, rule, skill and hook connections, indexing, and a real recording and search test. For managing connections and what is kept, see the [setup guide](setup.md). The CLI connect/disconnect commands below manage hooks only.
 
-## 훅 등록
+## Registering hooks
 
-팝오버 설정 화면의 "Connections"에서 Claude Code와 Codex마다 MCP·지침·스킬·훅을 합친 연결 상태("Connected", "Needs repair", "Not connected")를 봅니다. 연결·복구·해제는 "Manage connections"가 여는 연동 관리 창에서 합니다. 이 창은 왼쪽 목록에 Codex·Claude Code·기억 폴더·검색 색인·도구를 상태와 함께 보여 주고, 항목마다 무엇이 왜 문제인지(예: 훅이 다른 위치의 Lore를 실행함)와 고치는 버튼을 보여 줍니다. 훅만 연결하거나 해제하려면 `lore-cli.exe connect <claude|codex>`, `disconnect <claude|codex>`를 씁니다. 앱은 사용자가 누르기 전에는 전역 설정 파일을 바꾸지 않습니다. 해제는 lore 훅만 지우고, 연결 때 새로 만든 이벤트 항목이 비면 그 항목도 지웁니다. Windows NSIS 설치본을 제거하면 제거 프로그램이 Claude·Codex의 lore 훅을 해제합니다(업데이트를 위한 재설치일 때는 해제하지 않습니다). macOS·Linux에서는 앱을 지우기 전에 훅을 해제합니다.
+In the popover's settings screen, "Connections" shows a combined connection status for MCP, instructions, skills and hooks for each of Claude Code and Codex ("Connected", "Needs repair", "Not connected"). Connecting, repairing and disconnecting happen in the integrations window opened by "Manage connections". Its left-hand list shows Codex, Claude Code, the memory folder, the search index and tools with their status, and for each item it shows what is wrong and why (for example, a hook runs Lore from a different location) along with a button to fix it. To connect or disconnect hooks only, use `lore-cli.exe connect <claude|codex>` and `disconnect <claude|codex>`. The app does not change global settings files until you click. Disconnecting removes only the lore hooks, and also removes an event entry created during connection if it is left empty. Uninstalling the Windows NSIS build makes the uninstaller disconnect the lore hooks for Claude and Codex (not when reinstalling for an update). On macOS and Linux, disconnect the hooks before removing the app.
 
-- Claude: `~/.claude/settings.json`의 `hooks`에 `SessionEnd`, `PreCompact` 항목을 추가합니다.
-- Codex: `~/.codex/hooks.json`의 `hooks`에 `SessionEnd`, `PreCompact` 항목을 추가합니다. Codex에서 `/hooks`로 새 훅을 신뢰로 표시해야 실행됩니다.
-- 압축 직전 훅은 세션이 끝나지 않아도 대화가 길어져 자동 압축(또는 수동 압축)이 일어날 때 그때까지의 대화를 큐에 넣습니다. 이미 기록한 부분은 다시 기록하지 않고, 다음 압축이나 세션 종료 때 이어서 기록합니다.
-- `SessionEnd`만 연결된 이전 연결은 훅이 빠진 것으로 보고 "Needs repair"(MCP·지침·스킬도 없으면 "Not connected")로 표시합니다. 연동 관리 창에서 연결을 다시 적용하거나 `lore-cli connect`를 실행하면 빠진 `PreCompact`만 더합니다.
+- Claude: adds `SessionEnd` and `PreCompact` entries to `hooks` in `~/.claude/settings.json`.
+- Codex: adds `SessionEnd` and `PreCompact` entries to `hooks` in `~/.codex/hooks.json`. The new hooks run only after you mark them as trusted with `/hooks` in Codex.
+- The pre-compaction hook queues the conversation so far when it grows long enough to trigger automatic (or manual) compaction, even if the session has not ended. Parts already recorded are not recorded again; recording continues at the next compaction or when the session ends.
+- An older connection with only `SessionEnd` is treated as missing a hook and shown as "Needs repair" (or "Not connected" if MCP, instructions and skills are also missing). Reapplying the connection in the integrations window or running `lore-cli connect` adds only the missing `PreCompact`.
 
-실행 파일명이 Windows에서는 `lore-cli.exe`, macOS·Linux에서는 `lore-cli`입니다. Unix 훅 경로는 셸 특수문자를 포함해도 리터럴로 실행되도록 인용합니다.
+The executable is `lore-cli.exe` on Windows and `lore-cli` on macOS and Linux. Unix hook paths are quoted so they run literally even if they contain shell special characters.
 
-기존 훅과 다른 설정 키는 순서까지 그대로 두고 배열 끝에 추가합니다. 다른 설치 위치를 가리키는 이전 lore 훅은 새 경로로 바꿉니다. 바꾸기 전 파일은 같은 폴더에 `<파일>.lore-backup-<시각>`으로 남깁니다. 기록 모델 프로세스에는 `LORE_RECORDER=1`을 넣으므로, 그 세션이 끝나도 훅은 등록하지 않습니다.
+Existing hooks and other settings keys are left as they are, in the same order, and new entries are appended to the end of the array. Older lore hooks that point to a different install location are switched to the new path. The file before the change is kept in the same folder as `<file>.lore-backup-<timestamp>`. The recording model process gets `LORE_RECORDER=1`, so no hook is registered when that session ends.
 
-## 데이터 위치
+## Data locations
 
-아래 `%LOCALAPPDATA%\io.github.junyoungjo.lore`는 Windows의 앱 데이터 위치입니다. macOS는 `~/Library/Application Support/io.github.junyoungjo.lore`, Linux는 `${XDG_DATA_HOME:-~/.local/share}/io.github.junyoungjo.lore`입니다. `LORE_HOME`으로 앱과 CLI의 데이터 폴더를 함께 재정의할 수 있습니다.
+`%LOCALAPPDATA%\io.github.junyoungjo.lore` below is the app data location on Windows. On macOS it is `~/Library/Application Support/io.github.junyoungjo.lore`, and on Linux `${XDG_DATA_HOME:-~/.local/share}/io.github.junyoungjo.lore`. `LORE_HOME` overrides the data folder for both the app and the CLI.
 
-새 기억 저장소 기본값은 `~/Documents/lore-memory`이고, 기존 `settings.json`에 지정한 위치는 유지합니다. 아래 `D:\doc\lore-memory`는 Windows에서 사용하던 위치의 예입니다. qmd 설정·색인·캐시는 기억 저장소가 아닌 앱 데이터의 `qmd/<기억 경로 해시>/` 아래에 PC별로 생성합니다. 처음 설정할 때 `index`를 실행하고 qmd MCP 연결의 환경 변수를 `doctor`가 보여 주는 경로에 맞춥니다. 기존 `.qmd/` 데이터는 자동으로 지우지 않습니다.
+The default for a new memory repository is `~/Documents/lore-memory`; a location already set in `settings.json` is kept. `D:\doc\lore-memory` below is an example of a location used on Windows. qmd configuration, index and cache are created per PC under `qmd/<memory path hash>/` in the app data, not in the memory repository. During initial setup, run `index` and set the environment variables of the qmd MCP connection to the paths `doctor` shows. Existing `.qmd/` data is not deleted automatically.
 
-| 경로 | 내용 |
+| Path | Contents |
 |---|---|
-| `%LOCALAPPDATA%\io.github.junyoungjo.lore\settings.json` | 설정. 앱은 이 파일을 2초마다 확인해, 직접 고친 내용도 다시 켜지 않고 적용합니다. 처음 실행한 시각(`since`)은 수동 `scan` 명령이 그 이전 세션을 건너뛰는 기준입니다. |
-| `%LOCALAPPDATA%\io.github.junyoungjo.lore\state.sqlite` | 작업 큐, 처리 위치, 실패 횟수, 최근 기록 |
-| `%LOCALAPPDATA%\io.github.junyoungjo.lore\reviews\` | 최근 50개 처리의 모델 입력·응답 |
-| `%LOCALAPPDATA%\io.github.junyoungjo.lore\migration\` | 링크 이전 계획과 백업. 훅 설정 백업은 변경한 설정 파일 옆에 별도로 남습니다. |
-| `D:\doc\lore-memory\projects\<프로젝트>\`, `common\` | 기억 문서(qmd 색인 대상) |
-| `D:\doc\lore-memory\sources\<claude|codex>\<세션 ID>.md` | 기억에 쓰인 세션의 대화 사본(qmd 색인 대상 아님) |
+| `%LOCALAPPDATA%\io.github.junyoungjo.lore\settings.json` | Settings. The app checks this file every 2 seconds and applies manual edits without a restart. The first-launch time (`since`) is the cutoff before which the manual `scan` command skips sessions. |
+| `%LOCALAPPDATA%\io.github.junyoungjo.lore\state.sqlite` | Job queue, processing positions, failure counts, recent activity |
+| `%LOCALAPPDATA%\io.github.junyoungjo.lore\reviews\` | Model inputs and responses for the last 50 runs |
+| `%LOCALAPPDATA%\io.github.junyoungjo.lore\migration\` | Link migration plans and backups. Hook settings backups are kept separately next to the changed settings file. |
+| `D:\doc\lore-memory\projects\<project>\`, `common\` | Memory notes (indexed by qmd) |
+| `D:\doc\lore-memory\sources\<claude|codex>\<session ID>.md` | Copies of the sessions used in memory (not indexed by qmd) |
 
-## 처리 규칙
+## Processing rules
 
-- **실패 처리:** 실패한 작업은 다음 시도 시각을 정해 뒤로 미루므로 다른 작업을 막지 않습니다. 실행 실패·시간 초과는 1분부터 두 배씩 최대 1시간 간격으로 8번까지, 모델 응답 검사 실패는 3번까지 다시 시도합니다. 원문이 없거나 처리한 앞부분이 바뀐 경우처럼 다시 해도 같은 결과인 실패는 바로 `실패`로 둡니다. `실패`인 작업은 상태 화면 "Needs attention"의 "View"로 큐 화면을 열어 "Retry"로 다시 넣거나 "Skip"로 넘깁니다.
-- **버리기:** 큐 화면의 "Skip"를 누르고 한 번 더 확인하면, 실패한 작업의 처리 위치 다음 구간(지금 설정의 "New conversation per recording" 기준으로 다시 계산)을 기록하지 않고 처리 위치를 그 구간 끝으로 옮깁니다. 남은 줄이 있으면 대기로 돌아가 다음 구간부터 이어서 기록하고, 없으면 완료로 둡니다. 원문 파일이 없거나, 처리한 앞부분이 바뀌었거나, 원문 JSON이 깨져 구간을 계산할 수 없으면 그 세션을 `건너뜀`으로 두어 더 기록하지 않습니다. 압축된 원문을 풀지 못한 경우처럼 다시 하면 될 수 있는 오류이면 아무것도 바꾸지 않고 오류를 보여 줍니다. 되돌릴 수 없습니다.
-- **큐 화면:** 상태 카드 아래의 대기 줄(예: "2 sessions waiting · 1 retrying")이나 "Needs attention"의 "View"를 누르면 큐 화면에서 기록 중, 대기, 재시도 대기, 실패인 작업을 프로젝트, 세션 ID, 상태와 함께 보여 주고 해당 묶음으로 스크롤합니다. 대기 줄은 대기나 재시도 대기가 있을 때만 보입니다. 아직 처리를 시작하지 않은 작업은 원문 앞부분에서 세션 ID와 작업 폴더를 읽어 프로젝트를 표시합니다. 지금 기록 중인 작업은 대기 수에 넣지 않습니다.
-- **Needs attention:** 상태 화면에서 처리할 일만 모아 한 줄씩 보여 줍니다. 대상은 연결되지 않은 훅, 검토할 기억 문서, 실패하거나 중단된 기록, 아직 다른 PC에 공유하지 않은 기억입니다. 처리할 일이 없으면 이 칸은 보이지 않습니다. 동기화 검토처럼 기록을 멈추는 상태는 맨 위 상태 카드에 보여 줍니다.
-- **긴 발언:** 12,000자를 넘는 발언은 앞 3/4과 뒤 1/4만 모델에 보내고 가운데를 `[… 중략 …]`으로 표시합니다. 인용문은 원래 발언 전체와 대조합니다.
-- **기록하지 않는 세션:** Codex 하위 에이전트 세션(세션 파일의 `subagent` 표시), Claude `subagents` 폴더의 세션, git 저장소 밖에서 진행한 세션은 `건너뜀`으로 둡니다.
-- **에이전트가 보낸 입력:** Orca나 다른 에이전트가 보내는 고정 형식 메시지는 입력마다 `agent`로 표시합니다. 대상은 "You are working inside Orca", "You are a dispatched worker", "Please carry out this task from my Orca coordinator", "Continue work from the prior Orca session", "The prior provider session is read-only context", "Original agent: ", "Another Claude session sent a message"로 시작하거나 첫 줄이 "You have N orchestration message(s)"인 입력입니다. 새로 들어온 구간의 입력이 모두 `agent`이면(입력 없이 답변만 있는 구간은 직전 입력이 `agent`이면) 기록 모델을 부르지 않고 넘어갑니다. 그 밖의 입력이 하나라도 있으면 구간 전체를 기록 모델에 보내고, 어느 입력이 사람이 직접 친 말인지와 무엇을 기록할지는 기록 모델이 판단합니다. `agent` 입력은 사용자 결정의 근거로 쓸 수 없습니다.
-- **작업 도중 보낸 말:** 어시스턴트가 일하는 도중에 사용자가 보낸 메시지는 Claude 세션 파일에 `attachment` 기록(`queued_command`, `origin.kind: "human"`)으로 저장됩니다. 앱은 이것을 그 위치의 사용자 발언으로 읽습니다. 같은 형식으로 들어오는 하위 에이전트 보고(`origin.kind: "peer"`)는 `agent`로 표시하고, 작업 알림은 읽지 않습니다.
-- **발언 시각:** 기록 모델에는 발언 시각을 이 PC의 현지 시각과 UTC 차이로 넘깁니다(예: `2026-11-04 16:50:45 +09:00`). 대화 사본의 발언 제목에는 원래대로 UTC로 적습니다.
-- **프로젝트 ID:** 저장소 루트의 선택 파일 `.lore.json`에 `{"project":"고정-id"}`를 커밋하면 PC마다 체크아웃 폴더 이름이 달라도 같은 기억을 사용합니다. 기존 이름을 ID로 쓰면 기존 기억 경로를 유지합니다. 파일이 없으면 종전대로 저장소 폴더 이름을 사용합니다. 잘못된 ID 파일은 폴더명으로 우회하지 않고 실패로 표시합니다.
-- **새 프로젝트:** 기억 폴더가 없는 저장소의 첫 기록이면 `projects/<이름>/`을 만들고 qmd 컬렉션 `project-<이름>`을 추가합니다.
-- **기존 문서 입력:** 해당 프로젝트와 common 문서가 60,000자 이하이면 모두 보냅니다. 넘으면 qmd 벡터 검색으로 관련 문서를 골라 한도까지 본문을 보내고, 나머지는 경로와 제목만 보냅니다. 모델이 본문 없는 문서를 고쳐야 하면 `needs_notes`로 요청하고, 앱이 그 본문을 넣어 한 번 더 호출합니다. 본문을 받지 않은 기존 문서를 고치는 변경안은 거부합니다.
-- **기존 문서 수정:** 기록 모델은 기존 문서의 본문 전체를 다시 쓰지 않고 고칠 곳만 보냅니다. 종류는 바꾸기(본문의 글을 그대로 옮긴 `find`를 새 글로 바꿈), 절 끝에 덧붙이기, 새 절 넣기입니다. 바꿀 글과 절 제목은 문서 본문에 정확히 한 번 있어야 하고, 그렇지 않으면 변경안을 거부하고 다시 시도합니다. 손대지 않은 글은 그대로 남습니다. 새 문서만 본문 전체를 씁니다. 기존 문서의 머리 정보(frontmatter)는 그대로 두고 `authority`만 바꾸며, `kind`는 없을 때만 넣습니다. 본문 첫 줄이 제목과 같은 `# ` 줄이면 지웁니다.
-- **사본과 링크:** 새 근거 링크는 기억 문서 기준 상대 경로와 원본 발언 번호 앵커를 사용합니다(예: `../../sources/claude/<세션>.md#L42`). 대화 사본에 해당 앵커를 보존하므로 PC 이동이나 앞쪽 발언 추가에도 새 링크는 유지됩니다. 기존 절대 경로 링크는 `portable-links`로 미리 보고 이전할 수 있습니다. 이전 형식의 링크도 계속 지원하며, 사본을 다시 쓸 때 앞쪽에 발언이 새로 들어가 줄 번호가 밀리면, 그 사본을 가리키는 모든 기억 문서의 링크를 원본 줄 번호(`L<번호>`)로 맞춰 새 줄로 옮깁니다. 기록 모델이 고칠 곳으로 보낸 글 안의 링크에도 같은 대응을 적용합니다.
-- **반영:** 검토 단계 없이 자동 반영합니다. 변경안 작성 이후 누가 문서를 고쳤으면 반영하지 않고 실패로 둡니다.
-- **자동 커밋과 검토:** 기억 저장소가 git 저장소(`<저장소>/.git`이 있음)이면 기록이 끝날 때마다 앱이 바뀐 파일을 "Record memory notes (오늘 날짜)" 메시지로 커밋합니다. 커밋은 검토 여부와 관계가 없습니다. 마지막으로 검토한 뒤 이 PC에서 바뀐 기억 문서(`common/`, `projects/`)가 있으면 "Needs attention"에 "Review N changed notes"로 그 수를 보여 줍니다. "Review"를 누르면 검토 창이 열립니다. 검토 창은 바뀐 문서를 프로젝트별로 묶어(common이 먼저, 그다음 프로젝트 이름순) 그 문서를 고친 세션과 함께 보여 주고, 문서마다 마지막 검토 때(왼쪽)와 지금(오른쪽)을 줄 단위로 나란히 보여 줍니다. 바뀐 줄 안에서는 바뀐 단어를 표시하고, 6줄을 넘게 이어지는 같은 줄은 앞뒤 2줄만 남기고 접습니다. 문서마다 체크박스가 있고, 창을 열 때는 모두 해제되어 있습니다. 프로젝트 머리글과 목록 맨 위의 체크박스로 묶음 전체를 고를 수 있습니다. "Mark reviewed"를 누르면 체크한 문서만 검토한 것으로 표시하고, 체크하지 않은 문서는 다음 검토로 남습니다. 대화 사본 같은 다른 파일과 다른 PC에서 받은 문서는 검토 대기에 넣지 않습니다. 검토 창이 열려 있는 동안에는 새 기록과 동기화를 시작하지 않고, 열 때 기록 중이면 그 기록이 끝난 뒤 diff를 보여 줍니다. 창을 닫으면 다시 기록합니다. 문서를 직접 고치는 일은 앱 밖에서 합니다. 검토는 선택 사항이며 동기화의 조건이 아닙니다. PC 사이 동기화는 [동기화 안내](sync-review.md)에 설명했습니다.
-- **최근 기록:** 상태 화면에는 앱 상태 DB에 남긴 최근 기록(최대 500개) 가운데 최근 30개를 보여 줍니다. 모든 행은 같은 높이의 두 줄입니다. 둘째 줄에는 바뀐 노트 이름, 기억이 없던 이유, 오류 가운데 하나를 한 줄로 보여 주고, 넘치는 글은 마우스를 올리면 전체를 보여 줍니다. "n notes updated"를 누르면 노트 목록 카드가 목록 위에 겹쳐 뜨고, 거기서 노트를 엽니다. 검토할 문서가 있으면 카드에서 검토 창도 열 수 있습니다. 경과 시간과 "몇 분 전"은 15초마다 다시 계산합니다. "Recent activity" 옆의 "Clear"를 누르고 한 번 더 확인하면 최근 기록을 모두 지웁니다. 기억 문서, 큐, 실패한 작업은 그대로 둡니다.
-- **하단 바:** 기억 폴더 버튼과 동기화 상태("Synced 5m ago", "2 to check", "Sync needs attention", "Sync off" 등)를 보여 줍니다. 오른쪽 버튼은 지금 동기화하고, 확인할 항목이 있거나 동기화가 연속으로 실패하고 있으면 동기화 창을 엽니다. 확인할 항목이 있어도 기록과 동기화는 계속됩니다. 마지막 동기화 시각은 다른 PC와 주고받기를 끝까지 마쳤을 때만 바뀝니다.
-- **설정 저장:** 설정 화면의 값은 바꾸는 즉시 적용합니다. 글자 칸은 칸을 벗어나거나 Enter를 누르면 저장하고 칸 옆에 "Saved"를 보여 줍니다. 앱이 값을 거부하면 이유를 보여 주고 칸을 저장된 값으로 되돌립니다. 기억 폴더는 설정 화면에서 직접 고치지 않고 "Change…"로 연동 관리 창의 기억 폴더 단계에서 바꿉니다.
-- **처리 한도:** 설정 화면 "Advanced"에서 기록 모델 시간 제한(기본 600초), qmd 색인·검색 시간 제한(기본 900초), 한 번에 보내는 새 대화(기본 30,000자), 한 번에 보내는 기존 문서(기본 60,000자)를 바꿉니다. 시간 제한은 저장하면 실행 중인 호출에도 바로 적용되고, 글자 수 한도는 다음 구간부터 적용됩니다.
+- **Failures:** A failed job is postponed to a scheduled next attempt, so it does not block other jobs. Run failures and timeouts are retried up to 8 times, starting at 1 minute and doubling up to a 1-hour interval; model response validation failures are retried up to 3 times. Failures that would give the same result on retry, such as a missing source or a change in the already-processed beginning, go straight to `failed`. For a `failed` job, open the queue screen with "View" under "Needs attention" on the status screen, then use "Retry" to requeue it or "Skip" to move past it.
+- **Discarding:** Clicking "Skip" on the queue screen and confirming once more skips recording the segment after the failed job's processing position (recalculated with the current "New conversation per recording" setting) and moves the processing position to the end of that segment. If lines remain, the job returns to waiting and continues from the next segment; otherwise it is marked done. If the source file is missing, the processed beginning has changed, or the source JSON is broken so the segment cannot be calculated, the session is marked `skipped` and is not recorded further. If the error might go away on retry, such as failing to decompress a compressed source, nothing is changed and the error is shown. This cannot be undone.
+- **Queue screen:** Clicking the waiting line under the status card (for example "2 sessions waiting · 1 retrying") or "View" under "Needs attention" opens the queue screen, which lists recording, waiting, retry-pending and failed jobs with project, session ID and status, and scrolls to the matching group. The waiting line appears only when there are waiting or retry-pending jobs. For jobs that have not started yet, the project is shown by reading the session ID and working folder from the start of the source. The job currently recording is not counted as waiting.
+- **Needs attention:** Collects only the things to act on in the status screen, one per line: unconnected hooks, memory notes to review, failed or interrupted recordings, and memory not yet shared with other PCs. If there is nothing to do, this section is hidden. States that pause recording, such as an open review window, are shown in the status card at the top.
+- **Long turns:** For a turn longer than 12,000 characters, only the first 3/4 and the last 1/4 are sent to the model, and the middle is replaced with `[… omitted …]` and a count of the characters left out. Quotes are checked against the full original turn.
+- **What a note holds:** The recording model is asked for what a later session needs: decisions the user made and their reasons, corrections to how the assistant worked, problems with their cause and fix, and open issues someone raised. It is asked to write one note per topic that states what is true now, not a report of the session, and to leave out the course of the work and details that git, CI and logs already hold. A stretch of work with nothing of that kind produces no note. The full instructions are in `crates/core/src/recorder-prompt.md`.
+- **Language:** Notes are written in the language the user wrote in during the session, and an existing note keeps its language when it is edited. File names, the `## Sources` heading the program adds, and the speaker labels in session copies are English. Notes written by earlier versions end with a Korean heading for the source list; it is still read, and it becomes `## Sources` the next time the note is changed.
+- **Sessions that are not recorded:** Codex subagent sessions (marked `subagent` in the session file), sessions in Claude's `subagents` folder, and sessions run outside a git repository are marked `skipped`.
+- **Input sent by agents:** Fixed-format messages sent by Orca or other agents are marked `agent` per input. These are inputs that start with "You are working inside Orca", "You are a dispatched worker", "Please carry out this task from my Orca coordinator", "Continue work from the prior Orca session", "The prior provider session is read-only context", "Original agent: ", or "Another Claude session sent a message", or whose first line is "You have N orchestration message(s)". If every input in the new segment is `agent` (or, for a segment with only replies and no input, if the previous input was `agent`), the recording model is not called and the segment is passed over. If there is at least one other input, the whole segment is sent to the recording model, which decides which inputs a person actually typed and what to record. `agent` inputs cannot serve as evidence of a user decision. They are sent so the model can tell what the user's own words refer to; the exchange between agents itself (who was asked to do what, status reports) is left out of the notes, and a technical finding in an agent's report is recorded only as a lesson marked as an assistant report.
+- **Messages sent mid-task:** Messages the user sends while the assistant is working are stored in the Claude session file as `attachment` records (`queued_command`, `origin.kind: "human"`). The app reads them as user turns at that position. Subagent reports that arrive in the same format (`origin.kind: "peer"`) are marked `agent`, and task notifications are not read.
+- **Turn times:** The recording model receives turn times in this PC's local time with the UTC offset (for example `2026-11-04 16:50:45 +09:00`). Turn headings in session copies keep using UTC.
+- **Project ID:** Committing `{"project":"stable-id"}` in an optional `.lore.json` file at the repository root makes every PC use the same memory even if checkout folder names differ. Using the existing name as the ID keeps the existing memory path. Without the file, the repository folder name is used as before. An invalid ID file is reported as a failure instead of falling back to the folder name.
+- **New projects:** On the first recording for a repository that has no memory folder, the app creates `projects/<name>/` and adds the qmd collection `project-<name>`.
+- **Existing notes as input:** Notes are sent without their source lists. If the project's notes and common notes total 60,000 characters or less, all of them are sent. Above that, qmd vector search picks the related notes and their bodies are sent up to the limit; for the rest, only paths and titles are sent. If the model needs to edit a note whose body it did not get, it asks with `needs_notes`, and the app calls it once more with that body included. A change that edits an existing note whose body was not provided is rejected.
+- **Editing existing notes:** The recording model does not rewrite the whole body of an existing note; it sends only the places to change. The kinds are replace (replace a `find` copied verbatim from the body with new text), append to the end of a section, insert a new section, and restate a whole section. The text to replace and section headings must appear exactly once in the note body; otherwise the change is rejected and retried. Untouched text stays as it is. Only new notes are written in full. The frontmatter of an existing note is kept, except that `authority` is updated and `kind` is added only when missing. If the first line of the body is a `# ` line identical to the title, it is removed.
+- **Copies and links:** New source links use a path relative to the memory note and an anchor with the original turn number (for example `../../sources/claude/<session>.md#L42`). Session copies keep those anchors, so new links survive moving to another PC or turns being added earlier. Existing absolute-path links can be previewed and migrated with `portable-links`. Older-format links are still supported: when a copy is rewritten and new turns inserted earlier shift the line numbers, the links in every memory note pointing to that copy are moved to the new lines by matching the original line number (`L<number>`). The same handling applies to links inside text the recording model sends as changes.
+- **Applying changes:** Changes are applied automatically, with no review step. If someone edited the note after the change was drafted, it is not applied and is marked as failed.
+- **Automatic commits and review:** If the memory repository is a git repository (`<repository>/.git` exists), the app commits the changed files with the message "Record memory notes (today's date)" whenever a recording finishes. Commits do not depend on review. If memory notes (`common/`, `projects/`) changed on this PC since the last review, "Needs attention" shows the count as "Review N changed notes". Clicking "Review" opens the review window. The review window groups the changed notes by project (common first, then projects by name) together with the sessions that changed them, and shows each note line by line, side by side, as of the last review (left) and now (right). Within changed lines, changed words are highlighted, and runs of more than 6 unchanged lines are folded, leaving 2 lines before and after. Each note has a checkbox, and all are cleared when the window opens. Checkboxes on project headers and at the top of the list select a whole group. "Mark reviewed" marks only the checked notes as reviewed; unchecked notes stay for the next review. Other files such as session copies, and notes received from other PCs, are not added to pending review. While the review window is open, no new recording or sync starts; if a recording is in progress when it opens, the diff is shown after that recording finishes. Recording resumes when the window closes. Editing notes directly happens outside the app. Review is optional and not a condition for sync. Sync between PCs is described in the [sync guide](sync-review.md).
+- **Recent activity:** The status screen shows the 30 most recent entries out of the recent activity kept in the app state DB (up to 500). Every row is two lines of the same height. The second line shows one of the changed note names, the reason no memory was recorded, or an error on a single line; overflowing text is shown in full on hover. Clicking "n notes updated" opens a note list card over the list, from which you open notes. If there are notes to review, the card can also open the review window. Elapsed time and "m ago" are recalculated every 15 seconds. Clicking "Clear" next to "Recent activity" and confirming once more removes all recent activity. Memory notes, the queue and failed jobs are left untouched.
+- **Bottom bar:** Shows the memory folder button and the sync status ("Synced 5m ago", "2 to check", "Sync needs attention", "Sync off", and so on). The button on the right syncs now, and opens the sync window when there are items to check or sync keeps failing. Recording and sync continue even when there are items to check. The last sync time changes only when an exchange with other PCs completes fully.
+- **Saving settings:** Values on the settings screen apply as soon as you change them. Text fields save when you leave the field or press Enter, and show "Saved" next to the field. If the app rejects a value, it shows the reason and reverts the field to the saved value. The memory folder is not edited directly on the settings screen; use "Change…" to change it in the memory folder step of the integrations window.
+- **Processing limits:** Under "Advanced" on the settings screen you can change the recording model timeout (default 600 seconds), the qmd index and search timeout (default 900 seconds), the new conversation sent at once (default 30,000 characters), and the existing notes sent at once (default 60,000 characters). Timeouts apply immediately to running calls once saved; character limits apply from the next segment.
 
 ## CLI
 
 ```powershell
-lore-cli doctor            # 현재 PC의 경로와 의존성 진단 (설정·DB를 만들지 않음)
-lore-cli index             # common/과 기존 프로젝트 컬렉션 등록, 로컬 qmd 색인 갱신
-lore-cli project           # 현재 저장소의 기억 프로젝트 ID 확인
-lore-cli portable-links    # 기존 절대 경로 근거 이전 미리보기
-lore-cli portable-links --apply  # 백업·중단 복구를 갖춘 명시적 이전
-lore-cli status            # 큐 상태와 실패한 작업
-lore-cli sync status       # 동기화 상태와 확인할 항목
-lore-cli sync now          # 커밋·가져오기·병합·보내기
-lore-cli sync compare      # 두 PC가 모두 고친 문서를 실제 기록 모델로 비교
-lore-cli retry <작업 ID>    # 실패·건너뜀 작업을 다시 대기열에
-lore-cli discard <작업 ID>  # 실패한 작업의 실패한 구간을 기록하지 않고 넘김(팝오버의 "Skip")
-lore-cli enqueue claude <원문 경로>
-lore-cli scan              # 훅이 놓친 세션을 직접 큐에 등록(앱은 자동으로 하지 않음)
-lore-cli work [--once]     # 트레이 앱이 꺼져 있을 때 수동 처리
-lore-cli hooks             # 훅 연결 상태 출력
-lore-cli connect claude    # 전역 훅 설정에 연결(이전 파일 백업)
-lore-cli disconnect claude # 전역 훅 설정에서 lore 훅 제거(이전 파일 백업)
-lore-cli migrate-links [--apply] [--backup <폴더>]   # 원본 세션 링크를 대화 사본 링크로 이전
-lore-cli refresh-copies [--apply]   # 큐에 있는 세션의 대화 사본을 지금의 읽기 방식으로 다시 만들고 링크를 옮김
+lore-cli doctor            # Diagnose paths and dependencies on this PC (does not create settings or the DB)
+lore-cli index             # Register common/ and existing project collections, update the local qmd index
+lore-cli project           # Show the memory project ID for the current repository
+lore-cli portable-links    # Preview migration of existing absolute-path source links
+lore-cli portable-links --apply  # Explicit migration with backup and interruption recovery
+lore-cli status            # Queue status and failed jobs
+lore-cli sync status       # Sync status and items to check
+lore-cli sync now          # Commit, fetch, merge, push
+lore-cli sync compare      # Compare notes changed on both PCs with the actual recording model
+lore-cli retry <job ID>    # Requeue a failed or skipped job
+lore-cli discard <job ID>  # Skip recording the failed segment of a failed job (the popover's "Skip")
+lore-cli enqueue claude <source path>
+lore-cli scan              # Queue sessions the hooks missed (the app does not do this automatically)
+lore-cli work [--once]     # Process manually while the tray app is not running
+lore-cli hooks             # Print hook connection status
+lore-cli connect claude    # Connect to the global hook settings (backs up the previous file)
+lore-cli disconnect claude # Remove lore hooks from the global hook settings (backs up the previous file)
+lore-cli migrate-links [--apply] [--backup <folder>]   # Migrate original-session links to session-copy links
+lore-cli refresh-copies [--apply]   # Rebuild session copies of queued sessions with the current reader and move links
 ```
 
-`work`, `sync`, `index`, `portable-links`, `refresh-copies`는 트레이 앱이 실행 중이면 거부합니다(같은 잠금 파일을 씁니다).
+`work`, `sync`, `index`, `portable-links` and `refresh-copies` refuse to run while the tray app is running (they use the same lock file).

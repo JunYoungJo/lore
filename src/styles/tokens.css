@@ -68,6 +68,8 @@ body,
   margin: 0;
   height: 100%;
   overflow: hidden;
+  /* A window does not bounce or pull like a scrolled page. */
+  overscroll-behavior: none;
 }
 
 body {
@@ -76,6 +78,8 @@ body {
   color: var(--text);
   background: var(--surface);
   -webkit-font-smoothing: antialiased;
+  /* WKWebView only honors the prefixed property, so each user-select rule carries both. */
+  -webkit-user-select: none;
   user-select: none;
 }
 
@@ -96,8 +100,99 @@ input::placeholder {
   font-feature-settings: "tnum" 1;
 }
 
-:root:not(.keyboard-nav) :focus-visible:not(input, textarea, select) {
+/* Text fields keep their focus style; everything else, checkboxes and lists included, shows a ring only after Tab. */
+:root:not(.keyboard-nav) :focus-visible:not(input:not([type="checkbox"], [type="radio"]), textarea) {
   outline: none;
+}
+
+.keyboard-nav :is(input[type="checkbox"], input[type="radio"], select, summary):focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Checkboxes and radio buttons are drawn here, so they look the same in WebView2, WKWebView and WebKitGTK. */
+input[type="checkbox"],
+input[type="radio"] {
+  -webkit-appearance: none;
+  appearance: none;
+  flex: none;
+  display: inline-grid;
+  place-content: center;
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  border: 1px solid var(--text3);
+  border-radius: 4px;
+  background: var(--surface);
+  cursor: pointer;
+}
+
+input[type="radio"] {
+  border-radius: 50%;
+}
+
+input[type="checkbox"]:checked,
+input[type="checkbox"]:indeterminate,
+input[type="radio"]:checked {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+input[type="checkbox"]:checked::after {
+  content: "";
+  width: 8px;
+  height: 4px;
+  margin-top: -2px;
+  border-left: 2px solid var(--accent-ink);
+  border-bottom: 2px solid var(--accent-ink);
+  transform: rotate(-45deg);
+}
+
+input[type="checkbox"]:indeterminate::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent-ink);
+}
+
+input[type="radio"]:checked::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+}
+
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+/* The disclosure triangle is drawn here instead of the browser's marker. */
+summary {
+  list-style: none;
+}
+
+summary::-webkit-details-marker {
+  display: none;
+}
+
+details > summary:not(:has(> span, > small))::before {
+  content: "";
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  margin: 0 8px 2px 2px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(-45deg);
+  transition: transform 0.12s ease;
+}
+
+details[open] > summary:not(:has(> span, > small))::before {
+  transform: rotate(45deg);
 }
 
 ::-webkit-scrollbar {
