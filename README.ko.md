@@ -48,7 +48,9 @@ Lore는 여러 코딩 도구와 PC를 오가며 프로젝트를 오래 이어 �
 - **연동 관리** — **Manage Lore**에서 AI 연결, 기억 폴더, 이 PC의 검색 색인과 도구를 따로 관리합니다. 파일·훅 상태를 확인해 연결을 복구·해제하고, 임베딩 모델을 바꾸기 전에 색인 재생성을 확인합니다.
 - **첫 실행 안내** — 필요한 준비를 확인하고 내장 터미널에서 설치·로그인 명령을 실행해 AI 도구를 연결합니다. 연결 준비와 실제 기록·검색 확인을 구분하며, 이후 관리는 별도 창에서 진행합니다.
 
-<img src="docs/screenshots/onboarding.png" alt="프로젝트의 결정을 기억하는 예시를 보여 주는 Lore 첫 실행 안내" width="720" />
+<p align="center">
+  <img src="docs/screenshots/onboarding.png" alt="프로젝트의 결정을 기억하는 예시를 보여 주는 Lore 첫 실행 안내" width="720" />
+</p>
 
 <details>
 <summary>설정·세션 큐·바뀐 노트 목록</summary>

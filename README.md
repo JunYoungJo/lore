@@ -48,7 +48,9 @@ Lore is built for developers who work across coding tools, long-running projects
 - **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
 - **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, and connect AI clients. Setup readiness and successful recording/recall are shown separately; ongoing management has its own window.
 
-<img src="docs/screenshots/onboarding.png" alt="Lore first-run introduction with an interactive example of remembering a project decision" width="720" />
+<p align="center">
+  <img src="docs/screenshots/onboarding.png" alt="Lore first-run introduction with an interactive example of remembering a project decision" width="720" />
+</p>
 
 The first-run introduction. Ongoing repair and removal have a separate integration-management window.
 
