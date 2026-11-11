@@ -30,5 +30,7 @@ portable-pty = "0.9"
 tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
-webview2-com = "0.38"
-windows = { version = "0.61", features = ["Win32_Foundation"] }
+# Keep these on the versions tauri's webview (wry) uses: the settings interfaces are cast from the
+# objects tauri hands out, and a cast only exists between types of the same crate version.
+webview2-com = "0.39"
+windows = { version = "0.62", features = ["Win32_Foundation"] }
