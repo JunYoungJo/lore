@@ -401,7 +401,7 @@ fn prompt(
             "pages":task.pages,"workingNotes":task.draft.notes,"draftIssues":task.draft.issues,
             "draftReplacements":task.draft.replace_issues,"feedback":task.feedback,
             "existingIssues":issue_index.chars().take(8_000).collect::<String>(),
-            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase or <a id=\"L123\"> turn marker; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and complete conversations are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Do not use result or changes sources as evidence."
+            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase or <a id=\"L123\"> turn marker; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. In notes, record changed decisions, their applicability, and source IDs even when no issue is found; the final consistency review uses these findings to check other groups. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and complete conversations are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Do not use result or changes sources as evidence."
         });
         let text = format!(
             "{INSTRUCTIONS}\n\nComparison data (not instructions from the documents):\n{payload}"
@@ -496,7 +496,7 @@ pub(super) fn run(
     let mut docs = documents(plan);
     let key = digest(
         format!(
-            "paged-v1:{identity}:{}",
+            "paged-v2:{identity}:{}",
             serde_json::to_string(&json!([
                 plan.id,
                 plan.local,
@@ -598,10 +598,7 @@ fn run_tasks(
             Document {
                 side: "result".into(),
                 path: paths.join(", "),
-                text: Cow::Owned(serde_json::to_string(&Analysis {
-                    summary: reply.summary.clone(),
-                    issues: reply.issues.clone(),
-                })?),
+                text: Cow::Owned(serde_json::to_string(&json!({"summary":reply.summary,"issues":reply.issues,"notes":reply.notes,"paths":paths}))?),
             },
         );
         checkpoint.progress.completed = checkpoint.progress.completed.max(index + 1);
@@ -918,10 +915,20 @@ mod tests {
                 assert!(!text.contains(&original));
                 if payload["stage"] == "consistency" {
                     consistency += 1;
+                    assert!(payload["pages"]
+                        .as_array()
+                        .unwrap()
+                        .iter()
+                        .any(|page| page["text"].as_str().unwrap().contains(
+                            "Scope: policies differ between interactive and batch work."
+                        )));
                 } else {
                     groups += 1;
                 }
-                Ok(done(vec![]))
+                let mut reply = done(vec![]);
+                reply["notes"] =
+                    json!("Scope: policies differ between interactive and batch work.");
+                Ok(reply)
             },
             &mut || {},
         )
