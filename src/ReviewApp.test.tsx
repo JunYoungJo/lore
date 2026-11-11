@@ -11,7 +11,7 @@ const api = vi.hoisted(() => ({
   endReview: vi.fn(),
   getReview: vi.fn(),
   reviewDiff: vi.fn(),
-  commitReview: vi.fn(),
+  markReviewed: vi.fn(),
   onStateChanged: vi.fn((handler: () => void) => {
     listeners.push(handler);
     return Promise.resolve(() => {});
@@ -22,7 +22,6 @@ vi.mock("@/ipc/api", () => api);
 
 import { ReviewApp } from "@/ReviewApp";
 
-const DEFAULT_MESSAGE = "Review memory notes (2026-11-05)";
 
 function review(overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot {
   return {
@@ -43,7 +42,6 @@ function review(overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot {
       { path: ".qmd/config/index.yml", kind: "modified" },
       { path: "sources/claude/s.md", kind: "modified" },
     ],
-    message: DEFAULT_MESSAGE,
     ...overrides,
   };
 }
@@ -95,7 +93,7 @@ describe("review window", () => {
     expect(within(list).getByText("Deleted")).toBeInTheDocument();
     expect(within(list).getByText(/demo · 로그만 남기도록 바꿨습니다\./)).toBeInTheDocument();
     expect(within(list).queryByText("projects/demo")).not.toBeInTheDocument();
-    expect(screen.getByText("Other files included: 2 (conversation copies and other repository files)")).toBeInTheDocument();
+    expect(screen.getByText("Other changed files: 2 (conversation copies and other repository files)")).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Changes in common/old.md" })).toBeInTheDocument();
     expect(api.reviewDiff).toHaveBeenCalledWith("common/old.md");
   });
@@ -113,7 +111,7 @@ describe("review window", () => {
     await userEvent.click(await screen.findByRole("button", { name: /bg\.md/ }));
     const diff = await screen.findByRole("region", { name: "Changes in projects/demo/bg.md" });
     expect(api.reviewDiff).toHaveBeenLastCalledWith("projects/demo/bg.md");
-    expect(within(diff).getByText("Last commit")).toBeInTheDocument();
+    expect(within(diff).getByText("Last review")).toBeInTheDocument();
     expect(within(diff).getByText("Current")).toBeInTheDocument();
     expect(within(diff).getByText("−1 lines")).toBeInTheDocument();
     expect(within(diff).getByText("+2 lines")).toBeInTheDocument();
@@ -144,32 +142,30 @@ describe("review window", () => {
     expect(diff).toHaveTextContent("같은 줄 5");
   });
 
-  it("starts with nothing checked and commits only the checked notes", async () => {
+  it("starts with nothing checked and marks only the checked notes as reviewed", async () => {
     const rest = review().files.filter((file) => file.path !== "projects/demo/bg.md");
     api.getReview.mockResolvedValueOnce(review()).mockResolvedValueOnce(review({ files: rest }));
-    api.commitReview.mockResolvedValue("abc1234");
+    api.markReviewed.mockResolvedValue(1);
     render(<ReviewApp />);
     await screen.findByRole("list", { name: "Changed memory notes" });
     expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark reviewed (0)" })).toBeDisabled();
+    expect(screen.getByText("These notes are already saved and shared. Marking them only clears them from this list.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Commit message")).not.toBeInTheDocument();
 
     await userEvent.click(checkbox("Select projects/demo/bg.md"));
-    const message = screen.getByLabelText("Commit message");
-    expect(message).toHaveValue(DEFAULT_MESSAGE);
-    await userEvent.type(message, " 1차");
-    await userEvent.click(screen.getByRole("button", { name: "Commit selected (1)" }));
-    expect(api.commitReview).toHaveBeenCalledWith(`${DEFAULT_MESSAGE} 1차`, ["projects/demo/bg.md"]);
-    expect(await screen.findByText("Committed (abc1234)")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Mark reviewed (1)" }));
+    expect(api.markReviewed).toHaveBeenCalledWith(["projects/demo/bg.md"]);
+    expect(await screen.findByText("Marked 1 note as reviewed")).toBeInTheDocument();
 
-    expect(await screen.findByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
+    expect(await screen.findByRole("button", { name: "Mark reviewed (0)" })).toBeDisabled();
     expect(screen.queryByRole("checkbox", { name: "Select projects/demo/bg.md" })).not.toBeInTheDocument();
     expect(checkbox("Select projects/demo/new.md")).not.toBeChecked();
-    expect(screen.getByLabelText("Commit message")).toHaveValue(DEFAULT_MESSAGE);
   });
 
   it("checks a whole project or every note at once", async () => {
     api.getReview.mockResolvedValue(review());
-    api.commitReview.mockResolvedValue("abc1234");
+    api.markReviewed.mockResolvedValue(4);
     render(<ReviewApp />);
     await screen.findByRole("list", { name: "Changed memory notes" });
 
@@ -179,7 +175,7 @@ describe("review window", () => {
     expect(checkbox("Select projects/alpha/a.md")).not.toBeChecked();
     expect(checkbox("Select all in demo")).toBeChecked();
     expect(checkbox("Select all")).toHaveProperty("indeterminate", true);
-    expect(screen.getByRole("button", { name: "Commit selected (2)" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Mark reviewed (2)" })).toBeEnabled();
 
     await userEvent.click(checkbox("Select projects/demo/new.md"));
     expect(checkbox("Select all in demo")).not.toBeChecked();
@@ -190,8 +186,8 @@ describe("review window", () => {
     await userEvent.click(checkbox("Select all"));
     expect(checkbox("Select all")).toBeChecked();
     expect(checkbox("Select all")).toHaveProperty("indeterminate", false);
-    await userEvent.click(screen.getByRole("button", { name: "Commit selected (4)" }));
-    expect(api.commitReview).toHaveBeenCalledWith(DEFAULT_MESSAGE, ["common/old.md", "projects/alpha/a.md", "projects/demo/bg.md", "projects/demo/new.md"]);
+    await userEvent.click(screen.getByRole("button", { name: "Mark reviewed (4)" }));
+    expect(api.markReviewed).toHaveBeenCalledWith(["common/old.md", "projects/alpha/a.md", "projects/demo/bg.md", "projects/demo/new.md"]);
   });
 
   it("unchecks every note from the select-all box", async () => {
@@ -201,28 +197,19 @@ describe("review window", () => {
     await userEvent.click(checkbox("Select all"));
     await userEvent.click(checkbox("Select all"));
     expect(screen.getAllByRole("checkbox").every((box) => !(box as HTMLInputElement).checked)).toBe(true);
-    expect(screen.getByRole("button", { name: "Commit selected (0)" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Mark reviewed (0)" })).toBeDisabled();
   });
 
-  it("commits the other files alone when no note changed", async () => {
+  it("has nothing to mark when no note changed since the last review", async () => {
     api.getReview.mockResolvedValue(review({ files: [] }));
-    api.commitReview.mockResolvedValue("abc1234");
     render(<ReviewApp />);
-    expect(await screen.findByText("No memory notes have changed since the last commit.")).toBeInTheDocument();
+    expect(await screen.findByText("No memory notes have changed since your last review.")).toBeInTheDocument();
     expect(screen.queryByRole("checkbox")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Commit" }));
-    expect(api.commitReview).toHaveBeenCalledWith(DEFAULT_MESSAGE, []);
-  });
-
-  it("has nothing to commit when nothing changed", async () => {
-    api.getReview.mockResolvedValue(review({ files: [], others: [] }));
-    render(<ReviewApp />);
-    expect(await screen.findByText("No memory notes have changed since the last commit.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Commit" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: /Mark reviewed/ })).not.toBeInTheDocument();
   });
 
   it("waits for the recording in progress and starts once it finishes", async () => {
-    api.getReview.mockResolvedValueOnce(review({ waiting: true, files: [], others: [], message: "" })).mockResolvedValueOnce(review());
+    api.getReview.mockResolvedValueOnce(review({ waiting: true, files: [], others: [] })).mockResolvedValueOnce(review());
     render(<ReviewApp />);
     expect(await screen.findByText("Review will begin after the current recording finishes.")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Changed memory notes" })).not.toBeInTheDocument();
@@ -233,7 +220,7 @@ describe("review window", () => {
   });
 
   it("explains when the memory store is not a git repository", async () => {
-    api.getReview.mockResolvedValue(review({ repository: false, files: [], others: [], message: "" }));
+    api.getReview.mockResolvedValue(review({ repository: false, files: [], others: [] }));
     render(<ReviewApp />);
     expect(await screen.findByText("D:/doc/knowledge is not a Git repository.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Commit/ })).not.toBeInTheDocument();

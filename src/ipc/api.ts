@@ -16,7 +16,7 @@ export const beginReview = (): Promise<void> => invoke("begin_review");
 export const endReview = (): Promise<void> => invoke("end_review");
 export const getReview = (): Promise<ReviewSnapshot> => invoke("get_review");
 export const reviewDiff = (path: string): Promise<DiffRow[]> => invoke("review_diff", { path });
-export const commitReview = (message: string, notes: string[]): Promise<string> => invoke("commit_review", { message, notes });
+export const markReviewed = (notes: string[]): Promise<number> => invoke("mark_reviewed", { notes });
 export const saveSettings = (settings: EditableSettings): Promise<void> => invoke("save_settings", { settings });
 export const setAutostart = (enabled: boolean): Promise<void> => invoke("set_autostart", { enabled });
 export const openNote = (path: string): Promise<void> => invoke("open_note", { path });
@@ -34,11 +34,12 @@ export const onShowSettings = (handler: () => void): Promise<UnlistenFn> => list
 export const openSync = (): Promise<void> => invoke("open_sync");
 export const getSync = (): Promise<import("./contract").SyncSnapshot> => invoke("get_sync");
 export const setSyncEnabled = (enabled: boolean): Promise<void> => invoke("set_sync_enabled", { enabled });
-export const prepareSync = (): Promise<void> => invoke("prepare_sync");
-export const analyzeSync = (): Promise<void> => invoke("analyze_sync");
-export const previewSync = (id: string, choices: import("./contract").SyncChoice[]): Promise<import("./contract").SyncPreview> => invoke("preview_sync", { id, choices });
-export const applySync = (id: string, choices: import("./contract").SyncChoice[], token: string): Promise<void> => invoke("apply_sync", { id, choices, token });
-export const resumeSync = (): Promise<void> => invoke("resume_sync");
+export const getSyncItem = (id: string): Promise<import("./contract").SyncItemView> => invoke("get_sync_item", { id });
+export const previewSyncItem = (id: string, option: number, customText: string | null): Promise<Record<string, import("./contract").DiffRow[]>> => invoke("preview_sync_item", { id, option, customText });
+export const resolveSyncItem = (id: string, option: number, customText: string | null): Promise<void> => invoke("resolve_sync_item", { id, option, customText });
+export const dismissSyncItem = (id: string): Promise<void> => invoke("dismiss_sync_item", { id });
+export const retrySyncComparison = (): Promise<void> => invoke("retry_sync_comparison");
+export const skipSyncComparison = (): Promise<void> => invoke("skip_sync_comparison");
 export const syncNow = (): Promise<void> => invoke("sync_now");
 export const deferSync = (): Promise<void> => invoke("defer_sync");
 

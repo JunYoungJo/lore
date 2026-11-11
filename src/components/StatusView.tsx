@@ -52,7 +52,7 @@ function QueueLink({ snapshot }: { snapshot: Snapshot }) {
 
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   const togglePause = useAppStore((store) => store.togglePause);
-  const { current, settings, sync } = snapshot;
+  const { current, settings } = snapshot;
   const chosen = settings.models[settings.backend];
   const model = `${providerLabel(settings.backend)}${chosen ? ` ${chosen}` : ""}`;
 
@@ -69,21 +69,12 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     tint = "blue";
     title = `Recording ${current.project}`;
     sub = `${providerLabel(current.provider)} session · ${model} · ${elapsed(current.startedAt, now)}`;
-  } else if (snapshot.syncing || sync?.blocked) {
+  } else if (snapshot.syncing) {
     tone = "paused";
     glyph = GitCompare;
     tint = "amber";
-    if (snapshot.syncing) {
-      title = "Syncing";
-      sub = "Recording waits until sync finishes.";
-    } else if (sync?.phase === "review") {
-      title = "Sync needs your review";
-      sub = "This PC and another PC changed the same notes. Recording waits until you choose what to keep.";
-    } else {
-      title = "Sync needs attention";
-      sub = sync?.message ?? "Recording waits until the shared changes are applied.";
-    }
-    action = { label: sync?.phase === "review" ? "Review" : "Open", run: () => void api.openSync() };
+    title = "Syncing";
+    sub = "Sharing notes with your other PCs. This takes a few seconds.";
   } else if (snapshot.reviewing) {
     tone = "paused";
     glyph = GitCompare;
@@ -157,7 +148,7 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       glyph: FileDiff,
       tint: "blue",
       title: `Review ${plural(snapshot.review, "changed note")}`,
-      detail: "Commit them to share with your other PCs.",
+      detail: "Recorded since your last review. They are saved and shared already; review when you want.",
       action: "Review",
       run: () => void api.openReview(),
     });
@@ -202,15 +193,26 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       run: showSettings,
     });
   }
-  if (snapshot.sync?.phase === "push_pending" && !snapshot.syncing) {
+  if (snapshot.sync?.phase === "failing" && !snapshot.syncing) {
     list.push({
       key: "share",
       glyph: Share2,
       tint: "amber",
       title: "Memory not shared yet",
-      detail: snapshot.sync.message ?? "Committed notes are waiting to reach your other PCs.",
+      detail: snapshot.sync.message ?? "Recorded notes are waiting to reach your other PCs. Lore keeps retrying.",
       action: "Sync",
       run: syncNow,
+    });
+  }
+  if (snapshot.sync?.items) {
+    list.push({
+      key: "sync-items",
+      glyph: GitCompare,
+      tint: "blue",
+      title: snapshot.sync.items === 1 ? "1 synced note to check" : `${snapshot.sync.items} synced notes to check`,
+      detail: "Both PCs changed these notes. They are already merged and shared; look at them when you have time.",
+      action: "Open",
+      run: () => void api.openSync(),
     });
   }
   return list;

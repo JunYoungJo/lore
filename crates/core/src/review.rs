@@ -193,30 +193,117 @@ pub fn local_date() -> String {
     chrono::Local::now().format("%Y-%m-%d").to_string()
 }
 
-pub fn default_message(date: &str) -> String {
-    format!("Review memory notes ({date})")
+pub fn record_message(date: &str) -> String {
+    format!("Record memory notes ({date})")
 }
 
-fn git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String> {
+/// The notes as they were when the user last reviewed them. Commits are made
+/// automatically, so this private ref, not HEAD, is what review compares with.
+pub const REVIEWED: &str = "refs/lore/reviewed";
+
+fn git_with(root: &Path, args: &[&str], stdin: Option<&str>, env: &[(&str, String)]) -> Result<String> {
     let program = which("git").ok_or_else(|| Error::permanent("Git was not found. Install Git and add it to PATH."))?;
     let mut command = vec![program.to_string_lossy().to_string(), "-c".to_string(), "core.quotepath=false".to_string()];
     command.extend(args.iter().map(|arg| arg.to_string()));
-    Ok(run::run(&command, root, &[], stdin, &|| GIT_LIMIT)?.stdout)
+    Ok(run::run(&command, root, env, stdin, &|| GIT_LIMIT)?.stdout)
 }
 
+fn git(root: &Path, args: &[&str], stdin: Option<&str>) -> Result<String> {
+    git_with(root, args, stdin, &[])
+}
+
+fn resolve(root: &Path, revision: &str) -> Option<String> {
+    let found = git(root, &["rev-parse", "--verify", "-q", &format!("{revision}^{{commit}}")], None).ok()?;
+    Some(found.trim().to_string()).filter(|oid| !oid.is_empty())
+}
+
+pub fn reviewed(root: &Path) -> Option<String> {
+    resolve(root, REVIEWED)
+}
+
+/// Start tracking review state from the current commit. Notes that are not
+/// committed yet stay waiting for review, as they were before automatic commits.
+pub fn ensure_reviewed(root: &Path) -> Result<()> {
+    if is_repository(root) && reviewed(root).is_none() {
+        if let Some(head) = resolve(root, "HEAD") {
+            git(root, &["update-ref", REVIEWED, &head], None)?;
+        }
+    }
+    Ok(())
+}
+
+/// An interrupted merge or rebase started outside Lore must be finished there.
+pub fn in_progress(root: &Path) -> Result<bool> {
+    for name in ["MERGE_HEAD", "CHERRY_PICK_HEAD", "rebase-merge", "rebase-apply"] {
+        let path = git(root, &["rev-parse", "--git-path", name], None)?;
+        if root.join(path.trim()).exists() {
+            return Ok(true);
+        }
+    }
+    Ok(false)
+}
+
+/// Commit every change in the memory folder. Returns false when nothing changed.
+pub fn commit_all(root: &Path, message: &str) -> Result<bool> {
+    if !is_repository(root) || git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"], None)?.is_empty() {
+        return Ok(false);
+    }
+    if in_progress(root)? {
+        return Err(Error::permanent("Finish the Git merge or rebase in the memory folder first."));
+    }
+    git(root, &["add", "-A"], None)?;
+    git(root, &["commit", "-q", "-F", "-"], Some(message))?;
+    Ok(true)
+}
+
+/// Commit what a recording just wrote, so it can be shared without a manual step.
+pub fn record_commit(root: &Path) -> Result<bool> {
+    ensure_reviewed(root)?;
+    commit_all(root, &record_message(&local_date()))
+}
+
+fn parse_name_status(output: &str) -> Vec<FileChange> {
+    let mut changes = Vec::new();
+    let mut fields = output.split('\0').filter(|field| !field.is_empty());
+    while let (Some(code), Some(path)) = (fields.next(), fields.next()) {
+        let kind = match code.as_bytes().first() {
+            Some(b'A') => ChangeKind::Added,
+            Some(b'D') => ChangeKind::Deleted,
+            _ => ChangeKind::Modified,
+        };
+        changes.push(FileChange { path: path.to_string(), kind });
+    }
+    changes
+}
+
+/// Changes since the last review: committed or not, as long as the files differ
+/// from the reviewed state. Without review state this is the uncommitted work.
 pub fn working_changes(root: &Path) -> Result<Option<WorkingChanges>> {
     if !is_repository(root) {
         return Ok(None);
     }
-    Ok(Some(parse_status(&git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"], None)?)))
+    let status = parse_status(&git(root, &["status", "--porcelain=v1", "-z", "--untracked-files=all"], None)?);
+    let Some(base) = reviewed(root) else { return Ok(Some(status)) };
+    let mut all = parse_name_status(&git(root, &["diff", "--name-status", "--no-renames", "-z", &base, "--"], None)?);
+    // A tree diff does not list files Git is not tracking yet.
+    for change in status.notes.into_iter().chain(status.others) {
+        if change.kind == ChangeKind::Added && !all.iter().any(|known| known.path == change.path) {
+            all.push(change);
+        }
+    }
+    all.sort_by(|a, b| a.path.cmp(&b.path));
+    let (notes, others) = all.into_iter().partition(|change| is_note(&change.path));
+    Ok(Some(WorkingChanges { notes, others }))
 }
 
-pub fn last_commit_time(root: &Path) -> Option<i64> {
-    git(root, &["log", "-1", "--format=%ct"], None).ok()?.trim().parse().ok()
+pub fn last_review_time(root: &Path) -> Option<i64> {
+    let base = reviewed(root).unwrap_or_else(|| "HEAD".into());
+    git(root, &["log", "-1", "--format=%ct", &base], None).ok()?.trim().parse().ok()
 }
 
 pub fn file_diff(root: &Path, path: &str) -> Result<Vec<DiffRow>> {
-    let committed = git(root, &["show", &format!("HEAD:{path}")], None).unwrap_or_default().replace("\r\n", "\n");
+    let base = reviewed(root).unwrap_or_else(|| "HEAD".into());
+    let committed = git(root, &["show", &format!("{base}:{path}")], None).unwrap_or_default().replace("\r\n", "\n");
     let current = match std::fs::read_to_string(root.join(path)) {
         Ok(text) => text.replace("\r\n", "\n"),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -225,32 +312,87 @@ pub fn file_diff(root: &Path, path: &str) -> Result<Vec<DiffRow>> {
     Ok(side_by_side(&committed, &current))
 }
 
-pub fn commit_paths(changes: &WorkingChanges, notes: &[String]) -> Result<Vec<String>> {
-    if let Some(stray) = notes.iter().find(|note| !changes.notes.iter().any(|change| &change.path == *note)) {
-        return Err(Error::permanent(format!("This note has not changed since the last commit: {stray}. Close and reopen the review window.")));
+type Entries = std::collections::BTreeMap<String, (String, String)>;
+
+fn entries(root: &Path, revision: &str) -> Result<Entries> {
+    let mut found = Entries::new();
+    for entry in git(root, &["ls-tree", "-r", "-z", revision], None)?.split('\0').filter(|entry| !entry.is_empty()) {
+        if let Some((meta, path)) = entry.split_once('\t') {
+            let mut parts = meta.split(' ');
+            if let (Some(mode), Some(_), Some(oid)) = (parts.next(), parts.next(), parts.next()) {
+                found.insert(path.to_string(), (mode.to_string(), oid.to_string()));
+            }
+        }
     }
-    let paths: Vec<String> = changes.notes.iter().filter(|change| notes.contains(&change.path)).chain(&changes.others).map(|change| change.path.clone()).collect();
-    if paths.is_empty() {
-        return Err(Error::permanent("No files to commit."));
-    }
-    Ok(paths)
+    Ok(found)
 }
 
-pub fn commit_notes(root: &Path, notes: &[String], message: &str) -> Result<String> {
-    if message.trim().is_empty() {
-        return Err(Error::permanent("The commit message is empty."));
-    }
+/// Store `start` with some paths replaced as the new reviewed state. Uses a
+/// private index, so the user's staging area and files are not touched.
+fn store_reviewed(root: &Path, start: &str, replace: &[(String, Option<(String, String)>)]) -> Result<()> {
+    let index = std::env::temp_dir().join(format!("lore-reviewed-{}-{}.index", std::process::id(), chrono::Utc::now().timestamp_micros()));
+    let env = [("GIT_INDEX_FILE", index.to_string_lossy().to_string())];
+    let result = (|| {
+        git_with(root, &["read-tree", start], None, &env)?;
+        for (path, entry) in replace {
+            match entry {
+                Some((mode, oid)) => git_with(root, &["update-index", "--add", "--cacheinfo", &format!("{mode},{oid},{path}")], None, &env)?,
+                None => git_with(root, &["update-index", "--force-remove", "--", path], None, &env)?,
+            };
+        }
+        let tree = git_with(root, &["write-tree"], None, &env)?;
+        let commit = git(root, &["commit-tree", tree.trim(), "-F", "-"], Some("Reviewed memory notes\n"))?;
+        git(root, &["update-ref", REVIEWED, commit.trim()], None)
+    })();
+    let _ = std::fs::remove_file(&index);
+    result.map(|_| ())
+}
+
+/// Mark the checked notes as reviewed. Unchecked notes keep waiting; files that
+/// are not notes, such as conversation copies, never wait.
+pub fn mark_reviewed(root: &Path, notes: &[String]) -> Result<usize> {
     let changes = working_changes(root)?.ok_or_else(|| Error::permanent("The memory folder is not a Git repository."))?;
-    let paths = commit_paths(&changes, notes)?;
-    // The message already uses stdin, and a long path list can pass the Windows command-line limit,
-    // so the paths go through a file. `commit` with paths leaves anything else staged out of the commit.
-    let list = std::env::temp_dir().join(format!("lore-commit-{}-{}.txt", std::process::id(), chrono::Utc::now().timestamp_micros()));
-    std::fs::write(&list, paths.join("\0"))?;
-    let from = format!("--pathspec-from-file={}", list.display());
-    let result = git(root, &["--literal-pathspecs", "add", &from, "--pathspec-file-nul"], None).and_then(|_| git(root, &["--literal-pathspecs", "commit", "-q", "-F", "-", &from, "--pathspec-file-nul"], Some(message)));
-    let _ = std::fs::remove_file(&list);
-    result?;
-    Ok(git(root, &["rev-parse", "--short", "HEAD"], None)?.trim().to_string())
+    if let Some(stray) = notes.iter().find(|note| !changes.notes.iter().any(|change| &change.path == *note)) {
+        return Err(Error::permanent(format!("This note has not changed since the last review: {stray}. Close and reopen the review window.")));
+    }
+    if changes.notes.is_empty() && changes.others.is_empty() {
+        return Err(Error::permanent("Nothing is waiting for review."));
+    }
+    record_commit(root)?;
+    let head = resolve(root, "HEAD").ok_or_else(|| Error::permanent("The memory folder has no commits yet."))?;
+    let unchecked: Vec<&FileChange> = changes.notes.iter().filter(|change| !notes.contains(&change.path)).collect();
+    let before = match reviewed(root) {
+        Some(base) if !unchecked.is_empty() => entries(root, &base)?,
+        _ => {
+            git(root, &["update-ref", REVIEWED, &head], None)?;
+            return Ok(notes.len());
+        }
+    };
+    let keep: Vec<_> = unchecked.into_iter().map(|change| (change.path.clone(), before.get(&change.path).cloned())).collect();
+    store_reviewed(root, &head, &keep)?;
+    Ok(notes.len())
+}
+
+/// Notes received from another PC were recorded and reviewed there, so they do
+/// not wait for review here unless this PC also has unreviewed changes to them.
+pub fn absorb(root: &Path, before: &str, after: &str) -> Result<()> {
+    let Some(base) = reviewed(root) else { return Ok(()) };
+    let tree = |revision: &str| git(root, &["rev-parse", &format!("{revision}^{{tree}}")], None);
+    if tree(&base)? == tree(before)? {
+        git(root, &["update-ref", REVIEWED, after], None)?;
+        return Ok(());
+    }
+    let (reviewed_files, old, new) = (entries(root, &base)?, entries(root, before)?, entries(root, after)?);
+    let incoming = git(root, &["diff", "--name-only", "--no-renames", "-z", before, after], None)?;
+    let replace: Vec<_> = incoming
+        .split('\0')
+        .filter(|path| !path.is_empty() && reviewed_files.get(*path) == old.get(*path))
+        .map(|path| (path.to_string(), new.get(path).cloned()))
+        .collect();
+    if replace.is_empty() {
+        return Ok(());
+    }
+    store_reviewed(root, &base, &replace)
 }
 
 #[cfg(test)]
@@ -370,37 +512,16 @@ mod tests {
         assert_eq!(since_commit(&recent, None).len(), 3);
     }
 
-    fn notes(paths: &[&str]) -> Vec<String> {
-        paths.iter().map(|path| path.to_string()).collect()
+    #[test]
+    fn a_tree_diff_lists_added_deleted_and_modified_files() {
+        let changes = parse_name_status("M\0projects/demo/a.md\0A\0projects/demo/new.md\0D\0common/old.md\0");
+        let listed: Vec<(&str, ChangeKind)> = changes.iter().map(|change| (change.path.as_str(), change.kind)).collect();
+        assert_eq!(listed, vec![("projects/demo/a.md", ChangeKind::Modified), ("projects/demo/new.md", ChangeKind::Added), ("common/old.md", ChangeKind::Deleted)]);
     }
 
     #[test]
-    fn a_commit_takes_the_checked_notes_and_every_other_change() {
-        let changes = parse_status(" M projects/demo/a.md\0?? projects/demo/new.md\0 D common/old.md\0 M sources/claude/s.md\0?? .qmd/config/index.yml\0");
-        assert_eq!(
-            commit_paths(&changes, &notes(&["projects/demo/new.md", "common/old.md"])).unwrap(),
-            vec!["common/old.md", "projects/demo/new.md", ".qmd/config/index.yml", "sources/claude/s.md"]
-        );
-        assert_eq!(commit_paths(&changes, &[]).unwrap(), vec![".qmd/config/index.yml", "sources/claude/s.md"]);
-    }
-
-    #[test]
-    fn a_commit_refuses_a_path_that_is_not_a_changed_note() {
-        let changes = parse_status(" M projects/demo/a.md\0 M sources/claude/s.md\0");
-        for stray in ["projects/demo/same.md", "../outside.md", "sources/claude/s.md"] {
-            let error = commit_paths(&changes, &notes(&[stray])).unwrap_err();
-            assert!(error.to_string().contains(stray), "{error}");
-        }
-    }
-
-    #[test]
-    fn a_commit_needs_at_least_one_file() {
-        assert!(commit_paths(&WorkingChanges::default(), &[]).is_err());
-    }
-
-    #[test]
-    fn default_message_is_only_the_dated_title() {
-        assert_eq!(default_message("2026-11-05"), "Review memory notes (2026-11-05)");
+    fn the_automatic_commit_message_is_only_the_dated_title() {
+        assert_eq!(record_message("2026-11-05"), "Record memory notes (2026-11-05)");
     }
 
     #[test]

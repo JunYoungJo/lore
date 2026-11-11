@@ -168,6 +168,13 @@ pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Re
     if let Some(entry) = activity(&job, &outcome) {
         queue.add_activity(&entry)?;
     }
+    // Recorded notes are committed right away so sync never waits for a manual
+    // commit. A failure here is reported by the next sync, which commits again.
+    if matches!(outcome, Outcome::Recorded { .. }) {
+        if let Err(error) = crate::review::record_commit(&settings.knowledge_root()) {
+            eprintln!("Could not commit the recorded notes: {error}");
+        }
+    }
     if outcome != Outcome::CaughtUp {
         reporter.finished(&job, &outcome);
     }

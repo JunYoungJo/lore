@@ -42,7 +42,7 @@ Lore is built for developers who work across coding tools, long-running projects
 - **Local Markdown, searchable context** — Notes live in a folder you choose. [qmd](https://github.com/tobi/qmd) indexes them for search and retrieval through its MCP server.
 - **Review before committing** — Compare local changes side by side and choose which notes to commit. Conversation recording itself writes notes automatically; this review controls the Git commit.
 - **Git sharing with conflict review** — Move through changed notes, evidence-backed choices, and a side-by-side final result. Compare related changes even when Git reports no line conflict, then confirm before applying and sharing.
-- **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. Synchronization also retains its state after indexing or push failures.
+- **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. A failed sync is retried in the background without holding recording.
 - **A tray view of the work** — See the current recording, waiting sessions, and recent notes. **Needs attention** collects connection problems, notes to review, failed recordings, and unshared memory; the footer shows sync status and a sync action. Open updated notes from an activity row.
 - **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure recording limits.
 - **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
@@ -142,24 +142,27 @@ To bring existing memory documents from another PC, follow the [portability guid
 
 Clone the same **memory repository** on each PC and set each app's memory folder to its local checkout. Give source projects a stable [project ID](docs/multiplatform.md#고정-프로젝트-id) when checkout names differ.
 
-1. In **Needs attention**, use **Review** to compare and commit changed notes. Uncommitted files must be handled before synchronization.
-2. Use the footer sync button or **Settings → Memory & sync → Sync now**. If only one side has new commits, Lore synchronizes that history and refreshes this PC's index.
-3. If the histories diverge, open the review from the status card. Inspect the changed-note list and raw differences, then choose **Compare with model**. Related project or shared-note changes are compared even when Git reports no line conflict.
-4. Work through the decisions in the sidebar: inspect the source quotations and choose what each note should say. The footer tracks how many decisions are complete.
-5. Choose **Check result** to compare **This PC now** with **After applying**. Confirm with **Apply & share**. Lore creates a merge commit, refreshes the index, and pushes without force.
+Turn on **Settings → Memory & sync → Auto-sync**. From then on sync needs no action from you:
 
-<img src="docs/screenshots/sync-review.png" alt="Memory sync with a decision sidebar, source evidence, resolution choices, and a fixed action bar" width="900" />
+1. When a recording finishes, Lore commits the notes it wrote.
+2. It fetches the other PCs' commits and merges them. Notes changed on different PCs, or in different places of the same note, are simply combined.
+3. Where both PCs changed the same lines, Lore keeps the lines from both and lists the note under **to check**.
+4. It refreshes this PC's search index and pushes, without force. If another PC pushed first, it merges again and retries.
 
-You can resolve an issue by choosing an option; editing a document by hand is optional. **Sync every five minutes is off by default.** When enabled, it checks committed history and pauses new memory recording when review is needed. Model comparison and final approval remain manual. Uncommitted files are not automatically committed or stashed.
+Recording never waits for sync. A failed sync is retried on the next cycle and reported only after it fails three times in a row. **Auto-sync is off by default**; with it off, notes are still committed after each recording and shared when you choose **Sync now**.
+
+After a sync, Lore asks the recording model to compare only the notes that both PCs changed. Disagreements it finds are added to the same list, with the quoted sources and a few wordings to choose from. Notes are already merged and shared at that point, so you can look at the list whenever you want, or not at all.
+
+<img src="docs/screenshots/sync-review.png" alt="Memory sync listing notes to check: a disagreement with quoted sources, wording choices, and a preview of the note after applying" width="900" />
 
 <details>
-<summary>See the final document preview</summary>
+<summary>See a note where both PCs' lines were kept</summary>
 
-<img src="docs/screenshots/sync-preview.png" alt="Final check compares this PC's current note and the result after applying, before sharing" width="900" />
+<img src="docs/screenshots/sync-merged.png" alt="A note changed on both PCs, showing this PC's version before sync next to the merged note" width="900" />
 
 </details>
 
-See the [sync review guide](docs/sync-review.md) for retrying, deferring, and handling unsupported conflicts. The model can miss semantic contradictions; review its evidence and proposed wording.
+Reviewing notes is separate and optional: **Review** in **Needs attention** shows what was recorded on this PC since your last review. See the [sync guide](docs/sync-review.md) for failures, retries, and the CLI. The model can miss contradictions; check its evidence and proposed wording.
 
 ## Data and privacy
 
@@ -215,7 +218,7 @@ Both evaluations substitute an indexing fixture for qmd. They test model output 
 - [한국어 소개와 시작하기](README.ko.md)
 - [Detailed usage and CLI reference](docs/usage.md) — Korean
 - [Multiple PCs, platform paths, and migration](docs/multiplatform.md) — Korean
-- [Synchronization review and recovery](docs/sync-review.md) — Korean
+- [Synchronization and notes to check](docs/sync-review.md) — Korean
 - [Desktop releases and app updates](docs/releasing.md)
 
 ## License

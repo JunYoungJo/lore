@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { FileMinus, FilePen, FilePlus, GitCommitHorizontal, LoaderCircle, TriangleAlert, type LucideIcon } from "lucide-react";
+import { CheckCheck, FileMinus, FilePen, FilePlus, LoaderCircle, TriangleAlert, type LucideIcon } from "lucide-react";
 
 import { DiffView } from "@/components/DiffView";
 import * as api from "@/ipc/api";
@@ -74,12 +74,10 @@ export function ReviewApp() {
   const [viewing, setViewing] = useState<string | null>(null);
   const [checked, setChecked] = useState<ReadonlySet<string>>(new Set());
   const [rows, setRows] = useState<DiffRow[] | null>(null);
-  const [message, setMessage] = useState("");
   const [notice, setNotice] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [committing, setCommitting] = useState(false);
   const waiting = useRef(true);
-  const messageLoaded = useRef(false);
 
   const load = useCallback(async () => {
     try {
@@ -87,10 +85,6 @@ export function ReviewApp() {
       waiting.current = next.waiting;
       setReview(next);
       if (next.waiting) return;
-      if (!messageLoaded.current) {
-        setMessage(next.message);
-        messageLoaded.current = true;
-      }
       setViewing((current) => (next.files.some((file) => file.path === current) ? current : (next.files[0]?.path ?? null)));
     } catch (failure) {
       setError(String(failure));
@@ -122,7 +116,6 @@ export function ReviewApp() {
   const others = review?.others ?? [];
   const ready = review !== null && review.repository && !review.waiting;
   const picked = files.filter((file) => checked.has(file.path)).map((file) => file.path);
-  const committable = files.length === 0 ? others.length > 0 : picked.length > 0;
 
   const check = (paths: string[], on: boolean) =>
     setChecked((current) => {
@@ -135,10 +128,9 @@ export function ReviewApp() {
     setCommitting(true);
     setError(null);
     try {
-      const hash = await api.commitReview(message, picked);
-      setNotice(`Committed (${hash})`);
+      const marked = await api.markReviewed(picked);
+      setNotice(`Marked ${marked} ${marked === 1 ? "note" : "notes"} as reviewed`);
       setChecked(new Set());
-      messageLoaded.current = false;
       await load();
     } catch (failure) {
       setError(String(failure));
@@ -179,7 +171,7 @@ export function ReviewApp() {
           <div className="review-body">
             <aside className="review-side">
               {files.length === 0 ? (
-                <div className="review-note">No memory notes have changed since the last commit.</div>
+                <div className="review-note">No memory notes have changed since your last review.</div>
               ) : (
                 <>
                   <label className="review-all">
@@ -215,7 +207,7 @@ export function ReviewApp() {
                   </ul>
                 </>
               )}
-              {others.length > 0 && <div className="review-others">Other files included: {others.length} (conversation copies and other repository files)</div>}
+              {others.length > 0 && <div className="review-others">Other changed files: {others.length} (conversation copies and other repository files)</div>}
             </aside>
             {viewing && rows ? (
               <DiffView key={viewing} path={viewing} rows={rows} />
@@ -230,16 +222,14 @@ export function ReviewApp() {
             )}
           </div>
           <footer className="review-foot">
-            <label className="field-label" htmlFor="commit-message">
-              Commit message
-            </label>
-            <textarea id="commit-message" className="input review-message" rows={4} value={message} onChange={(event) => setMessage(event.target.value)} />
             <div className="review-actions">
-              <span className="grow">{notice}</span>
-              <button type="button" className="btn primary" disabled={committing || !committable || !message.trim()} onClick={() => void commit()}>
-                <GitCommitHorizontal size={15} strokeWidth={1.9} />
-                {committing ? "Committing…" : files.length === 0 ? "Commit" : `Commit selected (${picked.length})`}
-              </button>
+              <span className="grow">{notice ?? (files.length > 0 ? "These notes are already saved and shared. Marking them only clears them from this list." : "")}</span>
+              {files.length > 0 && (
+                <button type="button" className="btn primary" disabled={committing || picked.length === 0} onClick={() => void commit()}>
+                  <CheckCheck size={15} strokeWidth={1.9} />
+                  {committing ? "Marking…" : `Mark reviewed (${picked.length})`}
+                </button>
+              )}
             </div>
           </footer>
         </>

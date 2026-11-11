@@ -130,7 +130,6 @@ export interface ReviewSnapshot {
   root: string;
   files: ReviewFile[];
   others: FileChange[];
-  message: string;
 }
 
 export interface Segment {
@@ -234,22 +233,16 @@ export interface ToolChecks {
   auth: Record<Provider, "ready" | "signed_out" | "unavailable" | "unknown">;
 }
 
-export interface SyncSummary { phase: string; message: string | null; issues: number; blocked: boolean; lastSyncedAt: number | null }
+/** `retrying`: a sync failed and is retried quietly. `failing`: it failed several times in a row. */
+export interface SyncSummary { phase: "idle" | "retrying" | "failing"; message: string | null; items: number; comparing: boolean; lastSyncedAt: number | null }
 export interface SyncFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; textConflict: boolean }
 export interface SyncSource { id: string; side: string; path: string; text: string }
 export interface SyncEdit { path: string; find: string; text: string }
 export interface SyncOption { label: string; description: string; edits: SyncEdit[] }
 export interface SyncIssue { title: string; explanation: string; evidence: { source: string; quote: string }[]; options: SyncOption[] }
-export interface SyncAnalysis { summary: string; issues: SyncIssue[] }
-export interface SyncPlan {
-  id: string; root: string; branch: string; remoteName: string; remoteRef: string;
-  local: string; remote: string; base: string; tree: string; phase: string;
-  files: SyncFile[]; sources: SyncSource[]; unsupported: string[]; otherFiles: string[];
-  analysis: SyncAnalysis | null; approved: string | null; message: string | null;
-}
-export interface LineCount { added: number; removed: number }
-export interface SyncFileLines { path: string; local: LineCount; remote: LineCount }
+/** Something to look at later. `merged`: both PCs' lines were kept. `kept`: deleted on one PC, edited on the other. `decision`: the model found notes that disagree. */
+export interface SyncItem { id: string; kind: "merged" | "kept" | "decision"; plan: string; path: string; title: string; detail: string; createdAt: number; issue: number | null }
+export interface SyncItemFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; rows: DiffRow[] }
+export interface SyncItemView { item: SyncItem; files: SyncItemFile[]; issue: SyncIssue | null; sources: SyncSource[] }
 export interface SyncComparisonProgress { completed: number; total: number; stage: string; reads: number; error: string | null }
-export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; plan: SyncPlan | null; tracking: string | null; model: string; review: number | null; changes: SyncFileLines[]; comparison?: SyncComparisonProgress | null }
-export interface SyncChoice { issue: number; option: number; customText: string | null }
-export interface SyncPreview { files: Record<string, string>; diffs: Record<string, DiffRow[]>; token: string }
+export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; tracking: string | null; model: string; review: number | null; items: SyncItem[]; comparison: SyncComparisonProgress | null; comparisonError: string | null; indexPending: boolean }

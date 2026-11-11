@@ -34,7 +34,6 @@ pub struct ReviewSnapshot {
     pub root: String,
     pub files: Vec<ReviewFile>,
     pub others: Vec<FileChange>,
-    pub message: String,
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -92,13 +91,13 @@ pub fn end_review(app: AppHandle) {
 pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> {
     let root = state.settings().knowledge_root();
     let waiting = state.current().is_some() || state.operation_busy();
-    let mut snapshot = ReviewSnapshot { repository: review::is_repository(&root), waiting, root: root.to_string_lossy().replace('\\', "/"), files: Vec::new(), others: Vec::new(), message: String::new() };
+    let mut snapshot = ReviewSnapshot { repository: review::is_repository(&root), waiting, root: root.to_string_lossy().replace('\\', "/"), files: Vec::new(), others: Vec::new() };
     if waiting || !snapshot.repository {
         return Ok(snapshot);
     }
     let changes = review::working_changes(&root).map_err(error)?.unwrap_or_default();
     let recent = Queue::open(&state.paths.database()).map_err(error)?.recent_activity(RECENT_KEPT).map_err(error)?;
-    let since = review::since_commit(&recent, review::last_commit_time(&root));
+    let since = review::since_commit(&recent, review::last_review_time(&root));
     snapshot.files = changes
         .notes
         .into_iter()
@@ -112,7 +111,6 @@ pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> 
         })
         .collect();
     snapshot.others = changes.others;
-    snapshot.message = review::default_message(&review::local_date());
     Ok(snapshot)
 }
 
@@ -125,16 +123,13 @@ pub fn review_diff(state: State<'_, AppState>, path: String) -> Result<Vec<DiffR
 }
 
 #[tauri::command]
-pub async fn commit_review(app: AppHandle, message: String, notes: Vec<String>) -> Result<String, String> {
+pub async fn mark_reviewed(app: AppHandle, notes: Vec<String>) -> Result<usize, String> {
     let handle = app.clone();
-    let hash = tauri::async_runtime::spawn_blocking(move || {
+    let marked = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
         let _operation = state.operation();
-        let settings = state.settings();
-        let pending = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &settings.knowledge_root()));
-        if pending.blocked && pending.phase != "review" { return Err("Finish the interrupted sync apply or index update first.".to_string()); }
-        review::commit_notes(&settings.knowledge_root(), &notes, &message).map_err(error)
+        review::mark_reviewed(&state.settings().knowledge_root(), &notes).map_err(error)
     }).await.map_err(error)??;
     changed(&app);
-    Ok(hash)
+    Ok(marked)
 }

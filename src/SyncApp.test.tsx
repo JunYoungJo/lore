@@ -1,226 +1,194 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { DiffRow, SyncPlan, SyncSnapshot } from "@/ipc/contract";
+import type { DiffRow, SyncItem, SyncItemView, SyncSnapshot } from "@/ipc/contract";
 
 const api = vi.hoisted(() => ({
-  getSync: vi.fn(), setSyncEnabled: vi.fn(), prepareSync: vi.fn(), analyzeSync: vi.fn(), previewSync: vi.fn(), applySync: vi.fn(), resumeSync: vi.fn(), deferSync: vi.fn(),
-  openReview: vi.fn(), openSettings: vi.fn(), syncNow: vi.fn(), onStateChanged: vi.fn(() => Promise.resolve(() => {})), onSyncComparisonProgress: vi.fn((_handler: (progress: unknown) => void) => Promise.resolve(() => {})),
+  getSync: vi.fn(), getSyncItem: vi.fn(), previewSyncItem: vi.fn(), resolveSyncItem: vi.fn(), dismissSyncItem: vi.fn(), retrySyncComparison: vi.fn(), skipSyncComparison: vi.fn(), deferSync: vi.fn(),
+  openReview: vi.fn(), openSettings: vi.fn(), openNote: vi.fn(), syncNow: vi.fn(), onStateChanged: vi.fn(() => Promise.resolve(() => {})), onSyncComparisonProgress: vi.fn((_handler: (progress: unknown) => void) => Promise.resolve(() => {})),
 }));
 vi.mock("@/ipc/api", () => api);
 import { SyncApp } from "@/SyncApp";
 
 const NOW = 1_800_000_600;
 const note = "projects/demo/policy.md";
-function plan(): SyncPlan {
-  return { id: "comparison-1", root: "/knowledge", branch: "main", remoteName: "origin", remoteRef: "refs/heads/main", local: "aaaa1111", remote: "bbbb2222", base: "cccc3333", tree: "dddd4444", phase: "review", approved: null, message: null,
-    files: [{ path: note, base: "미정", local: "로그만", remote: "팝업", merged: "원래 문구", textConflict: false }],
-    sources: [{ id: "local:source", side: "local", path: "sources/claude/a.md", text: "사용자: 팝업은 빼고 로그만 남겨." }, { id: "remote:source", side: "remote", path: "sources/codex/b.md", text: "사용자: 오류 팝업을 표시해." }],
-    unsupported: [], otherFiles: ["sources/claude/a.md"],
-    analysis: { summary: "알림 방침이 서로 다릅니다. 사용자의 최종 확인이 필요합니다.", issues: [{ title: "오류 알림 방침", explanation: "양쪽 문서에서 반대되는 방침을 기록했습니다.", evidence: [{ source: "local:source", quote: "팝업은 빼고 로그만 남겨." }, { source: "remote:source", quote: "오류 팝업을 표시해." }], options: [
-      { label: "로그 전용", description: "팝업 없이 로그만 남깁니다.", edits: [{ path: note, find: "원래 문구", text: "로그만" }] },
-      { label: "팝업 사용", description: "오류 팝업을 표시합니다.", edits: [{ path: note, find: "원래 문구", text: "팝업" }] },
-    ] }] },
-  };
-}
+const merged: SyncItem = { id: "m1", kind: "merged", plan: "p1", path: note, title: "Both PCs changed the same lines", detail: "Lore kept the lines from both PCs. Check the note for repeated or disagreeing lines.", createdAt: NOW - 60, issue: null };
+const decision: SyncItem = { id: "d1", kind: "decision", plan: "p1", path: note, title: "오류 알림 방침", detail: "양쪽 문서에서 반대되는 방침을 기록했습니다.", createdAt: NOW - 30, issue: 0 };
+const diff = (text: string): DiffRow[] => [{ kind: "added", leftNo: null, left: null, rightNo: 2, right: [{ kind: "added", text }] }];
+const file = { path: note, base: "미정", local: "로그만", remote: "팝업", merged: "로그만\n팝업", rows: diff("팝업") };
+const views: Record<string, SyncItemView> = {
+  m1: { item: merged, files: [file], issue: null, sources: [] },
+  d1: {
+    item: decision,
+    files: [file],
+    sources: [{ id: "local:sources/claude/a.md", side: "local", path: "sources/claude/a.md", text: "사용자: 팝업은 빼고 로그만 남겨." }, { id: "remote:sources/codex/b.md", side: "remote", path: "sources/codex/b.md", text: "사용자: 오류 팝업을 표시해." }],
+    issue: { title: "오류 알림 방침", explanation: "양쪽 문서에서 반대되는 방침을 기록했습니다.", evidence: [{ source: "local:sources/claude/a.md", quote: "팝업은 빼고 로그만 남겨." }, { source: "remote:sources/codex/b.md", quote: "오류 팝업을 표시해." }], options: [
+      { label: "로그 전용", description: "팝업 없이 로그만 남깁니다.", edits: [{ path: note, find: "팝업", text: "" }] },
+      { label: "팝업 사용", description: "오류 팝업을 표시합니다.", edits: [{ path: note, find: "로그만", text: "" }] },
+    ] },
+  },
+};
 function snapshot(overrides: Partial<SyncSnapshot> = {}): SyncSnapshot {
-  return { root: "/knowledge", enabled: true, busy: false, summary: { phase: "review", message: null, blocked: true, issues: 1, lastSyncedAt: null }, plan: plan(),
-    tracking: "main ↔ origin/main", model: "Claude opus", review: null, changes: [{ path: note, local: { added: 1, removed: 1 }, remote: { added: 2, removed: 1 } }], ...overrides };
+  return { root: "/knowledge", enabled: true, busy: false, summary: { phase: "idle", message: null, items: 0, comparing: false, lastSyncedAt: NOW - 300 }, tracking: "main ↔ origin/main", model: "Claude opus", review: null, items: [], comparison: null, comparisonError: null, indexPending: false, ...overrides };
 }
-const idle = (overrides: Partial<SyncSnapshot> = {}) => snapshot({ plan: null, changes: [], summary: { phase: "idle", message: null, blocked: false, issues: 0, lastSyncedAt: null }, ...overrides });
-const diff = (text: string): DiffRow[] => [{ kind: "changed", leftNo: 1, left: [{ kind: "removed", text: "로그만" }], rightNo: 1, right: [{ kind: "added", text }] }];
+const listed = (items: SyncItem[], overrides: Partial<SyncSnapshot> = {}) => snapshot({ items, summary: { phase: "idle", message: null, items: items.length, comparing: false, lastSyncedAt: NOW - 300 }, ...overrides });
 
 beforeEach(() => {
   Object.values(api).forEach((mock) => mock.mockReset());
   api.onStateChanged.mockResolvedValue(() => {});
   api.onSyncComparisonProgress.mockResolvedValue(() => {});
   api.getSync.mockResolvedValue(snapshot());
-  api.previewSync.mockImplementation((_id: string, choices: { option: number; customText: string | null }[]) => {
-    const text = choices[0]?.customText ?? (choices[0]?.option === 0 ? "최종: 로그만" : "최종: 팝업");
-    return Promise.resolve({ files: { [note]: text }, diffs: { [note]: diff(text) }, token: "confirmed-preview" });
-  });
-  api.applySync.mockResolvedValue(undefined);
+  api.getSyncItem.mockImplementation((id: string) => Promise.resolve(views[id]));
+  api.previewSyncItem.mockImplementation((_id: string, option: number, customText: string | null) => Promise.resolve({ [note]: diff(customText ?? (option === 0 ? "최종: 로그만" : "최종: 팝업")) }));
+  api.resolveSyncItem.mockResolvedValue(undefined);
+  api.dismissSyncItem.mockResolvedValue(undefined);
+  api.retrySyncComparison.mockResolvedValue(undefined);
+  api.skipSyncComparison.mockResolvedValue(undefined);
   api.deferSync.mockResolvedValue(undefined);
+  api.openNote.mockResolvedValue(undefined);
+  api.syncNow.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
   vi.useRealTimers();
 });
 
-describe("sync review", () => {
-  it("shows provenance, then requires every choice and a server preview before applying", async () => {
-    render(<SyncApp />);
-    const issue = await screen.findByRole("region", { name: "오류 알림 방침" });
-    expect(screen.getByText("Review needed")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Check result/ })).toBeDisabled();
-    expect(within(issue).getByText("팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
-    await userEvent.click(within(issue).getAllByText("View source conversation", { selector: "summary" })[0]);
-    expect(screen.getByText("사용자: 팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
-    expect(screen.getByRole("button", { name: /오류 알림 방침/ })).toHaveTextContent("로그 전용");
-    expect(screen.getByText("1 of 1 decided")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: /Check result/ }));
-    const result = screen.getByRole("region", { name: "Final check" });
-    expect(await within(result).findByText("최종: 로그만")).toBeInTheDocument();
-    expect(within(result).getByText("This PC now")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Apply & share" }));
-    expect(api.applySync).toHaveBeenCalledWith("comparison-1", [{ issue: 0, option: 0, customText: null }], "confirmed-preview");
-  });
-
-  it("lets the user edit the replacement text while preserving the target span", async () => {
-    render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("radio", { name: /로그 전용/ }));
-    await userEvent.click(screen.getByRole("checkbox", { name: "Edit the selected wording" }));
-    const input = screen.getByRole("textbox", { name: "Final wording" });
-    await userEvent.clear(input);
-    await userEvent.type(input, "운영은 로그만, 점검 중 팝업");
-    await waitFor(() => expect(api.previewSync).toHaveBeenLastCalledWith("comparison-1", [{ issue: 0, option: 0, customText: "운영은 로그만, 점검 중 팝업" }]));
-    await userEvent.click(screen.getByRole("button", { name: /Check result/ }));
-    expect(await screen.findByText("운영은 로그만, 점검 중 팝업", { selector: "ins" })).toBeInTheDocument();
-    expect(api.applySync).not.toHaveBeenCalled();
-  });
-
-  it("does not apply after a preview validation failure", async () => {
-    api.previewSync.mockRejectedValue(new Error("Evidence 링크가 빠졌습니다"));
-    render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("radio", { name: /로그 전용/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Check result/ }));
-    expect(await screen.findByRole("alert")).toHaveTextContent("Evidence 링크가 빠졌습니다");
-    expect(screen.getByRole("button", { name: "Apply & share" })).toBeDisabled();
-  });
-
-  it("discards a slow preview when the choice changes", async () => {
-    let resolveOld: ((value: { files: Record<string, string>; diffs: Record<string, DiffRow[]>; token: string }) => void) | undefined;
-    api.previewSync.mockImplementationOnce(() => new Promise((resolve) => { resolveOld = resolve; }));
-    render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("radio", { name: /로그 전용/ }));
-    await waitFor(() => expect(api.previewSync).toHaveBeenCalledTimes(1));
-    await userEvent.click(screen.getByRole("radio", { name: /팝업 사용/ }));
-    await userEvent.click(screen.getByRole("button", { name: /Check result/ }));
-    await screen.findByText("최종: 팝업");
-    await act(async () => { resolveOld?.({ files: { [note]: "잘못된 오래된 미리보기" }, diffs: { [note]: diff("잘못된 오래된 미리보기") }, token: "old" }); });
-    expect(screen.queryByText("잘못된 오래된 미리보기")).not.toBeInTheDocument();
-  });
-
-  it("defers the review from Later and from the header without applying", async () => {
-    render(<SyncApp />);
-    await screen.findByRole("region", { name: "오류 알림 방침" });
-    await userEvent.click(screen.getByRole("button", { name: "Later" }));
-    await userEvent.click(screen.getByRole("button", { name: /Close/ }));
-    expect(api.deferSync).toHaveBeenCalledTimes(2);
-    expect(api.applySync).not.toHaveBeenCalled();
-  });
-
-  it("explains the comparison before running the model, then shows the decisions", async () => {
-    api.getSync.mockResolvedValueOnce(snapshot({ plan: { ...plan(), analysis: null } })).mockResolvedValue(snapshot());
-    api.analyzeSync.mockResolvedValue(undefined);
-    render(<SyncApp />);
-    const overview = await screen.findByRole("region", { name: "Sync review" });
-    expect(overview).toHaveTextContent("Claude opus reads both versions");
-    expect(screen.getByRole("button", { name: /policy\.md/ })).toHaveTextContent("demo · This PC +1 −1 · Other PCs +2 −1");
-    await userEvent.click(within(overview).getByRole("button", { name: "Compare with model" }));
-    expect(api.analyzeSync).toHaveBeenCalledOnce();
-    expect(await screen.findByRole("region", { name: "오류 알림 방침" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /Check result/ })).toBeDisabled();
-  });
-
-  it("shows the raw differences of a note before comparing", async () => {
-    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), analysis: null } }));
-    render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("button", { name: "View raw differences" }));
-    const raw = screen.getByRole("region", { name: `Differences in ${note}` });
-    expect(within(raw).getByText("로그만")).toBeInTheDocument();
-    expect(within(raw).getByText("팝업")).toBeInTheDocument();
-  });
-
-  it("resumes a saved comparison and shows its previous failure", async () => {
-    api.getSync.mockResolvedValueOnce(snapshot({ plan: { ...plan(), analysis: null }, comparison: { completed: 2, total: 6, stage: "paused", reads: 5, error: "Provider unavailable" } })).mockResolvedValue(snapshot());
-    api.analyzeSync.mockResolvedValue(undefined);
-    render(<SyncApp />);
-    expect(await screen.findByRole("status")).toHaveTextContent("2 of 6 groups compared");
-    expect(screen.getByRole("alert")).toHaveTextContent("Provider unavailable");
-    await userEvent.click(screen.getByRole("button", { name: "Resume comparison" }));
-    expect(api.analyzeSync).toHaveBeenCalledOnce();
-    expect(await screen.findByRole("region", { name: "오류 알림 방침" })).toBeInTheDocument();
-    expect(api.applySync).not.toHaveBeenCalled();
-  });
-
-  it("updates comparison progress without downloading the whole review again", async () => {
-    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), analysis: null } }));
-    api.analyzeSync.mockImplementation(() => new Promise(() => {}));
-    render(<SyncApp />);
-    await userEvent.click(await screen.findByRole("button", { name: "Compare with model" }));
-    const update = api.onSyncComparisonProgress.mock.calls[0][0] as (value: unknown) => void;
-    await act(async () => update({ completed: 2, total: 6, stage: "comparing", reads: 8, error: null }));
-    expect(screen.getAllByRole("status").some((node) => node.textContent?.includes("2 of 6 groups compared"))).toBe(true);
-    await act(async () => update({ completed: 6, total: 6, stage: "checking", reads: 9, error: null }));
-    expect(screen.getAllByRole("status").some((node) => node.textContent?.includes("Checking consistency across 6 groups"))).toBe(true);
-    expect(api.getSync).toHaveBeenCalledOnce();
-    expect(api.applySync).not.toHaveBeenCalled();
-  });
-
-  it("blocks the comparison when a conflict must be resolved outside Lore and offers to check again", async () => {
-    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), analysis: null, unsupported: ["sources/claude/a.md"] } }));
-    api.prepareSync.mockResolvedValue(undefined);
-    render(<SyncApp />);
-    expect(await screen.findByRole("alert")).toHaveTextContent("sources/claude/a.md");
-    expect(screen.getByRole("button", { name: "Compare with model" })).toBeDisabled();
-    await userEvent.click(screen.getByRole("button", { name: "Check remote again" }));
-    expect(api.prepareSync).toHaveBeenCalledOnce();
-  });
-});
-
-describe("sync recovery", () => {
-  it("reports an unshared result and retries sending without rerunning the model", async () => {
-    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), phase: "push_pending", message: "오프라인" }, summary: { phase: "push_pending", blocked: false, issues: 1, message: "오프라인", lastSyncedAt: null } }));
-    api.resumeSync.mockResolvedValue(undefined);
-    api.prepareSync.mockResolvedValue(undefined);
-    render(<SyncApp />);
-    expect(await screen.findByRole("status")).toHaveTextContent("오프라인");
-    expect(screen.getByText("Not shared yet")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Applied on this PC, not shared yet" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Retry sending only" }));
-    expect(api.resumeSync).toHaveBeenCalledOnce();
-    await userEvent.click(screen.getByRole("button", { name: "Sync again" }));
-    expect(api.prepareSync).toHaveBeenCalledOnce();
-    expect(api.analyzeSync).not.toHaveBeenCalled();
-  });
-
-  it("retries a search update that failed after applying", async () => {
-    api.getSync.mockResolvedValue(snapshot({ plan: { ...plan(), phase: "index_pending", message: "qmd was not found." }, summary: { phase: "index_pending", blocked: true, issues: 1, message: "qmd was not found.", lastSyncedAt: null } }));
-    api.resumeSync.mockResolvedValue(undefined);
-    render(<SyncApp />);
-    expect(await screen.findByRole("heading", { name: "Applied on this PC, search not updated" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Retry search update" }));
-    expect(api.resumeSync).toHaveBeenCalledOnce();
-  });
-});
-
-describe("sync summary", () => {
-  it("shows the last sync, syncs now, and points to settings and uncommitted notes", async () => {
+describe("nothing to check", () => {
+  it("shows when the PCs were last in sync and syncs on request", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW * 1000));
-    api.getSync.mockResolvedValue(idle({ review: 2, summary: { phase: "idle", message: null, blocked: false, issues: 0, lastSyncedAt: NOW - 300 } }));
-    api.syncNow.mockResolvedValue(undefined);
     render(<SyncApp />);
-    expect(await screen.findByRole("heading", { name: "Your PCs are in sync" })).toBeInTheDocument();
+    expect(await screen.findByText("Your PCs are in sync")).toBeInTheDocument();
     expect(screen.getByText("Up to date")).toBeInTheDocument();
-    expect(screen.getByText("Last synced 5m ago with origin/main.")).toBeInTheDocument();
-    expect(screen.getByText("On, every 5 minutes")).toBeInTheDocument();
+    expect(screen.getByText(/Last synced 5m ago with origin\/main/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Sync now" }));
-    expect(api.syncNow).toHaveBeenCalledOnce();
-    await userEvent.click(screen.getByRole("button", { name: "Change in Settings" }));
-    expect(api.openSettings).toHaveBeenCalledOnce();
-    await userEvent.click(screen.getByRole("button", { name: "Review & commit" }));
-    expect(api.openReview).toHaveBeenCalledOnce();
+    expect(api.syncNow).toHaveBeenCalledTimes(1);
   });
 
-  it("explains a missing upstream and offers no sync", async () => {
-    api.getSync.mockResolvedValue(idle({ tracking: null }));
+  it("says recording is committed and shared automatically, and review is optional", async () => {
+    api.getSync.mockResolvedValue(snapshot({ review: 3 }));
     render(<SyncApp />);
-    expect(await screen.findByRole("heading", { name: "Not synced yet" })).toBeInTheDocument();
-    expect(screen.getByText(/has no upstream branch yet/)).toBeInTheDocument();
+    expect(await screen.findByText("3 notes recorded since your last review. They are already shared; review them when you want.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Review" }));
+    expect(api.openReview).toHaveBeenCalledTimes(1);
+  });
+
+  it("explains a sync that keeps failing and lets the user try again", async () => {
+    api.getSync.mockResolvedValue(snapshot({ summary: { phase: "failing", message: "Notes are saved on this PC but could not be sent: authentication failed", items: 0, comparing: false, lastSyncedAt: NOW - 3600 } }));
+    render(<SyncApp />);
+    expect(await screen.findByText("Sync is not getting through")).toBeInTheDocument();
+    expect(screen.getByText(/authentication failed/)).toBeInTheDocument();
+    expect(screen.getByText("Recording continues. Lore keeps retrying in the background.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(api.syncNow).toHaveBeenCalledTimes(1);
+  });
+
+  it("stays quiet about a failure that is still being retried", async () => {
+    api.getSync.mockResolvedValue(snapshot({ summary: { phase: "retrying", message: "network unreachable", items: 0, comparing: false, lastSyncedAt: NOW - 600 } }));
+    render(<SyncApp />);
+    expect(await screen.findByText("Your PCs are in sync")).toBeInTheDocument();
+    expect(screen.getByText("Retrying")).toBeInTheDocument();
+  });
+
+  it("shows a sync error returned by a manual sync", async () => {
+    api.syncNow.mockRejectedValue("No remote upstream is configured.");
+    render(<SyncApp />);
+    await userEvent.click(await screen.findByRole("button", { name: "Sync now" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("No remote upstream is configured.");
+  });
+
+  it("asks for an upstream instead of offering sync when there is none", async () => {
+    api.getSync.mockResolvedValue(snapshot({ tracking: null, summary: { phase: "idle", message: null, items: 0, comparing: false, lastSyncedAt: null } }));
+    render(<SyncApp />);
+    expect(await screen.findByText(/no upstream branch yet/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Sync now" })).toBeDisabled();
-    expect(screen.queryByRole("button", { name: "Review & commit" })).not.toBeInTheDocument();
+  });
+});
+
+describe("items to check", () => {
+  it("lists a note where both PCs' lines were kept and lets the user mark it checked", async () => {
+    api.getSync.mockResolvedValueOnce(listed([merged])).mockResolvedValue(snapshot());
+    render(<SyncApp />);
+    const pane = await screen.findByRole("region", { name: "policy.md" });
+    expect(screen.getByText("1 to check")).toBeInTheDocument();
+    expect(within(pane).getByText("Lore kept the lines from both PCs. Check the note for repeated or disagreeing lines.")).toBeInTheDocument();
+    expect(within(pane).getByText("This PC before sync")).toBeInTheDocument();
+    expect(screen.getByText("Nothing waits on these. Recording and sync continue.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Open note" }));
+    expect(api.openNote).toHaveBeenCalledWith(note);
+    await userEvent.click(screen.getByRole("button", { name: "Mark as checked" }));
+    expect(api.dismissSyncItem).toHaveBeenCalledWith("m1");
+    expect(await screen.findByText("Your PCs are in sync")).toBeInTheDocument();
+  });
+
+  it("shows where a disagreement came from and applies the chosen wording after a preview", async () => {
+    api.getSync.mockResolvedValue(listed([merged, decision]));
+    render(<SyncApp />);
+    await userEvent.click(await screen.findByRole("button", { name: /오류 알림 방침/ }));
+    const pane = await screen.findByRole("region", { name: "오류 알림 방침" });
+    expect(within(pane).getByText("팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
+    await userEvent.click(within(pane).getAllByText("View source conversation", { selector: "summary" })[0]);
+    expect(screen.getByText("사용자: 팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
+    expect(await within(pane).findByText("최종: 로그만")).toBeInTheDocument();
+    expect(api.previewSyncItem).toHaveBeenLastCalledWith("d1", 0, null);
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(api.resolveSyncItem).toHaveBeenCalledWith("d1", 0, null);
+  });
+
+  it("lets the user edit the wording of a single-edit option", async () => {
+    api.getSync.mockResolvedValue(listed([decision]));
+    render(<SyncApp />);
+    const pane = await screen.findByRole("region", { name: "오류 알림 방침" });
+    await userEvent.click(screen.getByRole("radio", { name: /팝업 사용/ }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Edit the selected wording" }));
+    const wording = screen.getByRole("textbox", { name: "Final wording" });
+    await userEvent.type(wording, "조건부");
+    await waitFor(() => expect(api.previewSyncItem).toHaveBeenLastCalledWith("d1", 1, "조건부"));
+    // Once in the wording box, once in the previewed note.
+    await waitFor(() => expect(within(pane).getAllByText("조건부")).toHaveLength(2));
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+    expect(api.resolveSyncItem).toHaveBeenCalledWith("d1", 1, "조건부");
+  });
+
+  it("keeps a decision the user does not want and shows why an option cannot be applied", async () => {
+    api.getSync.mockResolvedValue(listed([decision]));
+    api.previewSyncItem.mockRejectedValue("projects/demo/policy.md changed after the comparison, so this option no longer fits.");
+    render(<SyncApp />);
+    await screen.findByRole("region", { name: "오류 알림 방침" });
+    await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("changed after the comparison");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Keep the note as it is" }));
+    expect(api.dismissSyncItem).toHaveBeenCalledWith("d1");
+  });
+
+  it("closes without deciding anything", async () => {
+    api.getSync.mockResolvedValue(listed([merged]));
+    render(<SyncApp />);
+    await screen.findByRole("region", { name: "policy.md" });
+    await userEvent.click(screen.getByRole("button", { name: "Later" }));
+    expect(api.deferSync).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("model comparison", () => {
+  it("shows a running comparison without blocking the items already listed", async () => {
+    api.getSync.mockResolvedValue(listed([merged], { summary: { phase: "idle", message: null, items: 1, comparing: true, lastSyncedAt: NOW }, comparison: { completed: 1, total: 3, stage: "comparing", reads: 4, error: null } }));
+    render(<SyncApp />);
+    expect(await screen.findByRole("status")).toHaveTextContent("Claude opus is comparing the notes both PCs changed · 1 of 3 groups");
+    expect(screen.getByRole("button", { name: "Mark as checked" })).toBeEnabled();
+  });
+
+  it("offers to retry or skip a comparison that could not finish", async () => {
+    api.getSync.mockResolvedValue(snapshot({ comparisonError: "This quotation is not in source remote:a.md" }));
+    render(<SyncApp />);
+    expect(await screen.findByText("The comparison could not finish. Your notes are synced either way.")).toBeInTheDocument();
+    expect(screen.getByText("This quotation is not in source remote:a.md")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(api.retrySyncComparison).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Skip" }));
+    expect(api.skipSyncComparison).toHaveBeenCalledTimes(1);
   });
 });

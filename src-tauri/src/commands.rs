@@ -93,11 +93,11 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let settings = state.settings();
     let current = state.current();
     let reviewing = state.reviewing();
-    let sync = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &settings.knowledge_root()));
+    let sync = lore_core::sync::summary(&lore_core::sync::folder(&state.paths, &settings.knowledge_root()));
     let syncing = state.syncing();
     let label = if current.is_some() {
         "working"
-    } else if reviewing || syncing || sync.blocked {
+    } else if reviewing || syncing {
         "reviewing"
     } else if settings.paused {
         "paused"

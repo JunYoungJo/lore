@@ -43,22 +43,22 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   writeFileSync(join(data, "settings.json"), JSON.stringify({ knowledgeRoot: local, backend, modelTimeoutSecs: 240, commands: { qmd: [process.execPath, join(root, "scripts/evaluation-index-fixture.mjs")] } }, null, 2));
   const env = { ...process.env, LORE_HOME: data };
   const command = (...argv) => JSON.parse(run(cli, ["sync", ...argv], local, env));
-  const before = git(local, "rev-parse", "HEAD"); const beforeText = readFileSync(join(local, note), "utf8");
-  const prepared = command("check");
-  const analyzed = command("analyze");
-  const plan = analyzed.plan;
-  if (!plan.analysis.issues.length) throw new Error("모델이 상반된 방침의 검토 항목을 제시하지 않았습니다.");
-  const choices = plan.analysis.issues.map((_, issue) => ({ issue, option: 0, customText: null }));
-  const choicesPath = join(folder, "choices.json"); writeFileSync(choicesPath, JSON.stringify(choices));
-  const preview = command("preview", choicesPath);
-  const isolated = git(local, "rev-parse", "HEAD") === before && readFileSync(join(local, note), "utf8") === beforeText;
-  const applied = command("apply", plan.id, choicesPath);
+  // Sync merges and shares without asking; the model comparison runs afterwards.
+  const synced = command("now");
+  const mergedText = readFileSync(join(local, note), "utf8");
+  const bothHistories = git(local, "show", "-s", "--format=%P").split(/\s+/).length === 2;
+  const sharedBeforeComparison = git(local, "rev-parse", "HEAD") === git(local, "ls-remote", "origin", "refs/heads/main").split(/\s+/)[0];
+  const compared = command("compare");
+  const decisions = compared.state.items.filter((item) => item.kind === "decision");
+  if (!decisions.length) throw new Error("모델이 상반된 방침의 확인 항목을 제시하지 않았습니다.");
+  for (const item of decisions) command("resolve", item.id, "0");
+  const resolved = command("now");
   const finalText = readFileSync(join(local, note), "utf8");
   git(other, "pull", "--ff-only");
-  const checks = { isolatedBeforeApproval: isolated, completed: applied.plan === null, bothHistories: git(local, "show", "-s", "--format=%P").split(/\s+/).length === 2, exactPreview: finalText === preview[note], unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
-  reports.push({ kind, backend, gitTextConflict: prepared.plan.files.some((file) => file.textConflict), analysis: plan.analysis, fixtureOnlyChoices: choices, finalText, checks, actualQmd: false });
+  const checks = { sharedBeforeComparison, bothHistories, noConflictMarkers: !/^(<<<<<<<|>>>>>>>)/m.test(mergedText), decisionsCleared: resolved.state.items.every((item) => item.kind !== "decision"), unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
+  reports.push({ kind, backend, listedAfterSync: synced.state.items, decisions, mergedText, finalText, checks, actualQmd: false });
   writeFileSync(join(output, "report.json"), JSON.stringify(reports, null, 2));
-  process.stdout.write(`${Object.values(checks).every(Boolean) ? "통과" : "확인 필요"} · 모델 검토 ${plan.analysis.issues.length}건\n`);
+  process.stdout.write(`${Object.values(checks).every(Boolean) ? "통과" : "확인 필요"} · 모델이 찾은 항목 ${decisions.length}건\n`);
   if (!Object.values(checks).every(Boolean)) process.exitCode = 1;
 }
 process.stdout.write(`결과: ${join(output, "report.json")}\n`);

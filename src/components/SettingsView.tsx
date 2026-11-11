@@ -216,7 +216,7 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
         <div className="set-row">
           <div className="set-main">
             <div className="set-title">Auto-sync</div>
-            <div className="set-sub">Every 5 minutes with the memory repository’s upstream.</div>
+            <div className="set-sub">Share notes after each recording and check other PCs every 5 minutes.</div>
           </div>
           <Toggle label="Auto-sync" checked={settings.syncEnabled} onChange={(enabled) => void setSyncEnabled(enabled)} />
         </div>

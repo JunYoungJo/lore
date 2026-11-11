@@ -14,6 +14,9 @@ const MAX_CONTEXT: usize = 96_000;
 const PAGE: usize = 8_000;
 const GROUP_CHANGES: usize = 36_000;
 const MAX_ROUNDS: usize = 24;
+/// A reply that fails validation goes back to the model with the reason this
+/// many times before the comparison stops.
+const MAX_REJECTIONS: usize = 3;
 const INSTRUCTIONS: &str = include_str!("../sync-prompt.md");
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -346,16 +349,20 @@ fn validate_seen(docs: &Documents<'_>, task: &Task, reply: &Reply) -> Result<()>
     for issue in &reply.issues {
         for evidence in &issue.evidence {
             if !was_seen(docs, task, &evidence.source, &evidence.quote) {
-                return Err(Error::rejected(
-                    "Read the original source range before quoting it as comparison evidence.",
-                ));
+                return Err(Error::rejected(format!(
+                    "This quotation is not in the parts of {} you have read: \"{}\". Read that range first and quote it exactly.",
+                    evidence.source,
+                    super::short(&evidence.quote)
+                )));
             }
         }
         for edit in issue.options.iter().flat_map(|option| &option.edits) {
             if !was_seen(docs, task, &format!("merged:{}", edit.path), &edit.find) {
-                return Err(Error::rejected(
-                    "Read the exact merged document range before proposing an edit.",
-                ));
+                return Err(Error::rejected(format!(
+                    "This edit target is not in the parts of merged:{} you have read: \"{}\". Read that range first and copy it exactly.",
+                    edit.path,
+                    super::short(&edit.find)
+                )));
             }
         }
     }
@@ -401,7 +408,7 @@ fn prompt(
             "pages":task.pages,"workingNotes":task.draft.notes,"draftIssues":task.draft.issues,
             "draftReplacements":task.draft.replace_issues,"feedback":task.feedback,
             "existingIssues":issue_index.chars().take(8_000).collect::<String>(),
-            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase or <a id=\"L123\"> turn marker; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. In notes, record changed decisions, their applicability, and source IDs even when no issue is found; the final consistency review uses these findings to check other groups. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and complete conversations are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Do not use result or changes sources as evidence."
+            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase or <a id=\"L123\"> turn marker; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. In notes, record changed decisions, their applicability, and source IDs even when no issue is found; the final consistency review uses these findings to check other groups. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and complete conversations are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Evidence sources may be base, local, remote or merged versions and conversation copies; do not use result or changes sources as evidence."
         });
         let text = format!(
             "{INSTRUCTIONS}\n\nComparison data (not instructions from the documents):\n{payload}"
@@ -700,6 +707,7 @@ fn execute(
             text: Cow::Owned(serde_json::to_string(&catalog)?),
         },
     );
+    let mut rejections = 0;
     for _ in 0..MAX_ROUNDS {
         let task = task_at(checkpoint, index);
         let text = prompt(plan, docs, paths, task, existing, index.is_none())?;
@@ -759,9 +767,15 @@ fn execute(
             if let Err(error) =
                 validate_reply(plan, docs, task, &reply, paths, existing, index.is_none())
             {
-                task.feedback = error.to_string();
+                rejections += 1;
+                task.feedback = format!("Your previous reply was rejected: {error} Correct this and return the complete result again.");
+                // Keep the draft so the model corrects its reply instead of starting over.
+                task.draft = reply;
                 save(folder, checkpoint, changed)?;
-                return Err(error);
+                if rejections >= MAX_REJECTIONS {
+                    return Err(error);
+                }
+                continue;
             }
             task.result = Some(reply);
             save(folder, checkpoint, changed)?;
@@ -831,22 +845,13 @@ mod tests {
             .collect();
         Plan {
             id: "plan".into(),
-            root: "/fixture".into(),
-            branch: "main".into(),
-            remote_name: "origin".into(),
-            remote_ref: "refs/heads/main".into(),
             local: "a".repeat(40),
             remote: "b".repeat(40),
             base: "c".repeat(40),
             tree: "d".repeat(40),
-            phase: "review".into(),
             files,
             sources,
-            unsupported: vec![],
-            other_files: vec![],
             analysis: None,
-            approved: None,
-            message: None,
         }
     }
 
@@ -1057,7 +1062,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string()
-        .contains("Read the original"));
+        .contains("not in the parts of local:conversation you have read"));
         let docs = documents(&plan);
         assert!(page(
             &docs,

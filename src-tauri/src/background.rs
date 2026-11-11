@@ -9,6 +9,8 @@ use lore_core::recorder::CliRecorder;
 use lore_core::run::Limit;
 use lore_core::settings::Settings;
 use lore_core::worker::{self, Outcome, Reporter, WorkerLock};
+
+const SYNC_EVERY: Duration = Duration::from_secs(300);
 use tauri::{AppHandle, Emitter, Manager};
 use tauri_plugin_notification::NotificationExt;
 
@@ -96,14 +98,18 @@ pub fn spawn(app: AppHandle) {
         let reporter = AppReporter { app: app.clone() };
         let model_limit = live_limit(&app, |settings| settings.model_timeout_secs);
         let qmd_limit = live_limit(&app, |settings| settings.qmd_timeout_secs);
-        let mut last_sync = Instant::now().checked_sub(Duration::from_secs(300)).unwrap_or_else(Instant::now);
+        let mut last_sync = Instant::now().checked_sub(SYNC_EVERY).unwrap_or_else(Instant::now);
+        // Notes recorded since the last sync. They are shared as soon as the queue is idle.
+        let mut unsent = false;
+        crate::sync::resume_comparisons(&app);
         loop {
             let settings = state.settings();
-            if settings.sync_enabled && !state.setup_busy() && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= Duration::from_secs(300) {
+            if settings.sync_enabled && !state.setup_busy() && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= SYNC_EVERY {
                 last_sync = Instant::now();
+                unsent = false;
                 crate::sync::automatic(&app);
             }
-            if state.setup_busy() || settings.paused || state.reviewing() || state.syncing() || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked {
+            if state.setup_busy() || settings.paused || state.reviewing() || state.syncing() {
                 state.wait(ERROR_WAIT);
                 continue;
             }
@@ -117,13 +123,23 @@ pub fn spawn(app: AppHandle) {
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.
-            if state.setup_busy() || state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root || lore_core::sync::summary(&lore_core::sync::journal(&paths, &settings.knowledge_root())).blocked { drop(operation); continue; }
+            if state.setup_busy() || state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root { drop(operation); continue; }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
             drop(operation);
             changed(&app);
             match result {
-                Ok(Ok(Some(_))) => state.set_problem(None),
-                Ok(Ok(None)) => state.wait(IDLE_WAIT),
+                Ok(Ok(Some((_, outcome)))) => {
+                    unsent |= matches!(outcome, Outcome::Recorded { .. });
+                    state.set_problem(None);
+                }
+                Ok(Ok(None)) => {
+                    if unsent && state.settings().sync_enabled {
+                        unsent = false;
+                        last_sync = Instant::now();
+                        crate::sync::automatic(&app);
+                    }
+                    state.wait(IDLE_WAIT);
+                }
                 Ok(Err(error)) => {
                     state.set_current(None);
                     state.set_problem(Some(format!("Could not process the job: {error}")));

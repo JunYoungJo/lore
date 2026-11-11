@@ -33,7 +33,7 @@ function Cell({ no, segments, side }: { no: number | null; segments: Segment[] |
   );
 }
 
-export function DiffView({ path, rows, labels = ["Last commit", "Current"] }: { path: string; rows: DiffRow[]; labels?: [string, string] }) {
+export function DiffView({ path, rows, labels = ["Last review", "Current"] }: { path: string; rows: DiffRow[]; labels?: [string, string] }) {
   const [opened, setOpened] = useState<Set<number>>(new Set());
   const [showAll, setShowAll] = useState(false);
 

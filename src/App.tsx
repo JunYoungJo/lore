@@ -15,7 +15,6 @@ import { useNow } from "@/useNow";
 function statusLine(snapshot: Snapshot): string {
   if (snapshot.current) return `Recording · ${snapshot.current.project}`;
   if (snapshot.syncing) return "Syncing";
-  if (snapshot.sync?.blocked) return "Sync review needed · Recording on hold";
   if (snapshot.reviewing) return "Recording paused for review";
   if (snapshot.settings.paused) return "Paused";
   if (snapshot.counts.ready > 0) return `${snapshot.counts.ready} pending`;

@@ -30,7 +30,7 @@ const snapshot = {
   update: { phase: 'idle', version: null, notes: null, downloaded: 0, total: null, error: null },
   settings: { knowledgeRoot: root, backend: 'codex', models: { codex: null, claude: null }, efforts: { codex: null, claude: null }, modelTimeoutSecs: 600, qmdTimeoutSecs: 900, claudeProjectsDir: '~/.claude/projects', codexSessionsDir: '~/.codex/sessions', idleSecs: 600, since: now - 86400, paused: false, syncEnabled: false, maxChars: 30000, notesBudget: 60000, qmdIndex: 'index', commands: { codex: ['codex'], claude: ['claude'], qmd: ['qmd'] } },
   autostart: false, hooks: [hook('claude'), hook('codex')], connections: [{ provider: 'claude', state: 'connected' }, { provider: 'codex', state: 'connected' }],
-  review: 3, reviewing: false, version: '0.1.1', sync: { phase: 'idle', message: null, issues: 0, blocked: false, lastSyncedAt: now - 300 }, syncing: false,
+  review: 3, reviewing: false, version: '0.1.1', sync: { phase: 'idle', message: null, items: 0, comparing: false, lastSyncedAt: now - 300 }, syncing: false,
   catalog: { codex: [{ value: 'gpt-6.1-sol', label: 'GPT-6.1 Sol', resolved: null, efforts: ['low', 'medium', 'high'] }], claude: [{ value: 'haiku', label: 'Haiku', resolved: null, efforts: [] }] },
   defaultModels: { codex: 'gpt-6.1-sol', claude: 'haiku' }, defaultEfforts: { codex: 'low', claude: null },
 };
@@ -51,18 +51,27 @@ const setup = {
 const notePath = 'projects/demo-app/sign-in.md';
 const local = '# First-release sign-in\n\nUse email sign-in for the first release.\n\n## Sources\n- [Local decision](../../sources/claude/example.md#L1)\n- [Other PC](../../sources/codex/example.md#L1)\n';
 const final = local.replace('Use email sign-in for the first release.', 'Use email sign-in for the first release. Revisit passkeys after launch.');
-const plan = {
-  id: 'illustrative-comparison', root, branch: 'main', remoteName: 'origin', remoteRef: 'refs/heads/main', local: 'aaaa1111', remote: 'bbbb2222', base: 'cccc3333', tree: 'dddd4444', phase: 'review', approved: null, message: null,
-  files: [{ path: notePath, base: '# First-release sign-in\n\nSign-in method is undecided.\n', local, remote: local.replace('email sign-in', 'passkeys'), merged: local, textConflict: false }],
-  sources: [{ id: 'local:example', side: 'local', path: 'sources/claude/example.md', text: 'User: Let’s start with email sign-in to keep the first release simple.' }, { id: 'remote:example', side: 'remote', path: 'sources/codex/example.md', text: 'User: Use passkeys for sign-in.\nAssistant: We should confirm whether this changes the first release.' }],
-  unsupported: [], otherFiles: ['sources/claude/example.md', 'sources/codex/example.md'],
-  analysis: { summary: 'The two PCs recorded different sign-in plans for the first release.', issues: [{ title: 'First-release sign-in', explanation: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys. Confirm which plan to share before continuing.', evidence: [{ source: 'local:example', quote: 'Let’s start with email sign-in to keep the first release simple.' }, { source: 'remote:example', quote: 'Use passkeys for sign-in.' }], options: [
-    { label: 'Email first, revisit passkeys', description: 'Keep the initial release focused and retain the later request as a follow-up.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use email sign-in for the first release. Revisit passkeys after launch.' }] },
-    { label: 'Use passkeys in the first release', description: 'Update the current plan while retaining both source conversations.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use passkeys for the first release.' }] },
-  ] }] },
+const rows = (before, after) => { const b = before.trimEnd().split('\n'), a = after.trimEnd().split('\n'); return a.map((line, i) => i < b.length ? ({ kind: b[i] === line ? 'same' : 'changed', leftNo: i + 1, rightNo: i + 1, left: [{ kind: b[i] === line ? 'same' : 'removed', text: b[i] }], right: [{ kind: b[i] === line ? 'same' : 'added', text: line }] }) : ({ kind: 'added', leftNo: null, left: null, rightNo: i + 1, right: [{ kind: 'added', text: line }] })); };
+const logPath = 'projects/log-viewer/retention.md';
+const logLocal = '# Log retention\n\nKeep logs for 30 days.\n\n## Sources\n- [Retention request](../../sources/claude/example.md#L4)\n';
+const logMerged = `${logLocal}- [Export follow-up](../../sources/codex/example.md#L9)\n`;
+const signInFile = { path: notePath, base: '# First-release sign-in\n\nSign-in method is undecided.\n', local, remote: local.replace('email sign-in', 'passkeys'), merged: local, rows: rows(local, local) };
+// Both items are already merged and shared; the window only lists them to look at later.
+const items = [
+  { id: 'decision-1', kind: 'decision', plan: 'illustrative', path: notePath, title: 'First-release sign-in', detail: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys.', createdAt: now - 600, issue: 0 },
+  { id: 'merged-1', kind: 'merged', plan: 'illustrative', path: logPath, title: 'Both PCs changed the same lines', detail: 'Lore kept the lines from both PCs. Check the note for repeated or disagreeing lines.', createdAt: now - 600, issue: null },
+];
+const itemViews = {
+  'decision-1': { item: items[0], files: [signInFile],
+    sources: [{ id: 'local:example', side: 'local', path: 'sources/claude/example.md', text: 'User: Let’s start with email sign-in to keep the first release simple.' }, { id: 'remote:example', side: 'remote', path: 'sources/codex/example.md', text: 'User: Use passkeys for sign-in.\nAssistant: We should confirm whether this changes the first release.' }],
+    issue: { title: 'First-release sign-in', explanation: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys. Choose which plan the note should state.', evidence: [{ source: 'local:example', quote: 'Let’s start with email sign-in to keep the first release simple.' }, { source: 'remote:example', quote: 'Use passkeys for sign-in.' }], options: [
+      { label: 'Email first, revisit passkeys', description: 'Keep the initial release focused and retain the later request as a follow-up.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use email sign-in for the first release. Revisit passkeys after launch.' }] },
+      { label: 'Use passkeys in the first release', description: 'Update the current plan while retaining both source conversations.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use passkeys for the first release.' }] },
+    ] } },
+  'merged-1': { item: items[1], files: [{ path: logPath, base: '# Log retention\n\nKeep logs for 30 days.\n', local: logLocal, remote: logMerged.replace('- [Retention request](../../sources/claude/example.md#L4)\n', ''), merged: logMerged, rows: rows(logLocal, logMerged) }], issue: null, sources: [] },
 };
-const preview = { files: { [notePath]: final }, diffs: { [notePath]: local.trimEnd().split('\n').map((line, i) => ({ kind: i === 2 ? 'changed' : 'same', leftNo: i + 1, rightNo: i + 1, left: [{ kind: i === 2 ? 'removed' : 'same', text: line }], right: [{ kind: i === 2 ? 'added' : 'same', text: final.trimEnd().split('\n')[i] }] })) }, token: 'illustrative-preview' };
-const sync = { root, enabled: false, busy: false, summary: { phase: 'review', message: null, blocked: true, issues: 1, lastSyncedAt: now - 7200 }, plan, tracking: 'main ↔ origin/main', model: 'Codex', review: 0, changes: [{ path: notePath, local: { added: 2, removed: 1 }, remote: { added: 2, removed: 1 } }] };
+const preview = { [notePath]: rows(local, final) };
+const sync = { root, enabled: true, busy: false, summary: { phase: 'idle', message: null, items: items.length, comparing: false, lastSyncedAt: now - 120 }, tracking: 'main ↔ origin/main', model: 'Codex', review: 0, items, comparison: null, comparisonError: null, indexPending: false };
 const queue = ['demo-app', 'log-viewer'].map((project, i) => ({ id: `sample-queue-${i}`, provider: i ? 'claude' : 'codex', transcript: `/example/${i}.jsonl`, status: 'pending', cursorLine: 0, cursorHash: '', project, sessionId: `example-${i}`, attempts: 0, nextAttemptAt: 0, lastError: null, updatedAt: now - 60 }));
 const sockets = [];
 const targets = [];
@@ -97,14 +106,15 @@ try {
     await send('Emulation.setDeviceMetricsOverride', { width, height, deviceScaleFactor: label === 'tray' ? 2 : 1.5, mobile: false });
     await send('Page.addScriptToEvaluateOnNewDocument', { source: `
       localStorage.setItem('lore.theme',${JSON.stringify(theme)});
-      const snapshot=${JSON.stringify(snapshot)},setup=${JSON.stringify(setup)},sync=${JSON.stringify(sync)},preview=${JSON.stringify(preview)},queue=${JSON.stringify(queue)};
+      const snapshot=${JSON.stringify(snapshot)},setup=${JSON.stringify(setup)},sync=${JSON.stringify(sync)},itemViews=${JSON.stringify(itemViews)},preview=${JSON.stringify(preview)},queue=${JSON.stringify(queue)};
       window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener(){}};
       window.__TAURI_INTERNALS__={metadata:{currentWindow:{label:${JSON.stringify(label)}},currentWebview:{label:${JSON.stringify(label)}}},transformCallback(){return 1},unregisterCallback(){},invoke:async(command,args)=>{
         if(command==='get_snapshot')return structuredClone(snapshot);
         if(command==='get_queue')return queue;
         if(command==='get_setup')return structuredClone(setup);
         if(command==='get_sync')return structuredClone(sync);
-        if(command==='preview_sync')return preview;
+        if(command==='get_sync_item')return structuredClone(itemViews[args.id]);
+        if(command==='preview_sync_item')return preview;
         if(command==='setup_check_tools')return {nodeReady:true,nodeVersion:'v24.15.0',auth:{codex:'ready',claude:'ready'}};
         if(command==='save_settings'){snapshot.settings={...snapshot.settings,...args.settings};return;}
         if(command==='save_setup_progress'){setup.progress=args.progress;return;}
@@ -167,11 +177,11 @@ try {
   const syncUi = await open('sync', 1120, 800);
   await syncUi.wait('document.querySelector("input[type=radio]")');
   await syncUi.click('document.querySelector("input[type=radio]")');
-  await syncUi.wait('Array.from(document.querySelectorAll("button")).some(button=>button.textContent.includes("Check result")&&!button.disabled)');
+  await syncUi.wait('Array.from(document.querySelectorAll("button")).some(button=>button.textContent.trim()==="Apply"&&!button.disabled)');
   await syncUi.capture('sync-review');
-  await syncUi.click('Array.from(document.querySelectorAll("button")).find(button=>button.textContent.includes("Check result"))');
-  await syncUi.wait(`document.querySelector('[aria-label="Final check"]')&&Array.from(document.querySelectorAll("button")).some(button=>button.textContent==="Apply & share"&&!button.disabled)`);
-  await syncUi.capture('sync-preview');
+  await syncUi.click('Array.from(document.querySelectorAll(".sync-item")).find(button=>button.textContent.includes("retention.md"))');
+  await syncUi.wait(`document.querySelector('[aria-label="retention.md"]')`);
+  await syncUi.capture('sync-merged');
   console.log(JSON.stringify({ ui: 'actual React components', ipc: 'synthetic fixtures', nativeIntegrationTest: false, captures: reports }, null, 2));
 } finally {
   sockets.forEach(socket => socket.close());

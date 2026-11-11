@@ -146,8 +146,7 @@ pub fn show_paused(app: &AppHandle, paused: bool) {
 
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
-    let pending = lore_core::sync::summary(&lore_core::sync::journal(&state.paths, &state.settings().knowledge_root()));
-    let text = if state.syncing() { "Lore · Syncing".into() } else if pending.blocked { "Lore · Sync review needed · Recording on hold".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
+    let text = if state.syncing() { "Lore · Syncing".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
         (Some(current), _, _) => format!("Lore · Recording: {}", current.project),
         (None, true, _) => "Lore · Recording paused for review".to_string(),
         (None, false, true) => "Lore · Paused".to_string(),

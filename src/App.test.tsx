@@ -84,7 +84,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     reviewing: false,
     version: "0.1.0",
     update: { phase: "idle", version: null, notes: null, downloaded: 0, total: null, error: null },
-    sync: { phase: "idle", message: null, issues: 0, blocked: false, lastSyncedAt: null },
+    sync: { phase: "idle", message: null, items: 0, comparing: false,lastSyncedAt: null },
     syncing: false,
     catalog: { codex: null, claude: null },
     defaultModels: { codex: "gpt-6.1-sol", claude: "haiku" },
@@ -190,7 +190,7 @@ describe("status view", () => {
 
   it("reports interrupted recordings and memory not yet shared", async () => {
     const interrupted: Job = { ...snapshot().attention[0], id: "i1", status: "index_pending", project: "sample-app", attempts: 1, lastError: null };
-    api.getSnapshot.mockResolvedValue(calm({ attention: [interrupted], sync: { phase: "push_pending", message: null, issues: 0, blocked: false, lastSyncedAt: null } }));
+    api.getSnapshot.mockResolvedValue(calm({ attention: [interrupted], sync: { phase: "failing", message: null, items: 0, comparing: false,lastSyncedAt: null } }));
     api.getQueue.mockResolvedValue([]);
     render(<App />);
     const attention = await screen.findByRole("region", { name: "Needs attention" });
@@ -283,12 +283,14 @@ describe("status view", () => {
     expect(now).toHaveTextContent("New recordings wait while the review window is open.");
   });
 
-  it("puts a sync review that holds recording at the top and opens the sync window", async () => {
-    api.getSnapshot.mockResolvedValue(snapshot({ state: "reviewing", sync: { phase: "review", message: null, issues: 1, blocked: true, lastSyncedAt: null } }));
+  it("lists synced notes to check without holding recording, and opens the sync window", async () => {
+    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "idle", message: null, items: 2, comparing: false, lastSyncedAt: NOW - 60 } }));
     render(<App />);
     const now = await screen.findByRole("region", { name: "Current activity" });
-    expect(now).toHaveTextContent("Sync needs your review");
-    await userEvent.click(within(now).getByRole("button", { name: "Review" }));
+    expect(now).toHaveTextContent("Waiting for the next session");
+    const attention = screen.getByRole("region", { name: "Needs attention" });
+    expect(attention).toHaveTextContent("2 synced notes to check");
+    await userEvent.click(within(attention).getByRole("button", { name: "Open" }));
     expect(api.openSync).toHaveBeenCalledTimes(1);
   });
 
@@ -367,7 +369,7 @@ describe("footer", () => {
   it("shows when memory was last synced and syncs on request", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW * 1000));
-    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "idle", message: null, issues: 0, blocked: false, lastSyncedAt: NOW - 300 } }));
+    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "idle", message: null, items: 0, comparing: false,lastSyncedAt: NOW - 300 } }));
     render(<App />);
     const footer = await findFooter();
     expect(footer).toHaveTextContent("Synced 5m ago");
@@ -378,32 +380,38 @@ describe("footer", () => {
   it("marks automatic sync as off next to the last sync", async () => {
     vi.useFakeTimers({ toFake: ["Date"] });
     vi.setSystemTime(new Date(NOW * 1000));
-    api.getSnapshot.mockResolvedValue(calm({ settings: { ...snapshot().settings, syncEnabled: false }, sync: { phase: "idle", message: null, issues: 0, blocked: false, lastSyncedAt: NOW - 30 } }));
+    api.getSnapshot.mockResolvedValue(calm({ settings: { ...snapshot().settings, syncEnabled: false }, sync: { phase: "idle", message: null, items: 0, comparing: false,lastSyncedAt: NOW - 30 } }));
     render(<App />);
     expect(await findFooter()).toHaveTextContent("Synced just now · auto off");
   });
 
-  it("opens the sync window instead of syncing while a review holds sync", async () => {
-    api.getSnapshot.mockResolvedValue(snapshot({ sync: { phase: "review", message: null, issues: 1, blocked: true, lastSyncedAt: null } }));
+  it("opens the sync window when synced notes are waiting to be checked", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot({ sync: { phase: "idle", message: null, items: 1, comparing: false, lastSyncedAt: NOW } }));
     render(<App />);
     const footer = await findFooter();
-    expect(footer).toHaveTextContent("Sync on hold");
+    expect(footer).toHaveTextContent("1 to check");
     await userEvent.click(within(footer).getByRole("button", { name: "Open sync" }));
     expect(api.openSync).toHaveBeenCalledTimes(1);
     expect(api.syncNow).not.toHaveBeenCalled();
   });
 
-  it("says when sync has never run, unshared memory, and a sync in progress", async () => {
+  it("says when sync has never run, when it keeps failing, and a sync in progress", async () => {
     api.getSnapshot.mockResolvedValue(calm({ settings: { ...snapshot().settings, syncEnabled: false } }));
     const { unmount } = render(<App />);
     expect(await findFooter()).toHaveTextContent("Sync off");
     unmount();
 
     useAppStore.setState({ snapshot: null });
-    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "push_pending", message: null, issues: 0, blocked: false, lastSyncedAt: null } }));
+    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "failing", message: "authentication failed", items: 0, comparing: false, lastSyncedAt: null } }));
     const second = render(<App />);
-    expect(await findFooter()).toHaveTextContent("Not shared yet");
+    expect(await findFooter()).toHaveTextContent("Sync needs attention");
     second.unmount();
+
+    useAppStore.setState({ snapshot: null });
+    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "retrying", message: "network unreachable", items: 0, comparing: false, lastSyncedAt: Math.floor(Date.now() / 1000) } }));
+    const third = render(<App />);
+    expect(await findFooter()).toHaveTextContent("Synced just now");
+    third.unmount();
 
     useAppStore.setState({ snapshot: null });
     api.getSnapshot.mockResolvedValue(calm({ syncing: true }));

@@ -21,7 +21,7 @@ const USAGE: &str = "Usage: lore-cli <command>
   scan                            Find sessions missed by hooks and queue them
   work [--once]                   Process queued jobs (tray app must be closed)
   status                          Show queue counts and failed jobs
-  sync <check|status|analyze|preview|apply|resume>
+  sync <status|now|compare|resolve|dismiss>
                                   Check upstream, compare, preview, and apply memory changes
   doctor                          Diagnose this PC's paths, CLIs, and qmd setup (read-only)
   index                           Register memory collections and refresh this PC's qmd index
@@ -89,47 +89,41 @@ fn run(args: &[String]) -> Result<()> {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else { return Err(Error::transient("Close the tray app before using CLI sync.")); };
             let settings = settings::load_or_init(&paths.settings(), worker::now())?;
             settings.validate()?;
-            if !matches!(mode, "status" | "preview") {
-                let queue = Queue::open(&paths.database())?;
-                if !queue.jobs_with_status(&[Status::Applying, Status::IndexPending], 1)?.is_empty() {
-                    return Err(Error::permanent("Finish the interrupted recording or index update with work first."));
-                }
-            }
             let root = settings.knowledge_root();
-            let path = lore_core::sync::journal(&paths, &root);
-            let finish = || lore_core::sync::finish(&root, &path, || {
-                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
-                if !qmd.available() { return Err(Error::transient("qmd was not found.")); }
-                qmd.ensure_index(&root)?; qmd.refresh()
-            });
-            let read_choices = |index: usize| -> Result<Vec<lore_core::sync::Choice>> {
-                let file = args.get(index).ok_or_else(|| Error::permanent("A JSON choices file is required."))?;
-                Ok(serde_json::from_slice(&std::fs::read(file)?)?)
-            };
+            let folder = lore_core::sync::folder(&paths, &root);
             match mode {
-                "status" => {},
-                "check" => {
-                    let plan = lore_core::sync::prepare(&root, &path)?;
-                    if plan.phase != "review" { finish()?; }
+                "status" => {}
+                "now" => {
+                    let queue = Queue::open(&paths.database())?;
+                    if !queue.jobs_with_status(&[Status::Applying], 1)?.is_empty() {
+                        return Err(Error::permanent("Finish the interrupted recording with work first."));
+                    }
+                    lore_core::sync::sync(&root, &folder, || {
+                        let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+                        if !qmd.available() { return Err(Error::transient("qmd was not found.")); }
+                        qmd.ensure_index(&root)?; qmd.refresh()
+                    })?;
                 }
-                "analyze" => {
+                "compare" => {
                     let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
-                    lore_core::sync::analyze(&root, &path, &recorder, &path.parent().unwrap().join("model-review"))?;
+                    let identity = serde_json::json!([recorder.backend, recorder.model, recorder.effort, recorder.command]).to_string();
+                    lore_core::sync::retry_comparison(&folder)?;
+                    while let Some(id) = lore_core::sync::pending_comparison(&folder) {
+                        lore_core::sync::compare(&folder, &id, &identity, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts), &mut || {})?;
+                    }
                 }
-                "preview" => {
-                    let plan = lore_core::sync::load(&path)?.ok_or_else(|| Error::permanent("No review plan is available."))?;
-                    println!("{}", serde_json::to_string_pretty(&lore_core::sync::preview(&plan, &read_choices(2)?)?)?);
-                    return Ok(());
+                "resolve" => {
+                    let id = args.get(2).ok_or_else(|| Error::permanent("The item ID is required."))?;
+                    let option: usize = args.get(3).and_then(|value| value.parse().ok()).ok_or_else(|| Error::permanent("The option number is required."))?;
+                    lore_core::sync::resolve_item(&root, &folder, id, option, None)?;
                 }
-                "apply" => {
-                    let id = args.get(2).ok_or_else(|| Error::permanent("The reviewed plan ID is required."))?;
-                    lore_core::sync::approve(&root, &path, id, &read_choices(3)?)?;
-                    finish()?;
+                "dismiss" => {
+                    let id = args.get(2).ok_or_else(|| Error::permanent("The item ID is required."))?;
+                    lore_core::sync::dismiss_item(&folder, id)?;
                 }
-                "resume" => { finish()?; }
-                _ => return Err(Error::permanent("Use sync check, status, analyze, preview <choices.json>, apply <plan-id> <choices.json>, or resume.")),
+                _ => return Err(Error::permanent("Use sync status, now, compare, resolve <item-id> <option>, or dismiss <item-id>.")),
             }
-            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"summary": lore_core::sync::summary(&path), "plan": lore_core::sync::load(&path)?}))?);
+            println!("{}", serde_json::to_string_pretty(&serde_json::json!({"summary": lore_core::sync::summary(&folder), "state": lore_core::sync::state(&folder)}))?);
         }
         "doctor" => {
             let report = lore_core::diagnostics::inspect(&paths, &std::env::current_exe()?);
