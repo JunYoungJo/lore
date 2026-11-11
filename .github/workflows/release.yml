@@ -100,6 +100,12 @@ jobs:
           args: --target ${{ matrix.target }}
           uploadUpdaterJson: false
           updaterJsonPreferNsis: true
+      - name: Verify macOS signatures in the app, updater archive, and DMG
+        if: runner.os == 'macOS'
+        shell: bash
+        env:
+          BUILD_TARGET: ${{ matrix.target }}
+        run: bash scripts/verify-macos-bundles.sh "target/$BUILD_TARGET/release/bundle"
 
   manifest:
     needs: [prepare, build]

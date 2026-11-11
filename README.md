@@ -95,7 +95,7 @@ Lore is an early-stage project. Installers are published through [GitHub Release
 - **Windows:** use the `x64-setup.exe` NSIS installer.
 - **Linux:** use the AppImage for in-app updates, or install the DEB and update it with a newer package.
 
-Current builds do not have Apple Developer ID signing/notarization or a Windows code-signing certificate, so operating-system security warnings may appear. The Tauri update signature is separate from OS code signing. Open the first-run guide to prepare your coding tools and memory folder after installation.
+macOS builds use ad-hoc signing, without Apple Developer ID or notarization. macOS may still block opening the app; if offered, use **System Settings → Privacy & Security → Open Anyway** after attempting to open it. Windows builds have no code-signing certificate. The Tauri update signature is separate from OS code signing. Open the first-run guide to prepare your coding tools and memory folder after installation.
 
 ### Requirements
 
@@ -178,7 +178,7 @@ Git sharing sends **all committed files in the memory repository**. Conversation
 
 | Platform | Build configuration | Verification on this branch |
 | --- | --- | --- |
-| macOS | App / DMG | Apple Silicon app build and isolated startup checked on Nov 10; signing and notarization not checked |
+| macOS | App / DMG | Release CI checks ad-hoc app/CLI signatures for both architectures; Developer ID and notarization are not configured |
 | Windows | NSIS installer | Nov 11 release executable and installer built |
 | Linux | DEB / AppImage | Platform code and CI configured; desktop runtime not checked |
 
