@@ -132,6 +132,12 @@ export function App() {
         </div>
       )}
 
+      {view !== "settings" && snapshot.update.version && (
+        <button type="button" className="app-update-notice" onClick={showSettings}>
+          Lore {snapshot.update.version} available <span>View update →</span>
+        </button>
+      )}
+
       {view === "settings" ? <SettingsView snapshot={snapshot} /> : view === "queue" ? <QueueView snapshot={snapshot} /> : <StatusView snapshot={snapshot} />}
 
       {view !== "settings" && (

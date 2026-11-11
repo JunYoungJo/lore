@@ -9,7 +9,7 @@
 Claude Code와 Codex의 결정·이유·해결 경험을 남기는 데스크톱 앱입니다.<br />
 근거 대화와 변경 내용을 확인하고, 같은 Markdown 기억을 여러 도구와 PC에서 이어 씁니다.
 
-[시작하기](#시작하기) · [여러 PC에서 공유](#여러-pc에서-공유) · [문서](#문서) · [English](README.md)
+[다운로드](https://github.com/JunYoungJo/lore/releases) · [시작하기](#시작하기) · [여러 PC에서 공유](#여러-pc에서-공유) · [문서](#문서) · [English](README.md)
 
 ![Status](https://img.shields.io/badge/status-in%20development-c0851a)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
@@ -47,6 +47,7 @@ Lore는 여러 코딩 도구와 PC를 오가며 프로젝트를 오래 이어 �
 - **바꾸면 적용되는 설정** — CLI가 제공하는 목록에서 기록 모델과 지원하는 effort를 고릅니다. 목록을 읽지 못하면 모델 이름을 직접 입력합니다. 시스템·라이트·다크 테마와 기록 한도를 설정할 수 있습니다.
 - **연동 관리** — **Manage Lore**에서 AI 연결, 기억 폴더, 이 PC의 검색 색인과 도구를 따로 관리합니다. 파일·훅 상태를 확인해 연결을 복구·해제하고, 임베딩 모델을 바꾸기 전에 색인 재생성을 확인합니다.
 - **첫 실행 안내** — 필요한 준비를 확인하고 내장 터미널에서 설치·로그인 명령을 실행해 AI 도구를 연결합니다. 연결 준비와 실제 기록·검색 확인을 구분하며, 이후 관리는 별도 창에서 진행합니다.
+- **서명된 앱 업데이트** — 시작 시, 트레이 메뉴, **Settings → App updates**에서 새 버전을 확인합니다. 릴리즈 노트를 읽고 **Install & restart**를 선택합니다. 기록·동기화·검토·설정 작업을 마쳐야 설치할 수 있습니다.
 
 <p align="center">
   <img src="docs/screenshots/onboarding.png" alt="프로젝트의 결정을 기억하는 예시를 보여 주는 Lore 첫 실행 안내" width="720" />
@@ -84,7 +85,15 @@ Claude Code / Codex의 세션 종료 또는 압축 직전
 
 ## 시작하기
 
-현재 개발 중이며, 아래 방법으로 소스에서 빌드합니다.
+초기 개발 단계의 프로젝트입니다. [GitHub Releases](https://github.com/JunYoungJo/lore/releases)에서 설치 파일을 제공하며, 아래 방법으로 소스에서 빌드할 수도 있습니다.
+
+### 설치
+
+- **macOS:** Apple Silicon(`aarch64`) 또는 Intel(`x64`)용 DMG를 선택하고 Lore를 Applications로 옮긴 뒤 실행합니다.
+- **Windows:** `x64-setup.exe` NSIS 설치본을 사용합니다.
+- **Linux:** 앱 내 업데이트에는 AppImage를 사용합니다. DEB는 새 패키지를 설치해 갱신합니다.
+
+현재 Apple Developer ID 서명·공증과 Windows 코드 서명 인증서는 적용하지 않아 운영체제 보안 경고가 나타날 수 있습니다. Tauri 업데이트 서명과 운영체제 코드 서명은 별개입니다. 설치 후 첫 실행 안내에서 코딩 도구와 기억 폴더를 준비합니다.
 
 ### 필요한 것
 
@@ -203,6 +212,7 @@ node scripts/evaluate-sync.mjs --backend codex
 - [여러 PC 설정·경로·기억 이전](docs/multiplatform.md)
 - [동기화 검토와 복구](docs/sync-review.md)
 - [검증 결과](VALIDATION.md)
+- [데스크톱 릴리즈와 앱 업데이트](docs/releasing.md) — 영어
 - [분리 경위와 이전 결정](docs/origin-and-scope.md) — 당시의 기록
 
 ## 라이선스

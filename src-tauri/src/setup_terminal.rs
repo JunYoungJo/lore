@@ -46,6 +46,9 @@ fn size(cols: u16, rows: u16) -> PtySize {
 pub fn start(app: &AppHandle, argv: &[String], cwd: &Path, env: &[(String, String)], cols: u16, rows: u16) -> Result<(), String> {
     let terminal = app.state::<Terminal>();
     let mut slot = terminal.0.lock().map_err(err)?;
+    if app.state::<crate::state::AppState>().setup_busy() {
+        return Err("Wait for memory preparation or the app update to finish before running a command.".into());
+    }
     if slot.as_ref().is_some_and(|s| s.lock().map(|s| s.running).unwrap_or(true)) {
         return Err("A setup command is still running. Finish or stop it first.".into());
     }

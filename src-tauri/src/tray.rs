@@ -162,8 +162,9 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let paused = app.state::<AppState>().settings().paused;
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, PAUSE_ITEM, "Pause", true, paused, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &pause, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &pause, &update, &quit])?;
     let pause_item = pause.clone();
     app.manage(PauseItem(pause));
     let mut builder = TrayIconBuilder::with_id(TRAY_ID).tooltip("Lore");
@@ -188,6 +189,12 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
                 }
             }
             "quit" => app.exit(0),
+            "update" => {
+                open_popover(app);
+                if let Some(window) = app.get_webview_window(POPOVER) { let _ = window.emit("show-settings", ()); }
+                let handle = app.clone();
+                tauri::async_runtime::spawn(async move { let _ = crate::updates::check_app_update(handle).await; });
+            }
             _ => {}
         })
         .on_tray_icon_event(|tray, event| {

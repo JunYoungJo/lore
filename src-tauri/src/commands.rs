@@ -38,6 +38,7 @@ pub struct Snapshot {
     pub catalog: Catalog,
     pub default_models: Models,
     pub default_efforts: Efforts,
+    pub update: crate::updates::Status,
 }
 
 #[derive(Serialize)]
@@ -128,6 +129,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         review,
         reviewing,
         version: env!("CARGO_PKG_VERSION"),
+        update: app.state::<crate::updates::Updates>().snapshot(),
         sync,
         syncing,
         catalog,

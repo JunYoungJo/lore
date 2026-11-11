@@ -1436,3 +1436,10 @@ svg.kind-deleted {
 .sync-row-sub { margin-top: 2px; font-size: 12px; line-height: 1.5; color: var(--text3); }
 .sync-row .link-btn { margin-top: 0; }
 @media (max-width: 860px) { .sync-two { grid-template-columns: 1fr; } .sync-rail { width: 240px; } .sync-pane { padding: 20px; } }
+
+/* App update status shares the tray's existing settings layout. */
+.app-update-notice { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 12px 0; padding: 10px 12px; border: 1px solid var(--line); border-radius: 9px; background: var(--accent-soft); color: var(--text); font: inherit; font-size: 11px; cursor: pointer; }
+.app-update-notice span { color: var(--accent); }
+.update-notes { padding: 10px 12px; max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; color: var(--text2); }
+.update-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; }
+.update-error { color: var(--danger); overflow-wrap: anywhere; }

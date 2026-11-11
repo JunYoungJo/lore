@@ -10,6 +10,7 @@ import { useThemePreference, type ThemePreference } from "@/theme";
 import { Segmented } from "@/ui/Segmented";
 import { Toggle } from "@/ui/Toggle";
 import { useNow } from "@/useNow";
+import { AppUpdates } from "@/components/AppUpdates";
 
 const OTHER = "__other";
 const CLIENT = { claude: "Claude Code", codex: "Codex" } as const;
@@ -177,6 +178,7 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
 
   return (
     <div className="body">
+      <AppUpdates snapshot={snapshot} />
       <div className="eyebrow">Recording</div>
       <section className="group" aria-label="Recording">
         <div className="set-row">

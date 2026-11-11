@@ -73,6 +73,10 @@ impl AppState {
         self.operation.try_lock().is_err()
     }
 
+    pub fn try_operation(&self) -> Option<MutexGuard<'_, ()>> {
+        self.operation.try_lock().ok()
+    }
+
     pub fn syncing(&self) -> bool {
         self.syncing.load(Ordering::SeqCst)
     }

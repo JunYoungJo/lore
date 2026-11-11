@@ -22,6 +22,8 @@ const api = vi.hoisted(() => ({
   hideWindow: vi.fn(),
   openSetup: vi.fn(),
   openIntegrations: vi.fn(),
+  checkAppUpdate: vi.fn(),
+  installAppUpdate: vi.fn(),
   onStateChanged: vi.fn(() => Promise.resolve(() => {})),
   onPopoverShown: vi.fn(() => Promise.resolve(() => {})),
   onShowSettings: vi.fn((_handler: () => void) => Promise.resolve(() => {})),
@@ -81,6 +83,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     review: 4,
     reviewing: false,
     version: "0.1.0",
+    update: { phase: "idle", version: null, notes: null, downloaded: 0, total: null, error: null },
     sync: { phase: "idle", message: null, issues: 0, blocked: false, lastSyncedAt: null },
     syncing: false,
     catalog: { codex: null, claude: null },
@@ -734,5 +737,58 @@ describe("settings view", () => {
     expect(api.openSetup).toHaveBeenCalledTimes(1);
     await userEvent.click(screen.getByRole("button", { name: "Open app data folder" }));
     expect(api.openFolder).toHaveBeenCalledWith("data");
+  });
+});
+
+describe("app updates", () => {
+  const available = () => ({ phase: "available" as const, version: "0.2.0", notes: "A sample release.", downloaded: 0, total: null, error: null });
+
+  it("opens an available release from the tray and only installs after an explicit click", async () => {
+    serve(calm({ update: available() }));
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: /Lore 0.2.0 available/ }));
+    const updates = screen.getByRole("region", { name: "App updates" });
+    expect(within(updates).getByText("A sample release.")).toBeInTheDocument();
+    expect(api.installAppUpdate).not.toHaveBeenCalled();
+    await userEvent.click(within(updates).getByRole("button", { name: "Install & restart" }));
+    expect(api.installAppUpdate).toHaveBeenCalledTimes(1);
+  });
+
+  it("checks manually and reports the current version", async () => {
+    const initial = calm();
+    serve(initial);
+    api.checkAppUpdate.mockImplementation(async () => {
+      api.getSnapshot.mockResolvedValue({ ...initial, update: { ...initial.update, phase: "current" } });
+    });
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Check now" }));
+    expect(await screen.findByText("You’re up to date.")).toBeInTheDocument();
+    expect(api.installAppUpdate).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    { current: { jobId: "recording", provider: "codex" as const, project: "demo-app", startedAt: NOW } },
+    { syncing: true },
+    { reviewing: true },
+  ])("prevents install while existing work is active: %j", async (work) => {
+    serve(calm({ ...work, update: available() }));
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    const button = screen.getByRole("button", { name: "Install & restart" });
+    expect(button).toBeDisabled();
+    await userEvent.click(button);
+    expect(api.installAppUpdate).not.toHaveBeenCalled();
+  });
+
+  it("shows a failed verification and allows retry without discarding the available release", async () => {
+    serve(calm({ update: available() }));
+    api.installAppUpdate.mockRejectedValue(new Error("Could not download or verify the update."));
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "Settings" }));
+    await userEvent.click(screen.getByRole("button", { name: "Install & restart" }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("Could not download or verify the update.");
+    expect(screen.getByRole("button", { name: "Install & restart" })).toBeEnabled();
+    expect(screen.getByText("Version 0.2.0 available")).toBeInTheDocument();
   });
 });

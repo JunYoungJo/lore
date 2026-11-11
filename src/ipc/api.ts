@@ -23,6 +23,8 @@ export const openNote = (path: string): Promise<void> => invoke("open_note", { p
 export const openFolder = (kind: "knowledge" | "data"): Promise<void> => invoke("open_folder", { kind });
 export const hideWindow = (): Promise<void> => invoke("hide_window");
 export const openSettings = (): Promise<void> => invoke("open_settings");
+export const checkAppUpdate = (): Promise<void> => invoke("check_app_update");
+export const installAppUpdate = (): Promise<void> => invoke("install_app_update");
 
 export const onStateChanged = (handler: () => void): Promise<UnlistenFn> => listen("state-changed", handler);
 export const onPopoverShown = (handler: () => void): Promise<UnlistenFn> => listen("popover-shown", handler);

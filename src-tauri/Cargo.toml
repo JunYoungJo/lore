@@ -27,6 +27,7 @@ tauri-plugin-dialog = "2"
 serde.workspace = true
 serde_json.workspace = true
 portable-pty = "0.9"
+tauri-plugin-updater = "2"
 
 [target.'cfg(windows)'.dependencies]
 webview2-com = "0.38"

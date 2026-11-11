@@ -9,7 +9,7 @@
 A desktop app for keeping decisions, reasons, and lessons from Claude Code and Codex.<br />
 Follow the sources, review the changes, and carry the same Markdown memory between tools and PCs.
 
-[Get started](#getting-started) · [Sync across PCs](#sync-across-pcs) · [Documentation](#documentation) · [한국어](README.ko.md)
+[Downloads](https://github.com/JunYoungJo/lore/releases) · [Get started](#getting-started) · [Sync across PCs](#sync-across-pcs) · [Documentation](#documentation) · [한국어](README.ko.md)
 
 ![Status](https://img.shields.io/badge/status-in%20development-c0851a)
 ![Tauri 2](https://img.shields.io/badge/Tauri-2-24C8DB?logo=tauri&logoColor=white)
@@ -47,6 +47,7 @@ Lore is built for developers who work across coding tools, long-running projects
 - **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure recording limits.
 - **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
 - **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, and connect AI clients. Setup readiness and successful recording/recall are shown separately; ongoing management has its own window.
+- **Signed app updates** — Check at startup, from the tray menu, or under **Settings → App updates**. Inspect the release notes and choose **Install & restart**. Recording, sync, review, and setup work must finish before installation.
 
 <p align="center">
   <img src="docs/screenshots/onboarding.png" alt="Lore first-run introduction with an interactive example of remembering a project decision" width="720" />
@@ -86,7 +87,15 @@ The model decides what is worth recording. Program checks catch malformed output
 
 ## Getting started
 
-Lore is in development. Build from source using the instructions below.
+Lore is an early-stage project. Installers are published through [GitHub Releases](https://github.com/JunYoungJo/lore/releases); source builds are described below.
+
+### Install
+
+- **macOS:** choose the Apple Silicon (`aarch64`) or Intel (`x64`) DMG, then move Lore to Applications before running it.
+- **Windows:** use the `x64-setup.exe` NSIS installer.
+- **Linux:** use the AppImage for in-app updates, or install the DEB and update it with a newer package.
+
+Current builds do not have Apple Developer ID signing/notarization or a Windows code-signing certificate, so operating-system security warnings may appear. The Tauri update signature is separate from OS code signing. Open the first-run guide to prepare your coding tools and memory folder after installation.
 
 ### Requirements
 
@@ -208,6 +217,7 @@ Both evaluations substitute an indexing fixture for qmd. They test model output 
 - [Multiple PCs, platform paths, and migration](docs/multiplatform.md) — Korean
 - [Synchronization review and recovery](docs/sync-review.md) — Korean
 - [Validation results](VALIDATION.md) — Korean
+- [Desktop releases and app updates](docs/releasing.md)
 - [Project history and original scope](docs/origin-and-scope.md) — historical notes
 
 ## License

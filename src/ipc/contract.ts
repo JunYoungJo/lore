@@ -148,7 +148,17 @@ export interface DiffRow {
   right: Segment[] | null;
 }
 
+export interface AppUpdate {
+  phase: "idle" | "checking" | "current" | "available" | "downloading" | "installing" | "error";
+  version: string | null;
+  notes: string | null;
+  downloaded: number;
+  total: number | null;
+  error: string | null;
+}
+
 export interface Snapshot {
+  update: AppUpdate;
   sync?: SyncSummary;
   syncing?: boolean;
   state: "idle" | "working" | "paused" | "reviewing";

@@ -19,13 +19,33 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "icon": ["icons/32x32.png", "icons/128x128.png", "icons/128x128@2x.png", "icons/icon.ico", "icons/icon.icns"],
-    "externalBin": ["binaries/lore-cli"],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.ico",
+      "icons/icon.icns"
+    ],
+    "externalBin": [
+      "binaries/lore-cli"
+    ],
     "resources": [],
     "windows": {
       "nsis": {
         "installMode": "currentUser",
         "installerHooks": "installer-hooks.nsh"
+      }
+    },
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEI4RTU1NUNDNTM3RDM0NzcKUldSM05IMVR6RlhsdU1zZGI1MWd5WVZZamQvSm80VVJCYldDZ1k4LzdYVzhsYWJUYXA1YnhTYmEK",
+      "endpoints": [
+        "https://github.com/JunYoungJo/lore/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
       }
     }
   }

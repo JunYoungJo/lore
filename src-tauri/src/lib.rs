@@ -12,6 +12,7 @@ mod tray;
 mod watch;
 mod setup;
 mod setup_terminal;
+mod updates;
 
 pub fn run() {
     let paths = Paths::standard();
@@ -30,7 +31,9 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_autostart::Builder::new().build())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(app_state)
+        .manage(updates::Updates::default())
         .manage(setup_terminal::Terminal::default())
         .setup(move |app| {
             #[cfg(target_os = "macos")]
@@ -46,7 +49,8 @@ pub fn run() {
             let _ = handle.notification().on_action(move |_| tray::open_popover(&opener));
             watch::spawn(handle.clone());
             commands::refresh_catalog(&handle);
-            background::spawn(handle);
+            background::spawn(handle.clone());
+            updates::check_on_startup(handle);
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -62,6 +66,8 @@ pub fn run() {
             commands::open_folder,
             commands::hide_window,
             commands::open_settings,
+            updates::check_app_update,
+            updates::install_app_update,
             review::open_review,
             review::begin_review,
             review::end_review,
