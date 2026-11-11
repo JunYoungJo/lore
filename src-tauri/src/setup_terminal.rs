@@ -12,7 +12,7 @@ use tauri::{AppHandle, Manager, State};
 const CAPACITY: usize = 512 * 1024;
 
 pub struct Session {
-    master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
     writer: Box<dyn Write + Send>,
     killer: Box<dyn ChildKiller + Send + Sync>,
     pid: Option<u32>,
@@ -74,8 +74,18 @@ fn spawn(argv: &[String], cwd: &Path, env: &[(String, String)], cols: u16, rows:
     let mut reader = pair.master.try_clone_reader().map_err(err)?;
     let session = Arc::new(Mutex::new(Session {
         writer: pair.master.take_writer().map_err(err)?, killer: child.clone_killer(), pid: child.process_id(),
-        master: pair.master, output: VecDeque::new(), offset: 0, running: true, exit_code: None,
+        master: Some(pair.master), output: VecDeque::new(), offset: 0, running: true, exit_code: None,
     }));
+    let exited = session.clone();
+    let waiter = std::thread::spawn(move || {
+        let status = child.wait();
+        // ConPTY keeps its output pipe open after the command exits; only closing
+        // the PTY ends the read loop. Closing can wait for that loop to drain the
+        // pipe, so it must happen outside the session lock.
+        let master = exited.lock().ok().and_then(|mut session| session.master.take());
+        drop(master);
+        status
+    });
     let returned = session.clone();
     std::thread::spawn(move || {
         let mut chunk = [0; 8192];
@@ -88,10 +98,10 @@ fn spawn(argv: &[String], cwd: &Path, env: &[(String, String)], cols: u16, rows:
                 session.offset += excess as u64;
             }
         }
-        let status = child.wait();
+        let status = waiter.join().ok().and_then(|status| status.ok());
         if let Ok(mut session) = session.lock() {
             session.running = false;
-            session.exit_code = status.ok().map(|s| s.exit_code());
+            session.exit_code = status.map(|s| s.exit_code());
         }
     });
     Ok(returned)
@@ -119,7 +129,9 @@ pub fn setup_terminal_input(terminal: State<'_, Terminal>, data: String) -> Resu
 #[tauri::command]
 pub fn setup_terminal_resize(terminal: State<'_, Terminal>, cols: u16, rows: u16) -> Result<(), String> {
     let slot = terminal.0.lock().map_err(err)?;
-    if let Some(session) = slot.as_ref() { session.lock().map_err(err)?.master.resize(size(cols, rows)).map_err(err)?; }
+    if let Some(session) = slot.as_ref() {
+        if let Some(master) = session.lock().map_err(err)?.master.as_ref() { master.resize(size(cols, rows)).map_err(err)?; }
+    }
     Ok(())
 }
 
@@ -187,5 +199,41 @@ mod tests {
         session.lock().unwrap().stop().unwrap();
         wait_for(&session, |s| !s.running);
         assert_ne!(session.lock().unwrap().exit_code, Some(0));
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_tests {
+    use super::*;
+
+    fn start(args: &[&str]) -> Arc<Mutex<Session>> {
+        let argv: Vec<String> = std::iter::once(std::env::var("ComSpec").unwrap()).chain(args.iter().map(|arg| arg.to_string())).collect();
+        let session = spawn(&argv, &std::env::temp_dir(), &[], 90, 16).unwrap();
+        // ConPTY holds the command back until a terminal reports its cursor position.
+        session.lock().unwrap().writer.write_all(b"\x1b[1;1R").unwrap();
+        session
+    }
+
+    fn exit_code(session: &Arc<Mutex<Session>>) -> Option<u32> {
+        loop {
+            {
+                let session = session.lock().unwrap();
+                if !session.running { return session.exit_code; }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn exit_of_the_command_ends_the_session() {
+        let session = start(&["/d", "/c", "exit 3"]);
+        assert_eq!(exit_code(&session), Some(3));
+    }
+
+    #[test]
+    fn stop_ends_a_command_that_waits_for_input() {
+        let session = start(&["/d", "/k"]);
+        session.lock().unwrap().stop().unwrap();
+        assert_ne!(exit_code(&session), Some(0));
     }
 }
