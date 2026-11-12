@@ -15,6 +15,8 @@ const api = vi.hoisted(() => ({
   setSyncEnabled: vi.fn(),
   syncNow: vi.fn(),
   clearActivity: vi.fn(),
+  getCleanupFolders: vi.fn(),
+  startCleanup: vi.fn(),
   openReview: vi.fn(),
   openSync: vi.fn(),
   openNote: vi.fn(),
@@ -42,6 +44,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
   return {
     state: "idle",
     current: null,
+    cleanup: null,
     counts: { ready: 1, waiting: 2, failed: 1, done: 5, skipped: 0 },
     recent: [
       { id: 4, at: 1_800_000_000, jobId: "a", provider: "claude", project: "demo-app", kind: "recorded", summary: "로그 전용으로 변경", notes: ["projects/demo-app/bg-policy.md", "projects/demo-app/log-only.md"], error: null },
@@ -302,6 +305,69 @@ describe("status view", () => {
     const now = await screen.findByRole("region", { name: "Current activity" });
     expect(now).toHaveTextContent("Recording sample-app");
     expect(now).toHaveTextContent("Claude session · Codex");
+  });
+
+  it("shows the folder being cleaned up once the cleanup has started", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", cleanup: { folder: "lore", absorb: [], startedAt: 1_800_000_000 } }));
+    render(<App />);
+    const now = await screen.findByRole("region", { name: "Current activity" });
+    expect(now).toHaveTextContent("Cleaning up lore");
+    expect(now).toHaveTextContent(/Codex · (Just started|\d+ min elapsed)/);
+  });
+
+  it("keeps showing the usual state while a cleanup still waits for its turn", async () => {
+    api.getSnapshot.mockResolvedValue(calm({ cleanup: { folder: "lore", absorb: [], startedAt: null } }));
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Current activity" })).toHaveTextContent("Waiting for the next session");
+  });
+
+  const cleaned = (overrides: Partial<Snapshot["recent"][number]> = {}): Snapshot["recent"][number] => ({
+    id: 9,
+    at: 1_800_000_300,
+    jobId: "cleanup",
+    provider: "claude",
+    project: "lore",
+    kind: "cleaned",
+    summary: "중복 노트를 합쳤습니다.\nMoved projects/qmd-memory/sync.md to projects/lore/sync.md\nRemoved projects/lore/old.md: 대상이 없어졌습니다.",
+    notes: ["projects/lore/kept.md", "projects/lore/sync.md", "projects/lore/old.md", "projects/qmd-memory/sync.md"],
+    error: null,
+    ...overrides,
+  });
+
+  it("lists a cleanup by what it changed and removed, and offers to open only the notes that remain", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot({ recent: [cleaned()] }));
+    render(<App />);
+    const recent = await screen.findByRole("region", { name: "Recent activity" });
+    expect(within(recent).getByText("kept.md · sync.md · old.md · sync.md")).toBeInTheDocument();
+    await userEvent.click(within(recent).getByRole("button", { name: "2 changed · 2 removed" }));
+    const card = screen.getByRole("dialog", { name: "Updated notes in lore" });
+    expect(card).toHaveTextContent("중복 노트를 합쳤습니다.");
+    expect(card).not.toHaveTextContent("Removed projects/lore/old.md");
+    expect(within(card).getByRole("button", { name: "Open kept.md" })).toHaveFocus();
+    expect(within(card).getByRole("button", { name: "Open sync.md" })).toBeInTheDocument();
+    expect(within(card).queryByRole("button", { name: "Open old.md" })).not.toBeInTheDocument();
+    expect(within(card).getByTitle("대상이 없어졌습니다.")).toHaveTextContent("old.md");
+    expect(within(card).getByTitle("Moved to projects/lore/sync.md")).toHaveTextContent("sync.md");
+  });
+
+  it("says so when a cleanup found nothing to change, stopped early or failed", async () => {
+    api.getSnapshot.mockResolvedValue(
+      snapshot({
+        recent: [
+          cleaned({ id: 12, summary: "정리할 것이 없습니다.", notes: [] }),
+          cleaned({ id: 11, project: "demo", error: "usage limit reached" }),
+          cleaned({ id: 10, project: "wevrel", kind: "cleanup_failed", summary: null, notes: [], error: "Invalid memory path: x" }),
+        ],
+      }),
+    );
+    render(<App />);
+    const recent = await screen.findByRole("region", { name: "Recent activity" });
+    expect(within(recent).getByText("Nothing to clean up")).toBeInTheDocument();
+    expect(within(recent).getByText("정리할 것이 없습니다.")).toBeInTheDocument();
+    expect(within(recent).getByText("Cleanup failed")).toBeInTheDocument();
+    expect(within(recent).getByText("Invalid memory path: x")).toBeInTheDocument();
+    await userEvent.click(within(recent).getByRole("button", { name: "2 changed · 2 removed" }));
+    expect(screen.getByRole("dialog", { name: "Updated notes in demo" })).toHaveTextContent("Stopped early: usage limit reached");
   });
 
   it("keeps elapsed and relative times moving while the popover stays open", async () => {
@@ -768,6 +834,65 @@ describe("settings view", () => {
     expect(sync).toHaveTextContent("Not synced yet");
     await userEvent.click(within(sync).getByRole("button", { name: "Sync now" }));
     expect(api.syncNow).toHaveBeenCalledTimes(1);
+  });
+
+  const FOLDERS = [
+    { name: "common", notes: 10 },
+    { name: "lore", notes: 39 },
+    { name: "qmd-memory", notes: 5 },
+  ];
+  const options = (select: HTMLElement) => within(select).getAllByRole("option").map((option) => option.textContent);
+
+  it("cleans up the chosen folder and can merge another project folder into it", async () => {
+    api.getCleanupFolders.mockResolvedValue(FOLDERS);
+    await openSettings();
+    const memory = screen.getByRole("region", { name: "Memory and sync" });
+    expect(screen.queryByRole("combobox", { name: "Folder to clean up" })).not.toBeInTheDocument();
+    await userEvent.click(within(memory).getByRole("button", { name: "Clean up…" }));
+    const folder = await screen.findByRole("combobox", { name: "Folder to clean up" });
+    await waitFor(() => expect(options(folder)).toEqual(["Choose a folder", "common · 10 notes", "lore · 39 notes", "qmd-memory · 5 notes"]));
+    const start = screen.getByRole("button", { name: "Start cleanup" });
+    expect(start).toBeDisabled();
+    expect(screen.queryByRole("combobox", { name: "Merge another folder into it" })).not.toBeInTheDocument();
+
+    await userEvent.selectOptions(folder, "lore");
+    const merge = screen.getByRole("combobox", { name: "Merge another folder into it" });
+    expect(options(merge)).toEqual(["None", "qmd-memory · 5 notes"]);
+    await userEvent.selectOptions(merge, "qmd-memory");
+    await userEvent.click(start);
+    expect(api.startCleanup).toHaveBeenCalledWith("lore", ["qmd-memory"]);
+  });
+
+  it("merges nothing into the shared folder and starts a cleanup without a merge", async () => {
+    api.getCleanupFolders.mockResolvedValue(FOLDERS);
+    await openSettings();
+    await userEvent.click(screen.getByRole("button", { name: "Clean up…" }));
+    const folder = await screen.findByRole("combobox", { name: "Folder to clean up" });
+    await waitFor(() => expect(options(folder)).toHaveLength(4));
+    await userEvent.selectOptions(folder, "lore");
+    await userEvent.selectOptions(screen.getByRole("combobox", { name: "Merge another folder into it" }), "qmd-memory");
+    await userEvent.selectOptions(folder, "common");
+    expect(screen.queryByRole("combobox", { name: "Merge another folder into it" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start cleanup" }));
+    expect(api.startCleanup).toHaveBeenCalledWith("common", []);
+  });
+
+  it("says which folder is being cleaned up and starts no second cleanup meanwhile", async () => {
+    await openSettings(snapshot({ cleanup: { folder: "lore", absorb: ["qmd-memory"], startedAt: 1_800_000_000 } }));
+    const memory = screen.getByRole("region", { name: "Memory and sync" });
+    expect(memory).toHaveTextContent("Cleaning up lore…");
+    expect(within(memory).getByRole("button", { name: "Clean up…" })).toBeDisabled();
+    expect(api.getCleanupFolders).not.toHaveBeenCalled();
+  });
+
+  it("says a cleanup is waiting until the current work is done", async () => {
+    await openSettings(snapshot({ cleanup: { folder: "lore", absorb: [], startedAt: null } }));
+    expect(screen.getByRole("region", { name: "Memory and sync" })).toHaveTextContent("lore cleanup starts when the current work is done.");
+  });
+
+  it("says a waiting cleanup needs recording to be resumed while recording is paused", async () => {
+    await openSettings(snapshot({ cleanup: { folder: "lore", absorb: [], startedAt: null }, settings: { ...snapshot().settings, paused: true } }));
+    expect(screen.getByRole("region", { name: "Memory and sync" })).toHaveTextContent("lore cleanup starts when recording is resumed.");
   });
 
   it("follows the chosen appearance", async () => {

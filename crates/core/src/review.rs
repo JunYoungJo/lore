@@ -182,7 +182,29 @@ pub fn side_by_side(old: &str, new: &str) -> Vec<DiffRow> {
 }
 
 pub fn since_commit(recent: &[Activity], last_commit: Option<i64>) -> Vec<&Activity> {
-    recent.iter().filter(|activity| activity.kind == "recorded" && last_commit.is_none_or(|time| activity.at > time)).collect()
+    recent.iter().filter(|activity| matches!(activity.kind.as_str(), "recorded" | "cleaned") && last_commit.is_none_or(|time| activity.at > time)).collect()
+}
+
+/// What an activity says about one note. A summary names, on the lines after its first, each
+/// note that was removed or moved (see `proposal::change_log`), so a cleanup can answer for
+/// each note why it went or where; a recording keeps its whole summary.
+pub fn summary_for(activity: &Activity, path: &str) -> Option<String> {
+    let summary = activity.summary.as_deref()?;
+    if activity.kind != "cleaned" {
+        return Some(summary.to_string());
+    }
+    let mut lines = summary.lines();
+    let first = lines.next().unwrap_or_default();
+    let about = lines.find_map(|line| {
+        let moved = line.strip_prefix("Moved ").and_then(|rest| rest.split_once(" to "));
+        match (line.strip_prefix(&format!("Removed {path}: ")), moved) {
+            (Some(reason), _) => Some(format!("Removed: {reason}")),
+            (_, Some((from, to))) if from == path => Some(format!("Moved to {to}")),
+            (_, Some((from, to))) if to == path => Some(format!("Moved from {from}")),
+            _ => None,
+        }
+    });
+    Some(about.unwrap_or_else(|| first.to_string()))
 }
 
 pub fn touching<'a>(since: &[&'a Activity], path: &str) -> Vec<&'a Activity> {
@@ -510,6 +532,23 @@ mod tests {
         assert_eq!(touching(&since, "projects/demo/a.md").iter().map(|item| item.id).collect::<Vec<_>>(), vec![4, 2]);
         assert_eq!(touching(&since, "common/b.md").iter().map(|item| item.id).collect::<Vec<_>>(), vec![4]);
         assert_eq!(since_commit(&recent, None).len(), 3);
+    }
+
+    #[test]
+    fn a_cleanup_is_matched_to_its_notes_and_says_of_each_why_it_went_or_where() {
+        let log = "폴더를 정리했습니다.\nMoved projects/old/queue.md to projects/demo/queue-lock.md\nRemoved projects/demo/popup.md: 다른 노트에 모두 들어 있습니다.";
+        let notes = ["projects/demo/bg.md", "projects/demo/queue-lock.md", "projects/demo/popup.md", "projects/old/queue.md"];
+        let recent = vec![activity(2, 300, "demo", "cleaned", &notes, log), activity(1, 200, "demo", "cleanup_failed", &[], "")];
+        let since = since_commit(&recent, Some(150));
+        assert_eq!(since.iter().map(|item| item.id).collect::<Vec<_>>(), vec![2]);
+        let cleanup = since[0];
+        assert_eq!(summary_for(cleanup, "projects/demo/popup.md").as_deref(), Some("Removed: 다른 노트에 모두 들어 있습니다."));
+        assert_eq!(summary_for(cleanup, "projects/old/queue.md").as_deref(), Some("Moved to projects/demo/queue-lock.md"));
+        assert_eq!(summary_for(cleanup, "projects/demo/queue-lock.md").as_deref(), Some("Moved from projects/old/queue.md"));
+        assert_eq!(summary_for(cleanup, "projects/demo/bg.md").as_deref(), Some("폴더를 정리했습니다."));
+
+        let recorded = activity(3, 400, "demo", "recorded", &["projects/demo/a.md"], "첫 줄\n둘째 줄");
+        assert_eq!(summary_for(&recorded, "projects/demo/a.md").as_deref(), Some("첫 줄\n둘째 줄"));
     }
 
     #[test]

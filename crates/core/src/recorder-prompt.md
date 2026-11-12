@@ -108,6 +108,18 @@ Give only reasons that someone stated. When you generalize beyond what was said,
 - When the user clearly changed an earlier decision, make the note state the new decision and keep the earlier reason and why it changed. A proposal that the user did not approve leaves the recorded decision as it is.
 - Keep every link into `sources/` that appears in text you replace.
 
+# Removing a note
+
+A note that stays after its subject is gone misleads the reader, who cannot tell it from a current one. Put a note in `removals` when this session shows that a future agent should no longer read it:
+
+- The thing the note is about no longer exists: the feature, tool, procedure or plan was dropped or replaced, and the note holds nothing an agent would still need to follow or avoid.
+- The user reversed everything the note says, and the note that records the current decision already carries the earlier reason and why it changed.
+- Another note states all of it. Move anything that only this note holds into that other note in the same answer, and list this note's path in that change's `sources_from`, so that the program carries its source list over.
+
+Keep a note when part of it still holds: correct the rest with edits, and use `replace` with an empty `text` to take out what no longer applies. A note about an approach that was tried and rejected is still useful, because it stops an agent from bringing the approach back. Removing such a note needs the session to show that the question itself is gone. Never remove a note only because it is old, long or written as a session report, and never because this session did not mention it.
+
+Each removal gives the `path` of a note whose text you were given, a one-sentence `reason`, and `evidence` quoting the turns that show the note is obsolete. A note cannot be changed and removed in the same answer.
+
 # Paths
 
 - Project memory goes to `projects/<project>/<english-topic>.md`, where `<project>` is exactly the `project` value in the data. When the session also dealt with another repository or product, still write under this project's folder and say in the note which repository it concerns. The program rejects any other project folder, and one rejected path discards the whole proposal.
@@ -124,7 +136,8 @@ Return one JSON object that matches the schema.
 
 - `language`: the language you determined under "Language".
 - `summary`: one sentence, in that language.
-- `changes`: one entry per note. Each has `path`, `title`, `kind` (`decision`, `lesson` or `issue`), `authority` (`user_decision`, `assistant_report` or `mixed_evidence`), `body`, `edits` and `evidence`.
+- `changes`: one entry per note to create or edit. Each has `path`, `title`, `kind` (`decision`, `lesson` or `issue`), `authority` (`user_decision`, `assistant_report` or `mixed_evidence`), `body`, `edits`, `sources_from` and `evidence`.
+- `removals`: one entry per note to delete, as described under "Removing a note". Empty in most answers.
 - `needs_notes`: see "New note or existing note".
 
 For a new note, give `title` and `body` and leave `edits` empty. `body` is the complete Markdown body. Leave out the title line, the front matter and any "Sources" section, because the program adds them.
@@ -137,5 +150,7 @@ For an existing note, leave `body` empty and list only the edits. Leave `title` 
 - `replace_section`: `section` is the title of an existing `## ` section. `text` replaces everything under that heading. Use it to restate a section as the current state.
 
 Edits apply in the order given, and each later `find` or `section` is matched against the note as the earlier edits left it. Only `## ` sections can be named, not deeper headings. The front matter and the title line cannot be reached with `find`.
+
+`sources_from` stays empty unless the change moves content out of other existing notes into this one. In that case it lists the paths of those notes, and the program adds their source lists to this note.
 
 `evidence` lists the turns a change rests on. `ref` is the `ref` of a turn in the data, such as "L123", and `quote` is text copied exactly from that turn. The program checks that the quotation is really in that turn, and a note with the authority `user_decision` needs at least one quotation from a turn of the user. The program cannot judge whether the note is true. That judgment is yours, so state as verified only what the session verified.

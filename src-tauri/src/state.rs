@@ -3,6 +3,7 @@ use std::sync::{Condvar, Mutex, MutexGuard};
 use std::time::Duration;
 
 use lore_core::catalog::Catalog;
+use lore_core::cleanup::Target;
 use lore_core::settings::{Paths, Settings};
 use lore_core::transcript::Provider;
 use serde::Serialize;
@@ -16,10 +17,21 @@ pub struct Current {
     pub started_at: i64,
 }
 
+/// A cleanup the user asked for. It waits for the worker, which runs it between recordings.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Cleaning {
+    pub folder: String,
+    pub absorb: Vec<String>,
+    /// When the worker started it; `None` while it waits.
+    pub started_at: Option<i64>,
+}
+
 pub struct AppState {
     pub paths: Paths,
     settings: Mutex<Settings>,
     current: Mutex<Option<Current>>,
+    cleanup: Mutex<Option<Cleaning>>,
     problem: Mutex<Option<String>>,
     reviewing: Mutex<bool>,
     wake: Mutex<bool>,
@@ -42,6 +54,7 @@ impl AppState {
             paths,
             settings: Mutex::new(settings),
             current: Mutex::new(None),
+            cleanup: Mutex::new(None),
             problem: Mutex::new(None),
             reviewing: Mutex::new(false),
             wake: Mutex::new(false),
@@ -120,6 +133,34 @@ impl AppState {
         *lock(&self.current) = current;
     }
 
+    pub fn cleanup(&self) -> Option<Cleaning> {
+        lock(&self.cleanup).clone()
+    }
+
+    /// Hold a cleanup for the worker. Returns false while another one waits or runs.
+    pub fn request_cleanup(&self, target: Target) -> bool {
+        let mut held = lock(&self.cleanup);
+        if held.is_some() {
+            return false;
+        }
+        *held = Some(Cleaning { folder: target.folder, absorb: target.absorb, started_at: None });
+        drop(held);
+        self.wake();
+        true
+    }
+
+    /// The waiting cleanup, marked as started. `None` when none waits.
+    pub fn begin_cleanup(&self, now: i64) -> Option<Target> {
+        let mut held = lock(&self.cleanup);
+        let waiting = held.as_mut().filter(|cleaning| cleaning.started_at.is_none())?;
+        waiting.started_at = Some(now);
+        Some(Target { folder: waiting.folder.clone(), absorb: waiting.absorb.clone() })
+    }
+
+    pub fn finish_cleanup(&self) {
+        *lock(&self.cleanup) = None;
+    }
+
     pub fn problem(&self) -> Option<String> {
         lock(&self.problem).clone()
     }
@@ -180,6 +221,26 @@ mod tests {
         assert!(state.settings().paused);
         assert!(state.reviewing());
         assert!(state.begin_sync().is_some());
+    }
+
+    #[test]
+    fn one_cleanup_waits_for_the_worker_and_shows_when_it_started() {
+        let state = AppState::new(Paths { root: "unused".into() }, Settings::default());
+        let target = Target { folder: "demo".into(), absorb: vec!["old".into()] };
+        assert!(state.request_cleanup(target.clone()));
+        assert!(!state.request_cleanup(Target { folder: "other".into(), absorb: vec![] }));
+        let waiting = state.cleanup().unwrap();
+        assert_eq!((waiting.folder.as_str(), waiting.started_at), ("demo", None));
+
+        assert_eq!(state.begin_cleanup(100), Some(target));
+        assert_eq!(state.cleanup().unwrap().started_at, Some(100));
+        // The worker takes a request once; it is not started again while it runs.
+        assert_eq!(state.begin_cleanup(200), None);
+        assert!(!state.request_cleanup(Target { folder: "other".into(), absorb: vec![] }));
+
+        state.finish_cleanup();
+        assert!(state.cleanup().is_none());
+        assert!(state.request_cleanup(Target { folder: "other".into(), absorb: vec![] }));
     }
 
     #[test]

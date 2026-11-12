@@ -11,6 +11,8 @@ export const setPaused = (paused: boolean): Promise<void> => invoke("set_paused"
 export const retryJob = (id: string): Promise<boolean> => invoke("retry_job", { id });
 export const discardJob = (id: string): Promise<boolean> => invoke("discard_job", { id });
 export const clearActivity = (): Promise<number> => invoke("clear_activity");
+export const getCleanupFolders = (): Promise<import("./contract").CleanupFolder[]> => invoke("get_cleanup_folders");
+export const startCleanup = (folder: string, absorb: string[]): Promise<void> => invoke("start_cleanup", { folder, absorb });
 export const openReview = (): Promise<void> => invoke("open_review");
 export const beginReview = (): Promise<void> => invoke("begin_review");
 export const endReview = (): Promise<void> => invoke("end_review");

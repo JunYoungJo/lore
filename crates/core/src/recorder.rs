@@ -16,6 +16,34 @@ pub trait Recorder {
     fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal>;
 }
 
+/// The edits to an existing note, in the form both a recording and a cleanup answer with.
+pub fn edits_schema() -> Value {
+    json!({"type": "array", "description": "Existing note: the edits, applied in order. New note: empty.", "items": {
+        "type": "object",
+        "properties": {
+            "op": {"type": "string", "enum": EDIT_OPS},
+            "find": {"type": "string", "description": "replace: text copied exactly from the note, occurring once. Otherwise empty."},
+            "section": {"type": "string", "description": "append, replace_section: the title of an existing \"## \" section, without the \"## \". add_section: the section the new one follows, or empty for the end. replace: empty."},
+            "heading": {"type": "string", "description": "add_section: the title of the new section. Otherwise empty."},
+            "text": {"type": "string", "description": "The new text. For replace, empty deletes the found text."}
+        },
+        "required": ["op", "find", "section", "heading", "text"],
+        "additionalProperties": false
+    }})
+}
+
+fn evidence_schema(description: &str) -> Value {
+    json!({"type": "array", "description": description, "items": {
+        "type": "object",
+        "properties": {
+            "ref": {"type": "string", "description": "The ref of a turn in the data, such as \"L123\"."},
+            "quote": {"type": "string", "description": "Text copied exactly from that turn."}
+        },
+        "required": ["ref", "quote"],
+        "additionalProperties": false
+    }})
+}
+
 // Every field is required so both CLIs emit them in this order; `language` comes first so the model
 // settles the language of the notes before it writes any of them.
 pub fn schema() -> Value {
@@ -32,34 +60,26 @@ pub fn schema() -> Value {
                     "kind": {"type": "string", "enum": ["decision", "lesson", "issue"], "description": "What the whole note is after this change: a decision, a lesson learned, or an open issue."},
                     "authority": {"type": "string", "enum": ["user_decision", "assistant_report", "mixed_evidence"], "description": "What the whole note rests on after this change: the user's own statements, only assistant or agent statements, or both."},
                     "body": {"type": "string", "description": "New note: the complete Markdown body, without the title line. Existing note: empty."},
-                    "edits": {"type": "array", "description": "Existing note: the edits, applied in order. New note: empty.", "items": {
-                        "type": "object",
-                        "properties": {
-                            "op": {"type": "string", "enum": EDIT_OPS},
-                            "find": {"type": "string", "description": "replace: text copied exactly from the note, occurring once. Otherwise empty."},
-                            "section": {"type": "string", "description": "append, replace_section: the title of an existing \"## \" section, without the \"## \". add_section: the section the new one follows, or empty for the end. replace: empty."},
-                            "heading": {"type": "string", "description": "add_section: the title of the new section. Otherwise empty."},
-                            "text": {"type": "string", "description": "The new text. For replace, empty deletes the found text."}
-                        },
-                        "required": ["op", "find", "section", "heading", "text"],
-                        "additionalProperties": false
-                    }},
-                    "evidence": {"type": "array", "description": "The turns this change rests on.", "items": {
-                        "type": "object",
-                        "properties": {
-                            "ref": {"type": "string", "description": "The ref of a turn in the data, such as \"L123\"."},
-                            "quote": {"type": "string", "description": "Text copied exactly from that turn."}
-                        },
-                        "required": ["ref", "quote"],
-                        "additionalProperties": false
-                    }}
+                    "edits": edits_schema(),
+                    "sources_from": {"type": "array", "description": "Paths of existing notes whose content this change moves into this note. Usually empty.", "items": {"type": "string"}},
+                    "evidence": evidence_schema("The turns this change rests on.")
                 },
-                "required": ["path", "title", "kind", "authority", "body", "edits", "evidence"],
+                "required": ["path", "title", "kind", "authority", "body", "edits", "sources_from", "evidence"],
+                "additionalProperties": false
+            }},
+            "removals": {"type": "array", "description": "Existing notes to delete because this session made them obsolete. Usually empty.", "items": {
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string", "description": "The path of an existing note whose text you were given."},
+                    "reason": {"type": "string", "description": "One sentence: why a future agent no longer needs this note."},
+                    "evidence": evidence_schema("The turns that show the note is obsolete.")
+                },
+                "required": ["path", "reason", "evidence"],
                 "additionalProperties": false
             }},
             "needs_notes": {"type": "array", "description": "Paths from note_catalog whose text is needed before a change can be written.", "items": {"type": "string"}}
         },
-        "required": ["language", "summary", "changes", "needs_notes"],
+        "required": ["language", "summary", "changes", "removals", "needs_notes"],
         "additionalProperties": false
     })
 }
@@ -279,7 +299,7 @@ mod tests {
     #[test]
     fn the_answer_states_its_language_first_and_can_restate_a_section() {
         let schema = schema();
-        assert_eq!(schema["required"], json!(["language", "summary", "changes", "needs_notes"]));
+        assert_eq!(schema["required"], json!(["language", "summary", "changes", "removals", "needs_notes"]));
         let ops = &schema["properties"]["changes"]["items"]["properties"]["edits"]["items"]["properties"]["op"]["enum"];
         assert_eq!(ops, &json!(["replace", "append", "add_section", "replace_section"]));
         assert!(schema["properties"]["language"]["description"].as_str().unwrap().contains("human user"));
@@ -408,7 +428,7 @@ mod tests {
     fn schema_requires_every_property_of_every_object_for_strict_output() {
         let schema = schema();
         let all = objects(&schema);
-        assert_eq!(all.len(), 4);
+        assert_eq!(all.len(), 6);
         for object in all {
             let mut required: Vec<&str> = object["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
             let mut properties: Vec<&str> = object["properties"].as_object().unwrap().keys().map(String::as_str).collect();
@@ -420,6 +440,24 @@ mod tests {
         let edit = &schema["properties"]["changes"]["items"]["properties"]["edits"]["items"];
         let ops: Vec<&str> = edit["properties"]["op"]["enum"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(ops, crate::proposal::EDIT_OPS);
+    }
+
+    #[test]
+    fn a_recording_can_remove_a_note_and_name_the_notes_a_change_took_in_but_not_move_one() {
+        let schema = schema();
+        let removal = &schema["properties"]["removals"]["items"];
+        assert_eq!(removal["required"], json!(["path", "reason", "evidence"]));
+        assert!(schema["properties"]["changes"]["items"]["properties"]["sources_from"]["items"]["type"] == "string");
+        assert!(schema["properties"].get("moves").is_none());
+        for word in ["`removals`", "`sources_from`", "# Removing a note"] {
+            assert!(PROMPT.contains(word), "{word}");
+        }
+
+        let text = r#"{"language": "Korean", "summary": "s", "changes": [], "removals": [{"path": "projects/demo/a.md", "reason": "r", "evidence": [{"ref": "L1", "quote": "q"}]}], "needs_notes": []}"#;
+        let proposal = parse_proposal(text).unwrap();
+        assert_eq!((proposal.removals[0].path.as_str(), proposal.removals[0].evidence[0].reference.as_str()), ("projects/demo/a.md", "L1"));
+        // An answer in the form used before notes could be removed still reads.
+        assert!(parse_proposal(r#"{"summary": "s", "changes": []}"#).unwrap().removals.is_empty());
     }
 
     #[test]

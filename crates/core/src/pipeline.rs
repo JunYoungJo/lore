@@ -10,7 +10,7 @@ use crate::copy;
 use crate::error::{Error, Result};
 use crate::notes::{self, CatalogEntry};
 use crate::project;
-use crate::proposal::{check_snapshot, render_note, validate, without_sources, Change, Edit, Proposal, Scope};
+use crate::proposal::{change_log, check_snapshot, render_note, source_lines, summary_with_log, validate, without_sources, Change, Edit, Proposal, Scope};
 use crate::queue::Job;
 use crate::settings::atomic_write;
 use crate::transcript::{check_prefix, parse, prefix_hash, read_identity, read_transcript, Origin, Parsed, Provider, Turn};
@@ -152,8 +152,18 @@ pub struct Plan {
     pub has_more: bool,
     pub base: BTreeMap<String, String>,
     pub rendered: BTreeMap<String, String>,
+    /// Notes to delete. Absent in apply states saved before notes could be removed.
+    #[serde(default)]
+    pub removed: BTreeSet<String>,
     pub copy_file: Option<String>,
     pub copy_text: Option<String>,
+}
+
+impl Plan {
+    /// Every note this plan writes or deletes.
+    pub fn touched(&self) -> Vec<String> {
+        self.rendered.keys().chain(self.removed.iter()).cloned().collect()
+    }
 }
 
 fn offered_turns(prepared: &Prepared) -> Vec<Turn> {
@@ -175,18 +185,20 @@ fn relinked_change(change: &Change, copy_file: &Path, moves: &BTreeMap<usize, us
 
 pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowledge_root: &Path, fallback_name: &str) -> Result<Plan> {
     let turns = offered_turns(prepared);
-    validate(proposal, &Scope { project: &prepared.project, turns: &turns, existing: &request.existing, editable: &request.editable })?;
+    validate(proposal, &Scope::session(&prepared.project, &turns, &request.existing, &request.editable))?;
     let mut result = Plan {
         project: prepared.project.clone(),
-        summary: proposal.summary.clone(),
+        summary: summary_with_log(&proposal.summary, &change_log(proposal)),
         end_line: prepared.batch.end_line,
         end_hash: prepared.end_hash.clone(),
         has_more: prepared.parsed.complete_lines > prepared.batch.end_line,
         base: request.base.clone(),
         rendered: BTreeMap::new(),
+        removed: proposal.removals.iter().map(|removal| removal.path.clone()).collect(),
         copy_file: None,
         copy_text: None,
     };
+    // Only a written note links to the conversation copy, so removals alone need none.
     if proposal.changes.is_empty() {
         return Ok(result);
     }
@@ -205,16 +217,41 @@ pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowled
     }
     for change in &proposal.changes {
         let change = relinked_change(change, &copy_file, &moves);
-        let old = relinked.get(&change.path).or_else(|| request.base.get(&change.path)).map(String::as_str);
+        let text_of = |path: &String| relinked.get(path).or_else(|| request.base.get(path));
+        let old = text_of(&change.path).map(String::as_str);
+        let carried: Vec<String> = change.sources_from.iter().filter_map(text_of).flat_map(|text| source_lines(text)).collect();
         let link = |evidence: &crate::proposal::Evidence| copy::portable_link(&change.path, prepared.provider, &prepared.parsed.session_id, fallback_name, &evidence.reference);
-        result.rendered.insert(change.path.clone(), render_note(&change, &prepared.project, &link, old)?);
+        result.rendered.insert(change.path.clone(), render_note(&change, &prepared.project, &link, old, &carried)?);
     }
     for (note, text) in relinked {
-        result.rendered.entry(note).or_insert(text);
+        if !result.removed.contains(&note) {
+            result.rendered.entry(note).or_insert(text);
+        }
     }
     result.copy_file = Some(copy_file.to_string_lossy().to_string());
     result.copy_text = Some(dialogue.text);
     Ok(result)
+}
+
+/// Write the changed notes, then delete the removed ones. A note that took in another is on
+/// disk before the other goes, so an interruption leaves a duplicate rather than a loss.
+pub fn write_notes(knowledge_root: &Path, rendered: &BTreeMap<String, String>, removed: &BTreeSet<String>) -> Result<()> {
+    for (note, content) in rendered {
+        let target = knowledge_root.join(note);
+        if let Ok(metadata) = std::fs::symlink_metadata(&target) {
+            if metadata.file_type().is_symlink() {
+                return Err(Error::permanent(format!("Symlinks are not allowed for memory notes: {note}")));
+            }
+        }
+        atomic_write(&target, content.as_bytes())?;
+    }
+    for note in removed {
+        match std::fs::remove_file(knowledge_root.join(note)) {
+            Err(error) if error.kind() != std::io::ErrorKind::NotFound => return Err(error.into()),
+            _ => {}
+        }
+    }
+    Ok(())
 }
 
 pub fn apply(knowledge_root: &Path, plan: &Plan) -> Result<()> {
@@ -226,26 +263,17 @@ pub fn apply(knowledge_root: &Path, plan: &Plan) -> Result<()> {
             }
         }
     }
-    check_snapshot(&current, &plan.base, &plan.rendered)?;
+    check_snapshot(&current, &plan.base, &plan.rendered, &plan.removed)?;
     if let (Some(file), Some(text)) = (&plan.copy_file, &plan.copy_text) {
         atomic_write(Path::new(file), text.as_bytes())?;
     }
-    for (note, content) in &plan.rendered {
-        let target = knowledge_root.join(note);
-        if let Ok(metadata) = std::fs::symlink_metadata(&target) {
-            if metadata.file_type().is_symlink() {
-                return Err(Error::permanent(format!("Symlinks are not allowed for memory notes: {note}")));
-            }
-        }
-        atomic_write(&target, content.as_bytes())?;
-    }
-    Ok(())
+    write_notes(knowledge_root, &plan.rendered, &plan.removed)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proposal::{Change, Edit, Evidence};
+    use crate::proposal::{Change, Edit, Evidence, Removal};
     use crate::queue::Status;
     use serde_json::json;
     use std::fs;
@@ -322,9 +350,10 @@ mod tests {
                 authority: "user_decision".into(),
                 body: "TP 로그만 남깁니다.".into(),
                 edits: vec![],
+                sources_from: vec![],
                 evidence: vec![Evidence { reference: "L1".into(), quote: "로그만 남기십시오".into() }],
             }],
-            needs_notes: vec![],
+            ..Proposal::default()
         }
     }
 
@@ -510,6 +539,87 @@ mod tests {
         assert_eq!(fs::read_to_string(&note).unwrap(), "사용자가 고친 내용");
     }
 
+    fn removal(path: &str) -> Removal {
+        Removal { path: path.into(), reason: "경고 팝업을 없애 대상이 없습니다.".into(), evidence: vec![Evidence { reference: "L1".into(), quote: "로그만 남기십시오".into() }] }
+    }
+
+    fn stored(fixture: &Fixture, notes: &[(&str, &str)]) -> BTreeMap<String, String> {
+        for (path, text) in notes {
+            let file = fixture.knowledge.join(path);
+            fs::create_dir_all(file.parent().unwrap()).unwrap();
+            fs::write(file, text).unwrap();
+        }
+        notes::load_scope(&fixture.knowledge, "demo").unwrap()
+    }
+
+    #[test]
+    fn a_removed_note_is_deleted_without_writing_a_conversation_copy_and_applying_twice_is_harmless() {
+        let fixture = fixture_with_two_lines();
+        let prepared = ready(&fixture, 0, "");
+        let scope = stored(&fixture, &[("projects/demo/popup.md", "# 경고 팝업\n\n팝업을 띄웁니다.\n"), ("projects/demo/keep.md", "# 로그\n\n로그를 남깁니다.\n")]);
+        let request = build_request(&prepared, &scope, &[], &[], 60_000);
+        let proposal = Proposal { summary: "팝업 노트 삭제".into(), removals: vec![removal("projects/demo/popup.md")], ..Proposal::default() };
+        let planned = plan(&prepared, &request, &proposal, &fixture.knowledge, "job1").unwrap();
+        assert_eq!(planned.removed, BTreeSet::from(["projects/demo/popup.md".to_string()]));
+        assert!(planned.rendered.is_empty() && planned.copy_file.is_none());
+        // The activity list and the review window name a removed note like a written one,
+        // and the summary says after its first line why the note went.
+        assert_eq!(planned.touched(), vec!["projects/demo/popup.md".to_string()]);
+        assert_eq!(planned.summary, "팝업 노트 삭제\nRemoved projects/demo/popup.md: 경고 팝업을 없애 대상이 없습니다.");
+
+        apply(&fixture.knowledge, &planned).unwrap();
+        assert!(!fixture.knowledge.join("projects/demo/popup.md").exists());
+        assert!(fixture.knowledge.join("projects/demo/keep.md").exists());
+        apply(&fixture.knowledge, &planned).unwrap();
+    }
+
+    #[test]
+    fn a_note_that_takes_in_another_gets_its_sources_and_the_other_is_removed() {
+        let fixture = fixture_with_two_lines();
+        let prepared = ready(&fixture, 0, "");
+        let scope = stored(
+            &fixture,
+            &[
+                ("projects/demo/bg.md", "# BG 불일치\n\n## 결정\n\n경고를 띄웁니다.\n\n## Sources\n- [L4](<../../sources/claude/old.md#L4>) — 경고를 띄우십시오\n"),
+                ("projects/demo/popup.md", "# 경고 팝업\n\n팝업 문구는 짧게 씁니다.\n\n## Sources\n- [L9](<../../sources/codex/other.md#L9>) — 문구는 짧게\n"),
+            ],
+        );
+        let request = build_request(&prepared, &scope, &[], &[], 60_000);
+        let mut proposal = appended("projects/demo/bg.md", "결정", "팝업 문구는 짧게 씁니다.");
+        proposal.changes[0].sources_from = vec!["projects/demo/popup.md".into()];
+        proposal.removals = vec![removal("projects/demo/popup.md")];
+        let planned = plan(&prepared, &request, &proposal, &fixture.knowledge, "job1").unwrap();
+        let merged = &planned.rendered["projects/demo/bg.md"];
+        assert!(
+            merged.ends_with("## Sources\n- [L4](<../../sources/claude/old.md#L4>) — 경고를 띄우십시오\n- [L9](<../../sources/codex/other.md#L9>) — 문구는 짧게\n- [L1](<../../sources/claude/sess-1.md#L1>) — 로그만 남기십시오\n"),
+            "{merged}"
+        );
+        apply(&fixture.knowledge, &planned).unwrap();
+        assert!(!fixture.knowledge.join("projects/demo/popup.md").exists());
+        assert_eq!(fs::read_to_string(fixture.knowledge.join("projects/demo/bg.md")).unwrap(), *merged);
+    }
+
+    #[test]
+    fn a_note_edited_outside_after_the_proposal_is_not_removed() {
+        let fixture = fixture_with_two_lines();
+        let prepared = ready(&fixture, 0, "");
+        let scope = stored(&fixture, &[("projects/demo/popup.md", "# 경고 팝업\n\n팝업을 띄웁니다.\n")]);
+        let request = build_request(&prepared, &scope, &[], &[], 60_000);
+        let proposal = Proposal { summary: "삭제".into(), removals: vec![removal("projects/demo/popup.md")], ..Proposal::default() };
+        let planned = plan(&prepared, &request, &proposal, &fixture.knowledge, "job1").unwrap();
+        fs::write(fixture.knowledge.join("projects/demo/popup.md"), "# 경고 팝업\n\n사용자가 고친 내용\n").unwrap();
+        assert_eq!(apply(&fixture.knowledge, &planned).unwrap_err().failure, crate::error::Failure::Permanent);
+        assert!(fixture.knowledge.join("projects/demo/popup.md").exists());
+    }
+
+    #[test]
+    fn an_apply_state_saved_before_notes_could_be_removed_is_still_read() {
+        let saved = r#"{"project":"demo","summary":"s","end_line":2,"end_hash":"h","has_more":false,"base":{},"rendered":{"projects/demo/a.md":"x"},"copy_file":null,"copy_text":null}"#;
+        let plan: Plan = serde_json::from_str(saved).unwrap();
+        assert!(plan.removed.is_empty());
+        assert_eq!(plan.rendered.len(), 1);
+    }
+
     #[test]
     fn links_in_every_note_follow_a_copy_that_gains_a_turn_in_the_middle() {
         let fixture = fixture(&[
@@ -561,7 +671,7 @@ mod tests {
         let fixture = fixture_with_two_lines();
         let prepared = ready(&fixture, 0, "");
         let request = build_request(&prepared, &BTreeMap::new(), &[], &[], 60_000);
-        let empty = Proposal { summary: "없음".into(), changes: vec![], needs_notes: vec![] };
+        let empty = Proposal { summary: "없음".into(), ..Proposal::default() };
         let planned = plan(&prepared, &request, &empty, &fixture.knowledge, "job1").unwrap();
         assert!(planned.rendered.is_empty());
         assert!(planned.copy_file.is_none());

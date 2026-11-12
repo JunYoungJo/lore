@@ -104,7 +104,7 @@ pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> 
         .map(|change| ReviewFile {
             sessions: review::touching(&since, &change.path)
                 .into_iter()
-                .map(|activity| ReviewSession { at: activity.at, provider: activity.provider, project: activity.project.clone(), summary: activity.summary.clone() })
+                .map(|activity| ReviewSession { at: activity.at, provider: activity.provider, project: activity.project.clone(), summary: review::summary_for(activity, &change.path) })
                 .collect(),
             path: change.path,
             kind: change.kind,

@@ -31,6 +31,23 @@ export function providerLabel(provider: Provider): string {
   return provider === "claude" ? "Claude" : "Codex";
 }
 
+/** The sentence of an activity summary. Its later lines name the notes that were removed or moved. */
+export function summaryLine(summary: string | null): string {
+  return (summary ?? "").split("\n")[0];
+}
+
+/** The notes an activity removed or moved away, each with the reason or where it went. */
+export function goneNotes(summary: string | null): Map<string, string> {
+  const gone = new Map<string, string>();
+  for (const line of (summary ?? "").split("\n").slice(1)) {
+    const removed = /^Removed (\S+): (.*)$/.exec(line);
+    const moved = /^Moved (\S+) to (\S+)$/.exec(line);
+    if (removed) gone.set(removed[1], removed[2]);
+    else if (moved) gone.set(moved[1], `Moved to ${moved[2]}`);
+  }
+  return gone;
+}
+
 export function fileName(path: string): string {
   const parts = path.split("/");
   return parts[parts.length - 1] ?? path;

@@ -61,6 +61,8 @@ pub fn run() {
             commands::retry_job,
             commands::discard_job,
             commands::clear_activity,
+            commands::get_cleanup_folders,
+            commands::start_cleanup,
             commands::save_settings,
             commands::set_autostart,
             commands::open_note,

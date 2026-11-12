@@ -2,13 +2,26 @@ export type Provider = "claude" | "codex";
 
 export type JobStatus = "pending" | "applying" | "index_pending" | "done" | "failed" | "skipped";
 
-export type ActivityKind = "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started";
+export type ActivityKind = "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started" | "cleaned" | "cleanup_failed";
 
 export interface Current {
   jobId: string;
   provider: Provider;
   project: string;
   startedAt: number;
+}
+
+/** A cleanup the user asked for. `startedAt` is null while it waits for the worker. */
+export interface Cleaning {
+  folder: string;
+  absorb: string[];
+  startedAt: number | null;
+}
+
+/** A folder of notes that can be cleaned up: "common" or a project. */
+export interface CleanupFolder {
+  name: string;
+  notes: number;
 }
 
 export interface Counts {
@@ -26,6 +39,7 @@ export interface Activity {
   provider: Provider;
   project: string | null;
   kind: ActivityKind;
+  /** The first line is the sentence to show. Later lines name each note that was removed or moved (see `goneNotes`). */
   summary: string | null;
   notes: string[];
   error: string | null;
@@ -163,6 +177,7 @@ export interface Snapshot {
   syncing?: boolean;
   state: "idle" | "working" | "paused" | "reviewing";
   current: Current | null;
+  cleanup: Cleaning | null;
   counts: Counts;
   recent: Activity[];
   attention: Job[];

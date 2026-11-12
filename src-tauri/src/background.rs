@@ -126,6 +126,28 @@ pub fn spawn(app: AppHandle) {
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.
             if state.setup_busy() || state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root { drop(operation); continue; }
+            // A cleanup the user asked for runs here, between recordings, under the same gate.
+            if let Some(target) = state.begin_cleanup(worker::now()) {
+                notify(&app, "Cleanup started", &format!("Tidying the {} notes.", target.folder));
+                changed(&app);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    worker::clean(&queue, &settings, &paths, &qmd, &target, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts))
+                }));
+                state.finish_cleanup();
+                drop(operation);
+                match result {
+                    Ok(Ok(outcome)) => {
+                        unsent |= !outcome.touched().is_empty();
+                        let done = if outcome.touched().is_empty() { "nothing needed changing.".to_string() } else { format!("{} notes changed, {} removed. Click to view.", outcome.written.len(), outcome.removed.len()) };
+                        let stopped = outcome.incomplete.map(|reason| format!(" Stopped early: {reason}")).unwrap_or_default();
+                        notify(&app, "Cleanup complete", &format!("{}: {done}{stopped}", target.folder));
+                    }
+                    Ok(Err(error)) => notify(&app, "Cleanup failed", &format!("{}: {error}", target.folder)),
+                    Err(_) => notify(&app, "Cleanup failed", &format!("{}: an internal error occurred.", target.folder)),
+                }
+                changed(&app);
+                continue;
+            }
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
             drop(operation);
             changed(&app);

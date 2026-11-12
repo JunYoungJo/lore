@@ -3,9 +3,11 @@ import {
   CircleAlert,
   CircleCheck,
   CircleDashed,
+  Eraser,
   FileCheck2,
   FileDiff,
   FileText,
+  FileX,
   GitCompare,
   Inbox,
   LoaderCircle,
@@ -19,7 +21,7 @@ import { useRef, useState, type RefObject } from "react";
 
 import * as api from "@/ipc/api";
 import type { Activity, ActivityKind, Snapshot } from "@/ipc/contract";
-import { elapsed, fileName, minutesUntil, providerLabel, relativePhrase, relativeTime } from "@/format";
+import { elapsed, fileName, goneNotes, minutesUntil, providerLabel, relativePhrase, relativeTime, summaryLine } from "@/format";
 import { unavailableModel } from "@/recordingModel";
 import { useAppStore, type QueueGroup } from "@/store/appStore";
 import { AnchoredCard } from "@/ui/AnchoredCard";
@@ -32,6 +34,8 @@ const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label
   no_change: { glyph: CircleDashed, tint: "neutral", label: "No new memory", tone: "" },
   retry_scheduled: { glyph: RotateCw, tint: "amber", label: "Retry scheduled", tone: "warn" },
   failed: { glyph: CircleAlert, tint: "red", label: "Failed", tone: "danger" },
+  cleaned: { glyph: Eraser, tint: "green", label: "Nothing to clean up", tone: "" },
+  cleanup_failed: { glyph: CircleAlert, tint: "red", label: "Cleanup failed", tone: "danger" },
 };
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
@@ -53,6 +57,8 @@ function QueueLink({ snapshot }: { snapshot: Snapshot }) {
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   const togglePause = useAppStore((store) => store.togglePause);
   const { current, settings } = snapshot;
+  // A cleanup that still waits for its turn shows in Settings, where it was asked for.
+  const cleaning = snapshot.cleanup?.startedAt != null ? { folder: snapshot.cleanup.folder, startedAt: snapshot.cleanup.startedAt } : null;
   const chosen = settings.models[settings.backend];
   const model = `${providerLabel(settings.backend)}${chosen ? ` ${chosen}` : ""}`;
 
@@ -69,6 +75,12 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     tint = "blue";
     title = `Recording ${current.project}`;
     sub = `${providerLabel(current.provider)} session · ${model} · ${elapsed(current.startedAt, now)}`;
+  } else if (cleaning) {
+    tone = "working";
+    glyph = LoaderCircle;
+    tint = "blue";
+    title = `Cleaning up ${cleaning.folder}`;
+    sub = `${model} · ${elapsed(cleaning.startedAt, now)}`;
   } else if (snapshot.syncing) {
     tone = "paused";
     glyph = GitCompare;
@@ -97,11 +109,11 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   return (
     <section className={`now ${tone}`} aria-label="Current activity">
       <div className="now-top">
-        <IconChip glyph={glyph} tint={tint} spin={Boolean(current)} />
+        <IconChip glyph={glyph} tint={tint} spin={Boolean(current || cleaning)} />
         <div className="now-main">
           <div className="now-title">{title}</div>
           <div className="now-sub">{sub}</div>
-          {current && (
+          {(current || cleaning) && (
             <div className="progress" aria-hidden="true">
               <span />
             </div>
@@ -253,22 +265,33 @@ function NeedsAttention({ snapshot, now }: { snapshot: Snapshot; now: number }) 
 
 function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: RefObject<HTMLButtonElement>; activity: Activity; name: string; canReview: boolean; onClose: () => void }) {
   const first = useRef<HTMLButtonElement>(null);
+  const gone = goneNotes(activity.summary);
+  const firstKept = activity.notes.find((note) => !gone.has(note));
+  const summary = summaryLine(activity.summary);
   return (
     <AnchoredCard anchor={anchor} label={`Updated notes in ${name}`} role="dialog" className="notes-card" focus={first} onClose={onClose}>
       <div className="notes-card-head">
         {name} · {plural(activity.notes.length, "note")}
       </div>
-      {activity.summary && (
-        <p className="notes-card-summary" title={activity.summary}>
-          {activity.summary}
+      {summary && (
+        <p className="notes-card-summary" title={summary}>
+          {summary}
         </p>
       )}
-      {activity.notes.map((note, index) => (
-        <button key={note} ref={index === 0 ? first : undefined} type="button" className="notes-card-row" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
-          <FileText size={14} strokeWidth={1.9} />
-          <span>{fileName(note)}</span>
-        </button>
-      ))}
+      {activity.error && <p className="notes-card-summary danger">Stopped early: {activity.error}</p>}
+      {activity.notes.map((note) =>
+        gone.has(note) ? (
+          <div key={note} className="notes-card-row gone" title={gone.get(note)}>
+            <FileX size={14} strokeWidth={1.9} />
+            <span>{fileName(note)}</span>
+          </div>
+        ) : (
+          <button key={note} ref={note === firstKept ? first : undefined} type="button" className="notes-card-row" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
+            <FileText size={14} strokeWidth={1.9} />
+            <span>{fileName(note)}</span>
+          </button>
+        ),
+      )}
       {canReview && (
         <button
           type="button"
@@ -291,8 +314,15 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
   const name = activity.project ?? providerLabel(activity.provider);
   const hasNotes = activity.notes.length > 0;
-  const label = activity.kind === "recorded" ? `${plural(activity.notes.length, "note")} updated` : kind.label;
-  const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? activity.summary ?? "";
+  const removed = activity.notes.filter((note) => goneNotes(activity.summary).has(note)).length;
+  const label =
+    activity.kind === "recorded"
+      ? `${plural(activity.notes.length, "note")} updated`
+      : activity.kind === "cleaned" && hasNotes
+        ? `${activity.notes.length - removed} changed · ${removed} removed`
+        : kind.label;
+  const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? summaryLine(activity.summary);
+  const kindTone = activity.kind === "cleaned" && hasNotes ? "ok" : kind.tone;
   const tone = activity.error ? "danger" : hasNotes ? "" : "muted";
   return (
     <div className="row activity">
@@ -304,11 +334,11 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
           </span>
           <span className="badge">{providerLabel(activity.provider)}</span>
           {hasNotes ? (
-            <button ref={notesButton} type="button" className={`row-kind ${kind.tone} notes-btn`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
+            <button ref={notesButton} type="button" className={`row-kind ${kindTone} notes-btn`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
               {label}
             </button>
           ) : (
-            <span className={`row-kind ${kind.tone}`}>{label}</span>
+            <span className={`row-kind ${kindTone}`}>{label}</span>
           )}
         </div>
         <div className={`row-line ${tone}`} title={hasNotes ? activity.notes.join("\n") : detail || undefined}>

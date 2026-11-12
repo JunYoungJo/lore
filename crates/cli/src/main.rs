@@ -2,6 +2,7 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use lore_core::cleanup;
 use lore_core::error::{Error, Result};
 use lore_core::hook;
 use lore_core::hooks;
@@ -39,6 +40,11 @@ const USAGE: &str = "Usage: lore-cli <command>
                                   Move original-session links to conversation copies (preview by default)
   refresh-copies [--apply]        Rebuild queued conversation copies and update note links
                                   Defaults to preview; tray app must be closed
+  cleanup [<folder>] [--absorb <folder>]... [--dry-run]
+                                  Merge repeated notes and remove outdated ones in a project folder
+                                  or in common, with the recording model. Without a folder, lists them.
+                                  --absorb merges another project folder into it. Applied and committed
+                                  at once unless --dry-run; tray app must be closed to apply
   --help, -h                     Show this help
   --version, -V                  Show the CLI version";
 
@@ -250,6 +256,34 @@ fn run(args: &[String]) -> Result<()> {
             if !apply {
                 println!("Preview only. Add --apply to write the changes.");
             }
+        }
+        "cleanup" => {
+            let (settings, queue) = open(&paths)?;
+            settings.validate()?;
+            let root = settings.knowledge_root();
+            let Some(folder) = args.get(1).filter(|arg| !arg.starts_with("--")) else {
+                for folder in cleanup::folders(&root)? {
+                    println!("{} ({} {})", folder.name, folder.notes, if folder.notes == 1 { "note" } else { "notes" });
+                }
+                return Ok(());
+            };
+            let absorb = args.iter().zip(args.iter().skip(1)).filter(|(flag, _)| *flag == "--absorb").map(|(_, folder)| folder.clone()).collect();
+            let target = cleanup::Target { folder: folder.clone(), absorb };
+            let recorders = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
+            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorders.request_json(prompt, schema, artifacts);
+            let outcome = if args.iter().any(|arg| arg == "--dry-run") {
+                let artifacts = paths.reviews().join(format!("cleanup-preview-{folder}-{}", worker::now()));
+                let outcome = cleanup::run(&root, &target, cleanup::REQUEST_CHARS, &lore_core::review::local_date(), &artifacts, false, &mut ask)?;
+                println!("Preview only; no file was changed. The model's answer is in {}", artifacts.display());
+                outcome
+            } else {
+                let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
+                    return Err(Error::transient("The tray app or another worker is running."));
+                };
+                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+                worker::clean(&queue, &settings, &paths, &qmd, &target, &mut ask)?
+            };
+            println!("{}", serde_json::to_string_pretty(&outcome)?);
         }
         "refresh-copies" => {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {

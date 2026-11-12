@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use lore_core::catalog::{self, Catalog};
+use lore_core::cleanup;
 use lore_core::hooks::{self, HookState, HookStatus};
 use lore_core::pipeline;
 use lore_core::queue::{Activity, Counts, Job, Queue, Status};
@@ -14,7 +15,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::state::{AppState, Current};
+use crate::state::{AppState, Cleaning, Current};
 use crate::tray;
 
 #[derive(Serialize)]
@@ -22,6 +23,7 @@ use crate::tray;
 pub struct Snapshot {
     pub state: &'static str,
     pub current: Option<Current>,
+    pub cleanup: Option<Cleaning>,
     pub counts: Counts,
     pub recent: Vec<Activity>,
     pub attention: Vec<Job>,
@@ -100,10 +102,11 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let now = worker::now();
     let settings = state.settings();
     let current = state.current();
+    let cleanup = state.cleanup();
     let reviewing = state.reviewing();
     let sync = lore_core::sync::summary(&lore_core::sync::folder(&state.paths, &settings.knowledge_root()));
     let syncing = state.syncing();
-    let label = if current.is_some() {
+    let label = if current.is_some() || cleanup.as_ref().is_some_and(|cleaning| cleaning.started_at.is_some()) {
         "working"
     } else if reviewing || syncing {
         "reviewing"
@@ -122,6 +125,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     Ok(Snapshot {
         state: label,
         current,
+        cleanup,
         counts,
         recent: queue.recent_activity(30).map_err(error)?,
         attention: queue
@@ -207,6 +211,24 @@ pub fn clear_activity(app: AppHandle, state: State<'_, AppState>) -> Result<usiz
     let cleared = queue.clear_activity().map_err(error)?;
     let _ = app.emit("state-changed", ());
     Ok(cleared)
+}
+
+// Async and off the main thread: counting reads every note in the memory folder.
+#[tauri::command]
+pub async fn get_cleanup_folders(app: AppHandle) -> Result<Vec<cleanup::Folder>, String> {
+    tauri::async_runtime::spawn_blocking(move || cleanup::folders(&app.state::<AppState>().settings().knowledge_root()).map_err(error)).await.map_err(error)?
+}
+
+/// Hold a cleanup for the worker, which runs it between recordings under the same gate.
+#[tauri::command]
+pub fn start_cleanup(app: AppHandle, state: State<'_, AppState>, folder: String, absorb: Vec<String>) -> Result<(), String> {
+    let target = cleanup::Target { folder, absorb };
+    target.check().map_err(error)?;
+    if !state.request_cleanup(target) {
+        return Err("A cleanup is already waiting or running.".into());
+    }
+    let _ = app.emit("state-changed", ());
+    Ok(())
 }
 
 #[tauri::command]

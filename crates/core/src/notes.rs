@@ -42,6 +42,13 @@ fn read_folder(root: &Path, relative: &str, notes: &mut BTreeMap<String, String>
     Ok(())
 }
 
+/// The notes of one folder, such as "common" or "projects/demo".
+pub fn load_folder(knowledge_root: &Path, relative: &str) -> Result<BTreeMap<String, String>> {
+    let mut notes = BTreeMap::new();
+    read_folder(knowledge_root, relative, &mut notes)?;
+    Ok(notes)
+}
+
 pub fn load_scope(knowledge_root: &Path, project: &str) -> Result<BTreeMap<String, String>> {
     let mut notes = BTreeMap::new();
     read_folder(knowledge_root, "common", &mut notes)?;

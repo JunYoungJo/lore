@@ -912,6 +912,24 @@ svg.kind-deleted {
   background: var(--accent-soft);
 }
 
+.notes-card-summary.danger {
+  color: var(--danger);
+}
+
+/* A note the activity removed or moved away: named, but nothing to open. */
+.notes-card-row.gone {
+  color: var(--text3);
+  cursor: default;
+}
+
+.notes-card-row.gone > span {
+  text-decoration: line-through;
+}
+
+.notes-card-row.gone:hover {
+  background: transparent;
+}
+
 .row-time {
   flex: none;
   padding-top: 2px;
@@ -1245,6 +1263,30 @@ svg.kind-deleted {
 
 .cli-fields .cli-note {
   margin: 0;
+}
+
+.cleanup {
+  padding: 10px 12px 12px;
+}
+
+.cleanup .cli-fields {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  margin: 0;
+}
+
+.cleanup-foot {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.cleanup-note {
+  flex: 1;
+  min-width: 0;
+  font-size: 11.5px;
+  line-height: 1.45;
+  color: var(--text3);
 }
 
 .cli-field .set-field,
