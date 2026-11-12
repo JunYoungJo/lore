@@ -1,0 +1,153 @@
+[
+  {
+    "id": "duplicate-notes",
+    "purpose": "Merge two notes that record the same decision, keep what only one of them holds, and carry both source lists.",
+    "notes": [
+      { "path": "projects/demo/error-alerts.md", "kind": "decision", "authority": "user_decision", "title": "오류가 나면 팝업 없이 로그만 남긴다", "body": "사용자 결정(2026-10-02): demo 앱은 오류가 나도 팝업을 띄우지 않고 로그만 남깁니다. 현장 작업자의 조작을 방해하면 안 되기 때문입니다.", "sources": ["- [L4](<../../sources/claude/a.md#L4>) — 팝업을 띄우지 말고 로그만 남겨"] },
+      { "path": "projects/demo/log-only-errors.md", "kind": "decision", "authority": "mixed_evidence", "title": "오류 처리: 로그 전용", "body": "오류는 팝업 없이 로그로만 남깁니다(사용자 결정). 로그는 `logs/errors/` 아래에 날짜별 파일로 쌓입니다. 날짜별로 나눈 것은 assistant가 정한 구현이고 사용자가 따로 확인하지는 않았습니다.", "sources": ["- [L9](<../../sources/codex/b.md#L9>) — 로그는 logs/errors 아래에 날짜별로"] }
+    ],
+    "count": { "projects/demo/": 1 },
+    "mentions": [{ "in": "projects/demo/", "text": "logs/errors" }, { "in": "projects/demo/", "text": "현장 작업자" }],
+    "carries": [{ "in": "projects/demo/", "text": "sources/claude/a.md#L4" }, { "in": "projects/demo/", "text": "sources/codex/b.md#L9" }],
+    "korean": true,
+    "expectation": "One note remains. It states the log-only decision with its reason and the log location, still marks the per-day split as the assistant's choice, and lists both sources."
+  },
+  {
+    "id": "already-tidy",
+    "purpose": "Leave a folder alone when each note covers its own topic and still holds.",
+    "notes": [
+      { "path": "projects/demo/error-alerts.md", "kind": "decision", "authority": "user_decision", "title": "오류가 나면 팝업 없이 로그만 남긴다", "body": "사용자 결정(2026-10-02): 오류가 나도 팝업을 띄우지 않고 로그만 남깁니다. 현장 작업자의 조작을 방해하면 안 되기 때문입니다.", "sources": ["- [L4](<../../sources/claude/a.md#L4>) — 로그만 남겨"] },
+      { "path": "projects/demo/csv-export-paging.md", "kind": "lesson", "authority": "assistant_report", "title": "CSV 내보내기는 행을 페이지 단위로 읽어야 한다", "body": "내보내기는 행을 페이지 단위로 읽습니다. 한 번에 모두 읽으면 큰 계정에서 504가 납니다.\n\n- 원인: `ExportJob`이 테이블 전체를 조회한 뒤 쓰기 시작해 게이트웨이 60초 제한을 넘겼습니다.\n- assistant가 계정 하나에서 확인한 결과입니다.", "sources": ["- [L20](<../../sources/claude/c.md#L20>) — 페이지 단위로 읽게 바꿨습니다"] },
+      { "path": "projects/demo/release-day.md", "kind": "decision", "authority": "user_decision", "title": "릴리스는 화요일 오전에 한다", "body": "사용자 결정(2026-09-15): 릴리스는 화요일 오전에 합니다. 문제가 생겨도 주중에 대응할 수 있기 때문입니다.", "sources": ["- [L2](<../../sources/claude/d.md#L2>) — 릴리스는 화요일 오전에"] }
+    ],
+    "noChange": true,
+    "expectation": "Nothing is changed."
+  },
+  {
+    "id": "unresolved-contradiction",
+    "purpose": "Do not pick a side when two notes disagree and nothing shows which is current.",
+    "notes": [
+      { "path": "projects/demo/upload-retries.md", "kind": "decision", "authority": "mixed_evidence", "title": "업로드 실패 시 재시도", "body": "업로드가 실패하면 3번까지 다시 시도합니다.", "sources": ["- [L3](<../../sources/claude/e.md#L3>) — 3번까지"] },
+      { "path": "projects/demo/network-errors.md", "kind": "lesson", "authority": "mixed_evidence", "title": "네트워크 오류 처리", "body": "네트워크 오류는 사용자에게 한 번만 알립니다. 업로드는 실패하면 5번까지 다시 시도합니다.", "sources": ["- [L7](<../../sources/codex/f.md#L7>) — 5번까지"] }
+    ],
+    "noChange": true,
+    "expectation": "Both notes stay as they are; neither retry count is chosen."
+  },
+  {
+    "id": "superseded-decision",
+    "purpose": "When the notes show which decision is current, state it once and keep why the earlier one was dropped.",
+    "notes": [
+      { "path": "projects/demo/error-popup.md", "kind": "decision", "authority": "user_decision", "title": "오류가 나면 팝업을 띄운다", "body": "사용자 결정(2026-10-01): 오류를 놓치지 않도록 오류가 나면 팝업을 띄웁니다.", "sources": ["- [L2](<../../sources/claude/g.md#L2>) — 오류 나면 팝업 띄워"] },
+      { "path": "projects/demo/error-alerts.md", "kind": "decision", "authority": "user_decision", "title": "오류가 나면 팝업 없이 로그만 남긴다", "body": "사용자 결정(2026-11-05): 오류가 나도 팝업을 띄우지 않고 로그만 남깁니다. 2026-10-01의 팝업 결정을 대체합니다. 팝업이 현장 작업자의 조작을 방해했기 때문입니다.", "sources": ["- [L4](<../../sources/claude/a.md#L4>) — 팝업 빼고 로그만 남겨"] }
+    ],
+    "keeps": ["projects/demo/error-alerts.md"],
+    "removes": ["projects/demo/error-popup.md"],
+    "mentions": [{ "in": "projects/demo/", "text": "놓치지 않" }],
+    "korean": true,
+    "expectation": "error-popup.md is gone. error-alerts.md states log-only as current and says that it replaced the popup, which had been chosen so that errors are not missed, and why."
+  },
+  {
+    "id": "ticket-note",
+    "purpose": "Take a note built around a ticket apart: topic facts to the topic note, a working correction to the shared folder, the course of the work nowhere.",
+    "notes": [
+      { "path": "projects/demo/thumbnail-cache.md", "kind": "decision", "authority": "mixed_evidence", "title": "썸네일 캐시 크기는 여유 메모리에서 정한다", "body": "썸네일 캐시는 고정 개수가 아니라 여유 메모리의 10%까지 씁니다(assistant 설계, 사용자가 승인).", "sources": ["- [L11](<../../sources/claude/h.md#L11>) — 그렇게 해"] },
+      { "path": "projects/demo/issue-88-thumbnail-cache.md", "kind": "issue", "authority": "mixed_evidence", "title": "ISSUE-88: 썸네일 캐시를 여유 메모리 기준으로 바꿈 (PR #412 병합)", "body": "ISSUE-88은 200개 고정이던 썸네일 캐시를 여유 메모리 기준으로 바꾼 이슈입니다. PR #412로 병합됐습니다(커밋 a1b2c3d).\n\n## 작업 방식\n\n에이전트 둘이 따로 설계하고 셋째 에이전트가 리뷰했습니다. worktree는 `D:\\tmp\\worktrees\\demo\\ISSUE-88`이었고 병합 뒤 빌드 폴더까지 지웠습니다.\n\n## 교정\n\n사용자가 진행 상황을 물었는데 assistant가 원인 조사를 계속했습니다. 사용자: \"뭐가 끝났는지부터 말해. 왜 멈췄는지는 그다음이야.\"\n\n## 미해결\n\n메모리가 4GB보다 적은 PC에서는 아무도 실행해 보지 않았습니다(assistant 보고).", "sources": ["- [L30](<../../sources/claude/i.md#L30>) — 뭐가 끝났는지부터 말해. 왜 멈췄는지는 그다음이야.", "- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만 PC에서는 실행하지 않았습니다"] }
+    ],
+    "removes": ["projects/demo/issue-88-thumbnail-cache.md"],
+    "keeps": ["projects/demo/thumbnail-cache.md"],
+    "mentions": [{ "in": "projects/demo/", "text": "4GB" }, { "in": "common/", "text": "뭐가 끝났는지부터" }, { "in": "common/", "text": "demo" }],
+    "carries": [{ "in": "common/", "text": "<../sources/claude/i.md#L30>" }],
+    "leavesOut": ["a1b2c3d", "#412", "worktree", "셋째 에이전트"],
+    "korean": true,
+    "expectation": "The issue note is gone. thumbnail-cache.md gains the open point about PCs under 4 GB as the assistant's report. A shared note holds the correction with the user's words and says it came from the demo project. No note carries the PR number, commit, worktree or agent arrangement."
+  },
+  {
+    "id": "shared-note-exists",
+    "purpose": "Add a working correction to the shared note that already covers it instead of creating a second one.",
+    "shared": [
+      { "path": "common/status-reports.md", "kind": "lesson", "authority": "user_decision", "title": "진행 상황 보고는 확인한 것만 적는다", "body": "## 규칙\n\n보고에는 직접 실행해 확인한 것만 적습니다. 다른 에이전트의 보고를 읽은 것은 읽었다고 적습니다(사용자 지적, appengine 프로젝트의 리뷰 작업 중).", "sources": ["- [L5](<../sources/claude/j.md#L5>) — 직접 돌려본 것만 확인했다고 써"] }
+    ],
+    "notes": [
+      { "path": "projects/demo/session-2026-11-03.md", "kind": "lesson", "authority": "user_decision", "title": "2026-11-03 작업 중 받은 지적", "body": "사용자가 진행 상황을 물었는데 assistant가 원인 조사를 계속했습니다. 사용자: \"뭐가 끝났는지부터 말해. 왜 멈췄는지는 그다음이야.\"", "sources": ["- [L30](<../../sources/claude/i.md#L30>) — 뭐가 끝났는지부터 말해. 왜 멈췄는지는 그다음이야."] },
+      { "path": "projects/demo/release-day.md", "kind": "decision", "authority": "user_decision", "title": "릴리스는 화요일 오전에 한다", "body": "사용자 결정(2026-09-15): 릴리스는 화요일 오전에 합니다. 문제가 생겨도 주중에 대응할 수 있기 때문입니다.", "sources": ["- [L2](<../../sources/claude/d.md#L2>) — 릴리스는 화요일 오전에"] }
+    ],
+    "count": { "common/": 1 },
+    "removes": ["projects/demo/session-2026-11-03.md"],
+    "unchanged": ["projects/demo/release-day.md"],
+    "mentions": [{ "in": "common/", "text": "뭐가 끝났는지부터" }, { "in": "common/", "text": "직접 실행해 확인한 것만" }, { "in": "common/", "text": "demo" }],
+    "korean": true,
+    "expectation": "common/status-reports.md gains the correction with the user's words and its origin in the demo project, and keeps its existing rule. No second shared note is created. release-day.md is untouched and stays in the project."
+  },
+  {
+    "id": "project-constraint-stays",
+    "purpose": "Keep a project's own constraint in the project even when it sounds like a general rule.",
+    "notes": [
+      { "path": "projects/demo/release-day.md", "kind": "decision", "authority": "user_decision", "title": "릴리스는 금요일에 하지 않는다", "body": "사용자 결정(2026-09-15): 릴리스는 절대 금요일에 하지 않습니다. demo 고객사가 주말에 장비를 돌리는데 그때는 대응할 사람이 없기 때문입니다.", "sources": ["- [L2](<../../sources/claude/d.md#L2>) — 금요일엔 릴리스하지 마"] },
+      { "path": "projects/demo/test-determinism.md", "kind": "decision", "authority": "user_decision", "title": "시험은 결정적이어야 하고 실제 장비 시험은 CTest에 두지 않는다", "body": "사용자 결정(2026-10-20): demo의 시험은 항상 같은 결과가 나와야 합니다. 실제 장비가 있어야 도는 시험은 CTest에 넣지 않고 따로 실행합니다.", "sources": ["- [L8](<../../sources/claude/k.md#L8>) — 장비 시험은 ctest에서 빼"] }
+    ],
+    "noChange": true,
+    "expectation": "Nothing is changed and nothing is written to the shared folder."
+  },
+  {
+    "id": "old-open-issue",
+    "purpose": "Do not expire an open issue because it is old.",
+    "notes": [
+      { "path": "projects/demo/slow-first-search.md", "kind": "issue", "authority": "assistant_report", "title": "첫 검색이 느린 문제: 원인 미확인", "body": "앱을 켠 뒤 첫 검색이 8초쯤 걸립니다. 2026-06-10 기준으로 원인을 찾지 못했습니다. assistant는 색인을 처음 읽는 시간일 것이라고 추측했지만 확인하지 않았습니다.", "sources": ["- [L14](<../../sources/claude/m.md#L14>) — 첫 검색만 느려"] },
+      { "path": "projects/demo/release-day.md", "kind": "decision", "authority": "user_decision", "title": "릴리스는 화요일 오전에 한다", "body": "사용자 결정(2026-09-15): 릴리스는 화요일 오전에 합니다.", "sources": ["- [L2](<../../sources/claude/d.md#L2>) — 릴리스는 화요일 오전에"] }
+    ],
+    "noChange": true,
+    "expectation": "Nothing is changed; the open issue stays."
+  },
+  {
+    "id": "rejected-approach",
+    "purpose": "Keep a note about an approach that was tried and rejected, and remove a note about a prototype that no longer exists.",
+    "notes": [
+      { "path": "projects/demo/no-redis-cache.md", "kind": "decision", "authority": "user_decision", "title": "검색 캐시에 Redis를 쓰지 않는다", "body": "사용자 결정(2026-08-20): 검색 캐시를 Redis로 옮기는 안은 버렸습니다. 현장 PC에 Redis를 설치할 수 없기 때문입니다. 캐시는 앱 데이터 폴더의 파일로 둡니다.", "sources": ["- [L6](<../../sources/claude/n.md#L6>) — 레디스는 현장에 못 깔아"] },
+      { "path": "projects/demo/python-prototype-paths.md", "kind": "lesson", "authority": "assistant_report", "title": "Python 프로토타입의 작업 폴더를 옮길 때 큐 ID를 갱신하는 절차", "body": "이 절차는 Python 프로토타입에만 해당합니다. 프로토타입은 2026-09-30에 폐기됐고 저장소에서도 지웠습니다. 지금 앱은 작업 ID를 세션 파일 경로로 계산하므로 이 절차가 필요 없습니다.\n\n1. 큐 DB를 백업합니다.\n2. 새 경로로 ID를 다시 계산합니다.\n3. `status`로 작업 수가 늘지 않았는지 확인합니다.", "sources": ["- [L3](<../../sources/codex/p.md#L3>) — 프로토타입 폴더 옮기면 ID가 바뀝니다"] }
+    ],
+    "removes": ["projects/demo/python-prototype-paths.md"],
+    "unchanged": ["projects/demo/no-redis-cache.md"],
+    "expectation": "python-prototype-paths.md is removed because the note itself says the prototype was discarded. no-redis-cache.md stays untouched."
+  },
+  {
+    "id": "report-stays-report",
+    "purpose": "Keep an assistant's report marked as a report, with its limit, when it is merged into a note that rests on a user decision.",
+    "notes": [
+      { "path": "projects/demo/export-timeouts.md", "kind": "decision", "authority": "user_decision", "title": "내보내기 타임아웃은 60초를 넘기지 않는다", "body": "사용자 결정(2026-10-12): 내보내기 타임아웃은 60초를 넘기지 않습니다. 타임아웃을 늘리기 전에 원인을 먼저 찾습니다.", "sources": ["- [L4](<../../sources/claude/q.md#L4>) — 타임아웃 늘리지 말고 원인부터 찾아"] },
+      { "path": "projects/demo/export-timeout-fix.md", "kind": "lesson", "authority": "assistant_report", "title": "내보내기 타임아웃 해결", "body": "내보내기 타임아웃은 60초를 넘기지 않습니다(사용자 결정). assistant는 행을 페이지 단위로 읽게 바꾼 뒤 504가 사라졌다고 보고했습니다. 계정 하나에서만 확인했고 큰 계정에서는 확인하지 않았습니다.", "sources": ["- [L22](<../../sources/claude/q.md#L22>) — 페이지 단위로 바꾸니 504가 안 납니다"] }
+    ],
+    "count": { "projects/demo/": 1 },
+    "matches": [{ "in": "projects/demo/", "pattern": "보고|assistant" }, { "in": "projects/demo/", "pattern": "계정 하나|한 계정|하나의 계정" }],
+    "carries": [{ "in": "projects/demo/", "text": "q.md#L22" }, { "in": "projects/demo/", "text": "q.md#L4" }],
+    "korean": true,
+    "expectation": "One note remains. The 60-second limit is the user's decision; the paging result is still the assistant's report, checked on one account only."
+  },
+  {
+    "id": "absorbed-folder",
+    "purpose": "Merge another project folder into this one: move what is unique, merge what repeats, leave the other folder empty.",
+    "absorb": ["old-demo"],
+    "notes": [
+      { "path": "projects/demo/error-alerts.md", "kind": "decision", "authority": "user_decision", "title": "오류가 나면 팝업 없이 로그만 남긴다", "body": "사용자 결정(2026-10-02): 오류가 나도 팝업을 띄우지 않고 로그만 남깁니다. 현장 작업자의 조작을 방해하면 안 되기 때문입니다.", "sources": ["- [L4](<../../sources/claude/a.md#L4>) — 로그만 남겨"] },
+      { "path": "projects/old-demo/alerts.md", "project": "old-demo", "kind": "decision", "authority": "user_decision", "title": "오류 알림: 로그만", "body": "오류는 팝업 없이 로그만 남깁니다(사용자 결정, 2026-10-02).", "sources": ["- [L4](<../../sources/claude/a.md#L4>) — 로그만 남겨"] },
+      { "path": "projects/old-demo/release-day.md", "project": "old-demo", "kind": "decision", "authority": "user_decision", "title": "릴리스는 화요일 오전에 한다", "body": "사용자 결정(2026-09-15): 릴리스는 화요일 오전에 합니다. 문제가 생겨도 주중에 대응할 수 있기 때문입니다.", "sources": ["- [L2](<../../sources/claude/d.md#L2>) — 릴리스는 화요일 오전에"] }
+    ],
+    "count": { "projects/old-demo/": 0, "projects/demo/": 2 },
+    "mentions": [{ "in": "projects/demo/", "text": "화요일 오전" }, { "in": "projects/demo/", "text": "주중에 대응" }],
+    "leavesOut": ["project: \"old-demo\""],
+    "korean": true,
+    "expectation": "projects/old-demo/ holds no note. The release note is in projects/demo/ with its text intact and names the demo project; the duplicate alert note is gone."
+  },
+  {
+    "id": "english-folder",
+    "purpose": "Write in the language of the notes, whatever language the prompt is in.",
+    "notes": [
+      { "path": "projects/demo/upload-retries.md", "kind": "decision", "authority": "user_decision", "title": "Uploads are not retried automatically", "body": "User decision (2026-10-03): a failed upload is not retried automatically, because a retry can send the same file twice.", "sources": ["- [L3](<../../sources/claude/r.md#L3>) — don't retry uploads on your own"] },
+      { "path": "projects/demo/no-upload-retry.md", "kind": "decision", "authority": "mixed_evidence", "title": "No automatic upload retry", "body": "Uploads that fail are not retried automatically (user decision). Still open: the user asked whether the manual Retry button should warn before sending a file that may already have arrived, and has not decided.", "sources": ["- [L9](<../../sources/claude/r.md#L9>) — should Retry warn about a possible duplicate? let me think about it"] }
+    ],
+    "count": { "projects/demo/": 1 },
+    "mentions": [{ "in": "projects/demo/", "text": "twice" }, { "in": "projects/demo/", "text": "warn" }],
+    "carries": [{ "in": "projects/demo/", "text": "r.md#L9" }],
+    "english": true,
+    "expectation": "One English note remains with the decision, its reason, and the open question about a warning on manual retry, still marked as undecided."
+  }
+]

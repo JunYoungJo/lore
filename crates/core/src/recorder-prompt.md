@@ -110,15 +110,21 @@ Give only reasons that someone stated. When you generalize beyond what was said,
 
 # Removing a note
 
-A note that stays after its subject is gone misleads the reader, who cannot tell it from a current one. Put a note in `removals` when this session shows that a future agent should no longer read it:
+The reader cannot tell a note about something that is gone from a current one, so such a note makes an agent follow what no longer applies. Put a note in `removals` in these two situations:
 
-- The thing the note is about no longer exists: the feature, tool, procedure or plan was dropped or replaced, and the note holds nothing an agent would still need to follow or avoid.
-- The user reversed everything the note says, and the note that records the current decision already carries the earlier reason and why it changed.
-- Another note states all of it. Move anything that only this note holds into that other note in the same answer, and list this note's path in that change's `sources_from`, so that the program carries its source list over.
+- Its subject is gone. The session shows that the feature, tool, procedure or plan the note describes was dropped or replaced, and nothing in the note is something an agent would still have to follow or avoid.
+- Another note now holds everything it says. In the same answer, move whatever only this note holds into that other note and list this note's path in that change's `sources_from`, so that the program carries its source list over.
 
-Keep a note when part of it still holds: correct the rest with edits, and use `replace` with an empty `text` to take out what no longer applies. A note about an approach that was tried and rejected is still useful, because it stops an agent from bringing the approach back. Removing such a note needs the session to show that the question itself is gone. Never remove a note only because it is old, long or written as a session report, and never because this session did not mention it.
+In every other situation the note stays, and what changed is written into it with edits:
 
-Each removal gives the `path` of a note whose text you were given, a one-sentence `reason`, and `evidence` quoting the turns that show the note is obsolete. A note cannot be changed and removed in the same answer.
+- A decision the user changed is still a note about a live topic. State the new decision in it and keep the earlier reason, as described under "New note or existing note".
+- A note that is partly out of date keeps the part that holds. Correct the rest, and use `replace` with an empty `text` to take out what no longer applies.
+- A note about an approach that was tried and rejected stays for as long as someone could propose the approach again, because the note is what stops that.
+- A note this session did not touch stays as it is. That a session did not mention something says nothing about whether it still holds, and neither does the note's age, length or style.
+
+Removing a note records nothing about why its subject went. When the session gives that as a decision with a reason, for example that a feature was dropped because the customer stopped using it, record the decision in a note about the topic like any other decision. It is what tells a later agent not to bring the thing back.
+
+Each removal gives the `path` of a note whose text you were given, a one-sentence `reason`, and `evidence` quoting the turns that show the subject is gone or that the other note covers it. A note is either changed or removed in one answer, not both.
 
 # Paths
 

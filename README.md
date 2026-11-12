@@ -200,10 +200,11 @@ Automated tests use fixtures and temporary repositories without calling real mod
 
 ```sh
 node scripts/evaluate-memory.mjs --backend codex
+node scripts/evaluate-cleanup.mjs --backend codex
 node scripts/evaluate-sync.mjs --backend codex
 ```
 
-Both evaluations substitute an indexing fixture for qmd. They test model output and application behavior, not real search quality or long-term usefulness.
+The evaluations substitute an indexing fixture for qmd. They test model output and application behavior, not real search quality or long-term usefulness.
 
 | Path | Responsibility |
 | --- | --- |

@@ -196,6 +196,7 @@ pnpm typecheck
 
 ```sh
 node scripts/evaluate-memory.mjs --backend codex
+node scripts/evaluate-cleanup.mjs --backend codex
 node scripts/evaluate-sync.mjs --backend codex
 ```
 

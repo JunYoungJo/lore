@@ -48,6 +48,12 @@ for (const fixture of cases) {
     mkdirSync(join(knowledge, "projects/demo"), { recursive: true });
     writeFileSync(join(knowledge, "projects/demo/alerts.md"), fixture.existing);
   }
+  // Notes that exist before the session, by path, for cases about removing a note or leaving one alone.
+  for (const [path, text] of Object.entries(fixture.existingNotes ?? {})) {
+    mkdirSync(dirname(join(knowledge, path)), { recursive: true });
+    writeFileSync(join(knowledge, path), text);
+  }
+  const stored = (path) => existsSync(join(knowledge, path)) ? readFileSync(join(knowledge, path), "utf8") : undefined;
   const settings = { knowledgeRoot: knowledge, backend, modelTimeoutSecs: 240, models: {}, commands: { qmd: [process.execPath, join(root, "scripts/evaluation-index-fixture.mjs")] } };
   const model = option("--model", undefined);
   if (model) settings.models[backend] = model;
@@ -73,6 +79,12 @@ for (const fixture of cases) {
     ...(fixture.noNotes ? { noNotes: files.length === 0 } : {}),
     ...(fixture.noCommon ? { noCommon: notesIn(join(knowledge, "common")).length === 0 } : {}),
     ...(fixture.noModel ? { noModel: reviewArtifacts.length === 0 } : {}),
+    // These list the paths that failed, so an empty list passes.
+    // A note about something that is gone is either removed or restated under a new title as the record that it went.
+    ...(fixture.retires ? { retires: fixture.retires.filter((path) => stored(path) !== undefined && titleOf(stored(path)) === titleOf(fixture.existingNotes[path])) } : {}),
+    ...(fixture.keeps ? { keeps: fixture.keeps.filter((path) => stored(path) === undefined) } : {}),
+    ...(fixture.mentions ? { mentions: fixture.mentions.filter((word) => !texts.some((text) => text.includes(word))) } : {}),
+    ...(fixture.unchanged ? { unchanged: fixture.unchanged.filter((path) => stored(path) !== fixture.existingNotes[path]) } : {}),
   };
   reports.push({ id: fixture.id, purpose: fixture.purpose, expectation: fixture.expectation, checks, error, status,
     notes: files.map((file) => ({ file, text: readFileSync(file, "utf8") })), semanticReview: "pending" });
@@ -81,4 +93,4 @@ for (const fixture of cases) {
   process.stdout.write(failed.length ? `needs a look (${failed.join("; ")})\n` : "processed (read the notes to judge the content)\n");
 }
 process.stdout.write(`Report: ${join(output, "report.json")}\n`);
-if (reports.some((report) => !Object.values(report.checks).every(Boolean))) process.exitCode = 1;
+if (reports.some((report) => Object.values(report.checks).some((value) => Array.isArray(value) ? value.length : !value))) process.exitCode = 1;

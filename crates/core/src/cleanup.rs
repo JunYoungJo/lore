@@ -12,7 +12,7 @@ use crate::error::{Error, Failure, Result};
 use crate::notes::{self, CatalogEntry};
 use crate::pipeline::write_notes;
 use crate::project::is_valid_name;
-use crate::proposal::{change_log, check_snapshot, moved_note, render_note, source_lines, validate, without_sources, Proposal, Scope};
+use crate::proposal::{carried_sources, change_log, check_snapshot, moved_note, render_note, validate, with_numbered_sources, Proposal, Scope};
 use crate::recorder::edits_schema;
 use crate::review;
 
@@ -54,6 +54,12 @@ impl Target {
     fn folders(&self) -> Vec<String> {
         std::iter::once(&self.folder).chain(&self.absorb).map(|folder| prefix(folder)).collect()
     }
+
+    /// The shared folder, when a project is cleaned. A project cleanup may add to the shared
+    /// notes what applies beyond the project; it removes and moves nothing there.
+    fn shared(&self) -> Option<String> {
+        (self.folder != COMMON).then(|| prefix(COMMON))
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -76,9 +82,10 @@ pub fn folders(knowledge_root: &Path) -> Result<Vec<Folder>> {
     Ok(shared.into_iter().chain(counts.into_iter().map(|(name, notes)| Folder { name, notes })).collect())
 }
 
+/// The notes a cleanup can touch: those of its folders and, for a project, the shared ones.
 fn load(knowledge_root: &Path, target: &Target) -> Result<BTreeMap<String, String>> {
     let mut found = BTreeMap::new();
-    for folder in target.folders() {
+    for folder in target.folders().into_iter().chain(target.shared()) {
         found.extend(notes::load_folder(knowledge_root, folder.trim_end_matches('/'))?);
     }
     Ok(found)
@@ -88,7 +95,7 @@ pub fn schema() -> Value {
     json!({
         "type": "object",
         "properties": {
-            "summary": {"type": "string", "description": "One sentence for the app's activity list: what the cleanup changed, or that the folder needed nothing."},
+            "summary": {"type": "string", "description": "One sentence for the app's activity list, in the language the notes are written in: what the cleanup changed, or that the folder needed nothing."},
             "changes": {"type": "array", "description": "One entry per note to edit or create. Empty when no note needs it.", "items": {
                 "type": "object",
                 "properties": {
@@ -98,7 +105,15 @@ pub fn schema() -> Value {
                     "authority": {"type": "string", "enum": ["user_decision", "assistant_report", "mixed_evidence"], "description": "What the whole note rests on after this change: the user's own statements, only assistant or agent statements, or both."},
                     "body": {"type": "string", "description": "New note: the complete Markdown body, without the title line. Existing note: empty."},
                     "edits": edits_schema(),
-                    "sources_from": {"type": "array", "description": "Paths of the notes whose content this change takes in. Required for a new note.", "items": {"type": "string"}}
+                    "sources_from": {"type": "array", "description": "The notes whose content this change takes in. A new note names at least one.", "items": {
+                        "type": "object",
+                        "properties": {
+                            "path": {"type": "string", "description": "The path of a note whose text you were given."},
+                            "lines": {"type": "array", "description": "The numbers, in that note's Sources list, of the quotations that support the content taken from it. Empty takes the whole list, which is right when the note is merged whole.", "items": {"type": "integer"}}
+                        },
+                        "required": ["path", "lines"],
+                        "additionalProperties": false
+                    }}
                 },
                 "required": ["path", "title", "kind", "authority", "body", "edits", "sources_from"],
                 "additionalProperties": false
@@ -138,7 +153,7 @@ fn parts(notes: &BTreeMap<String, String>, budget: usize) -> Vec<Vec<String>> {
     let mut parts: Vec<Vec<String>> = Vec::new();
     let mut used = 0;
     for (path, text) in notes {
-        let size = without_sources(text).chars().count();
+        let size = with_numbered_sources(text).chars().count();
         match parts.last_mut() {
             Some(part) if used + size <= budget => part.push(path.clone()),
             _ => {
@@ -157,11 +172,12 @@ struct Request {
 }
 
 fn build_request(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<String>, today: &str, failure: Option<&str>) -> Request {
-    let texts: BTreeMap<&String, String> = notes.iter().filter(|(path, _)| shown.contains(*path)).map(|(path, text)| (path, without_sources(text))).collect();
+    let texts: BTreeMap<&String, String> = notes.iter().filter(|(path, _)| shown.contains(*path)).map(|(path, text)| (path, with_numbered_sources(text))).collect();
     let catalog: Vec<CatalogEntry> = notes.iter().filter(|(path, _)| !shown.contains(*path)).map(|(path, text)| CatalogEntry { path: path.clone(), title: notes::title_of(text) }).collect();
     let mut payload = json!({
         "folder": prefix(&target.folder),
         "absorbed_folders": target.absorb.iter().map(|folder| prefix(folder)).collect::<Vec<_>>(),
+        "shared_folder": target.shared(),
         "today": today,
         "notes": texts,
         "note_catalog": catalog,
@@ -183,7 +199,13 @@ struct Changes {
 
 fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<String>, proposal: &Proposal) -> Result<Changes> {
     let existing: BTreeSet<String> = notes.keys().cloned().collect();
-    let scope = Scope { project: &target.folder, turns: None, existing: &existing, editable: shown, writable: vec![prefix(&target.folder)], removable: target.folders() };
+    let own = prefix(&target.folder);
+    // A note enters the shared folder only as text written for it, never by being moved there whole.
+    if let Some(moved) = proposal.moves.iter().find(|moved| !moved.to.starts_with(&own)) {
+        return Err(Error::rejected(format!("A note can be moved only into the folder being cleaned: {}", moved.to)));
+    }
+    let writable = std::iter::once(own).chain(target.shared()).collect();
+    let scope = Scope { project: &target.folder, turns: None, existing: &existing, editable: shown, writable, removable: target.folders() };
     validate(proposal, &scope)?;
     let mut changes = Changes { summary: proposal.summary.replace(['\r', '\n'], " ").trim().to_string(), base: notes.clone(), rendered: BTreeMap::new(), removed: BTreeSet::new(), log: change_log(proposal) };
     for moved in &proposal.moves {
@@ -191,7 +213,7 @@ fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<Stri
         changes.removed.insert(moved.from.clone());
     }
     for change in &proposal.changes {
-        let carried: Vec<String> = change.sources_from.iter().filter_map(|path| notes.get(path)).flat_map(|text| source_lines(text)).collect();
+        let carried = carried_sources(change, |path| notes.get(path).map(String::as_str))?;
         // A cleanup quotes no session, so it adds no source of its own.
         let change = crate::proposal::Change { evidence: Vec::new(), ..change.clone() };
         let rendered = render_note(&change, &target.folder, &|_| String::new(), notes.get(&change.path).map(String::as_str), &carried)?;
@@ -254,22 +276,32 @@ impl Outcome {
 /// Clean one folder. With `write` off nothing is changed and the outcome says what would be.
 pub fn run(knowledge_root: &Path, target: &Target, budget: usize, today: &str, artifacts: &Path, write: bool, ask: Ask) -> Result<Outcome> {
     target.check()?;
-    let listed = load(knowledge_root, target)?;
-    if !listed.keys().any(|path| path.starts_with(&prefix(&target.folder))) && target.absorb.is_empty() {
+    let is_shared = |path: &String| target.shared().is_some_and(|shared| path.starts_with(&shared));
+    let (shared, own): (BTreeMap<String, String>, BTreeMap<String, String>) = load(knowledge_root, target)?.into_iter().partition(|(path, _)| is_shared(path));
+    if !own.keys().any(|path| path.starts_with(&prefix(&target.folder))) && target.absorb.is_empty() {
         return Err(Error::permanent(format!("The folder holds no notes: {}", target.folder)));
     }
+    // The shared notes go with every request so that nothing is added to them twice. When
+    // they would take more than half of a request they are listed by title instead, and the
+    // model asks for the ones it needs.
+    let shared_size: usize = shared.values().map(|text| with_numbered_sources(text).chars().count()).sum();
+    let with_shared = shared_size <= budget / 2;
+    let part_budget = if with_shared { budget - shared_size } else { budget };
     let mut written = BTreeSet::new();
     let mut removed = BTreeSet::new();
     let mut summaries = Vec::new();
     let mut last = String::new();
     let mut log = Vec::new();
     let mut incomplete = None;
-    for (index, part) in parts(&listed, budget).into_iter().enumerate() {
+    for (index, part) in parts(&own, part_budget).into_iter().enumerate() {
         // An earlier part may have removed or rewritten notes of this one.
         let notes = load(knowledge_root, target)?;
-        let part: BTreeSet<String> = part.into_iter().filter(|path| notes.contains_key(path)).collect();
+        let mut part: BTreeSet<String> = part.into_iter().filter(|path| notes.contains_key(path)).collect();
         if part.is_empty() {
             continue;
+        }
+        if with_shared {
+            part.extend(notes.keys().filter(|path| is_shared(path)).cloned());
         }
         let folder = artifacts.join(format!("part-{}", index + 1));
         // An answer the program rejects is asked for once more, with the reason.
@@ -334,7 +366,7 @@ pub fn clean(knowledge_root: &Path, target: &Target, artifacts: &Path, ask: Ask)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::proposal::{Change, Edit, Move, Removal};
+    use crate::proposal::{Change, Edit, Move, Removal, SourceRef};
     use serde_json::json;
     use std::cell::RefCell;
     use std::fs;
@@ -381,13 +413,22 @@ mod tests {
             kind: "decision".into(),
             authority: "mixed_evidence".into(),
             edits: vec![Edit { op: "append".into(), find: String::new(), section: section.into(), heading: String::new(), text: text.into() }],
-            sources_from: sources_from.iter().map(|path| path.to_string()).collect(),
+            sources_from: sources_from.iter().map(|path| SourceRef::from(*path)).collect(),
             ..Change::default()
         }
     }
 
     fn remove(path: &str) -> Removal {
         Removal { path: path.into(), reason: "다른 노트에 모두 들어 있습니다.".into(), evidence: vec![] }
+    }
+
+    /// The data a prompt carries between its tags. The prompt file is checked out with CRLF line
+    /// endings on Windows, and its opening sentences mention the tag, so the data is what lies
+    /// between the closing tag and the last opening tag before it, whatever the line breaks are.
+    fn payload_of(prompt: &str) -> Value {
+        let end = prompt.find("</notes>").unwrap();
+        let start = prompt[..end].rfind("<notes>").unwrap() + "<notes>".len();
+        serde_json::from_str(prompt[start..end].trim()).unwrap()
     }
 
     /// Answers each request with the next prepared proposal and keeps what it was asked.
@@ -403,9 +444,7 @@ mod tests {
 
         fn ask(&self, prompt: &str, schema: &Value, _: &Path) -> Result<Value> {
             assert_eq!(schema, &super::schema());
-            let start = prompt.find("<notes>\n").unwrap() + "<notes>\n".len();
-            let end = prompt.find("\n</notes>").unwrap();
-            self.asked.borrow_mut().push(serde_json::from_str(&prompt[start..end]).unwrap());
+            self.asked.borrow_mut().push(payload_of(prompt));
             Ok(self.answers.borrow_mut().pop().expect("the model was asked more often than expected"))
         }
 
@@ -453,12 +492,119 @@ mod tests {
         assert!(merged.ends_with("## Sources\n- [L4](<../../sources/claude/a.md#L4>) — 로그만 남기십시오\n- [L9](<../../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{merged}");
         assert!(merged.contains("authority: \"mixed_evidence\""));
 
-        // The model saw this folder's notes without their source lists, and nothing of the shared folder.
+        // The model saw this folder's notes and the shared ones, without their source lists.
         let asked = model.asked(0);
-        assert_eq!(asked["folder"], "projects/demo/");
+        assert_eq!((&asked["folder"], &asked["shared_folder"]), (&json!("projects/demo/"), &json!("common/")));
         assert_eq!(asked["today"], "2026-11-12");
-        assert_eq!(asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["projects/demo/bg.md", "projects/demo/popup.md"]);
-        assert!(!asked["notes"]["projects/demo/bg.md"].as_str().unwrap().contains("Sources"));
+        assert_eq!(asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["common/a.md", "projects/demo/bg.md", "projects/demo/popup.md"]);
+        // Each note's source list is shown as numbered quotations, without the links.
+        let shown = asked["notes"]["projects/demo/bg.md"].as_str().unwrap();
+        assert!(shown.ends_with("경고 없이 TP 로그만 남깁니다.\n\n## Sources\n1. 로그만 남기십시오\n"), "{shown}");
+    }
+
+    #[test]
+    fn a_note_taken_apart_gives_each_piece_only_the_source_lines_named_for_it() {
+        let ticket = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"issue\"\n    authority: \"mixed_evidence\"\n---\n\n# ISSUE-88\n\n지적과 미해결이 섞인 노트\n\n## Sources\n- [L30](<../../sources/claude/i.md#L30>) — 끝난 것부터 말해\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n";
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
+        let lines = |numbers: Vec<usize>| vec![SourceRef::Lines { path: "projects/demo/issue-88.md".into(), lines: numbers }];
+        let proposal = Proposal {
+            summary: "이슈 노트를 나눴습니다.".into(),
+            changes: vec![
+                Change { sources_from: lines(vec![1]), ..shared_note("common/answer-status-first.md", &[]) },
+                Change { sources_from: lines(vec![2]), ..append("projects/demo/bg.md", "결정", "4GB 미만 PC에서는 확인하지 않았습니다.", &[]) },
+            ],
+            removals: vec![remove("projects/demo/issue-88.md")],
+            ..Proposal::default()
+        };
+        let model = Model::answering(vec![proposal]);
+        tidy(&fixture, &demo(), 100_000, true, &model).unwrap();
+        let shared = fixture.read("common/answer-status-first.md").unwrap();
+        assert!(shared.ends_with("## Sources\n- [L30](<../sources/claude/i.md#L30>) — 끝난 것부터 말해\n"), "{shared}");
+        let topic = fixture.read("projects/demo/bg.md").unwrap();
+        assert!(topic.ends_with("## Sources\n- [L4](<../../sources/claude/a.md#L4>) — 로그만 남기십시오\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n"), "{topic}");
+
+        let wrong = Proposal { summary: "s".into(), changes: vec![Change { sources_from: lines(vec![3]), ..append("projects/demo/bg.md", "결정", "추가", &[]) }], ..Proposal::default() };
+        let refused = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
+        let model = Model::answering(vec![wrong.clone(), wrong]);
+        assert_eq!(tidy(&refused, &demo(), 100_000, true, &model).unwrap_err().failure, Failure::Rejected);
+        assert!(model.asked(1)["previous_failure"].as_str().unwrap().contains("no source line 3"));
+    }
+
+    const RULE: &str = "---\nqmd:\n  metadata:\n    project: \"common\"\n    kind: \"lesson\"\n    authority: \"user_decision\"\n---\n\n# 보고 방식\n\n## 규칙\n\n확인한 것만 보고합니다.\n\n## Sources\n- [L1](<../sources/claude/r.md#L1>) — 확인한 것만\n";
+
+    fn shared_note(path: &str, sources_from: &[&str]) -> Change {
+        Change {
+            path: path.into(),
+            title: "상태를 물으면 상태부터 답한다".into(),
+            kind: "lesson".into(),
+            authority: "user_decision".into(),
+            body: "원인 조사를 이어 가지 않고 진행 정도부터 답합니다. demo 프로젝트의 작업에서 나온 지적입니다.".into(),
+            sources_from: sources_from.iter().map(|path| SourceRef::from(*path)).collect(),
+            ..Change::default()
+        }
+    }
+
+    #[test]
+    fn a_project_cleanup_can_put_a_working_rule_into_the_shared_folder() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("common/reporting.md", RULE)]);
+        let proposal = Proposal {
+            summary: "작업 방식 지적을 공용 폴더로 옮겼습니다.".into(),
+            changes: vec![shared_note("common/answer-status-first.md", &["projects/demo/popup.md"]), append("common/reporting.md", "규칙", "문구는 짧게 씁니다.", &["projects/demo/popup.md"])],
+            removals: vec![remove("projects/demo/popup.md")],
+            ..Proposal::default()
+        };
+        let model = Model::answering(vec![proposal]);
+        let outcome = tidy(&fixture, &demo(), 100_000, true, &model).unwrap();
+        assert_eq!(outcome.written, vec!["common/answer-status-first.md".to_string(), "common/reporting.md".to_string()]);
+        assert_eq!(outcome.removed, vec!["projects/demo/popup.md".to_string()]);
+
+        // A note in the shared folder names that folder and reaches the conversation copies from its own depth.
+        let created = fixture.read("common/answer-status-first.md").unwrap();
+        assert!(created.starts_with("---\nqmd:\n  metadata:\n    project: \"common\"\n"), "{created}");
+        assert!(created.ends_with("## Sources\n- [L9](<../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{created}");
+        let edited = fixture.read("common/reporting.md").unwrap();
+        assert!(edited.contains("확인한 것만 보고합니다.\n\n문구는 짧게 씁니다.\n"), "{edited}");
+        assert!(edited.ends_with("## Sources\n- [L1](<../sources/claude/r.md#L1>) — 확인한 것만\n- [L9](<../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{edited}");
+    }
+
+    #[test]
+    fn a_project_cleanup_removes_and_moves_nothing_in_the_shared_folder() {
+        let moving = |from: &str, to: &str| Proposal { summary: "s".into(), moves: vec![Move { from: from.into(), to: to.into() }], ..Proposal::default() };
+        for refused in [
+            Proposal { summary: "s".into(), removals: vec![remove("common/reporting.md")], ..Proposal::default() },
+            moving("projects/demo/bg.md", "common/bg.md"),
+            moving("common/reporting.md", "projects/demo/reporting.md"),
+            moving("common/reporting.md", "common/reporting-rules.md"),
+        ] {
+            let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("common/reporting.md", RULE)]);
+            let model = Model::answering(vec![refused.clone(), refused.clone()]);
+            assert_eq!(tidy(&fixture, &demo(), 100_000, true, &model).unwrap_err().failure, Failure::Rejected, "{refused:?}");
+            assert_eq!((fixture.read("common/reporting.md").as_deref(), fixture.read("projects/demo/bg.md").as_deref()), (Some(RULE), Some(BG)));
+        }
+    }
+
+    #[test]
+    fn the_shared_notes_go_with_every_part_and_are_listed_by_title_when_they_are_too_many() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("common/reporting.md", RULE)]);
+        let nothing = || Proposal { summary: "없음".into(), ..Proposal::default() };
+        let keys = |asked: &Value| asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
+        let size = |text: &str| with_numbered_sources(text).chars().count();
+
+        // Room for the shared note and one project note: two parts, each with the shared note.
+        let model = Model::answering(vec![nothing(), nothing()]);
+        tidy(&fixture, &demo(), size(RULE) + size(BG) + 10, true, &model).unwrap();
+        assert_eq!(keys(&model.asked(0)), vec!["common/reporting.md", "projects/demo/bg.md"]);
+        assert_eq!(keys(&model.asked(1)), vec!["common/reporting.md", "projects/demo/popup.md"]);
+
+        // Shared notes that would take more than half of a request are named, and their text is sent when asked for.
+        let long = format!("# 긴 공용 노트\n\n{}\n", "가".repeat(400));
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("common/reporting.md", RULE), ("common/long.md", &long)]);
+        let wants_rule = Proposal { summary: "s".into(), needs_notes: vec!["common/reporting.md".into()], ..Proposal::default() };
+        let model = Model::answering(vec![wants_rule, nothing()]);
+        tidy(&fixture, &demo(), size(BG) + size(POPUP) + 10, true, &model).unwrap();
+        assert_eq!(keys(&model.asked(0)), vec!["projects/demo/bg.md", "projects/demo/popup.md"]);
+        assert_eq!(model.asked(0)["note_catalog"], json!([{"path": "common/long.md", "title": "긴 공용 노트"}, {"path": "common/reporting.md", "title": "보고 방식"}]));
+        assert_eq!(keys(&model.asked(1)), vec!["common/reporting.md", "projects/demo/bg.md", "projects/demo/popup.md"]);
     }
 
     #[test]
@@ -521,7 +667,7 @@ mod tests {
         };
         // Part 1 holds bg, part 2 holds popup and asks for bg, part 3 holds queue.
         let model = Model::answering(vec![nothing(), wants_bg, merge, nothing()]);
-        let budget = without_sources(POPUP).chars().count() + 10;
+        let budget = with_numbered_sources(POPUP).chars().count() + 10;
         let outcome = tidy(&fixture,&demo(), budget, true, &model).unwrap();
         assert_eq!((outcome.written, outcome.removed), (vec!["projects/demo/bg.md".to_string()], vec!["projects/demo/popup.md".to_string()]));
         assert_eq!(outcome.summary, "합침");
@@ -543,7 +689,7 @@ mod tests {
         let model = Model::answering(vec![Proposal { summary: "s".into(), removals: vec![remove("common/b.md")], ..Proposal::default() }]);
         let outcome = tidy(&fixture,&common, 100_000, true, &model).unwrap();
         assert_eq!(outcome.removed, vec!["common/b.md".to_string()]);
-        assert_eq!(model.asked(0)["folder"], "common/");
+        assert_eq!((&model.asked(0)["folder"], &model.asked(0)["shared_folder"]), (&json!("common/"), &Value::Null));
         assert_eq!(model.asked(0)["notes"].as_object().unwrap().len(), 2);
 
         let never = Model::answering(vec![]);
@@ -578,7 +724,7 @@ mod tests {
         let root = fixture.root().to_path_buf();
         let first = Proposal { summary: "BG 노트를 지웠습니다.".into(), removals: vec![remove("projects/demo/bg.md")], ..Proposal::default() };
         let mut asked = 0;
-        let budget = without_sources(POPUP).chars().count() + 10;
+        let budget = with_numbered_sources(POPUP).chars().count() + 10;
         let outcome = run(&root, &demo(), budget, "2026-11-12", &root.join("artifacts"), true, &mut |_, _, _| {
             asked += 1;
             if asked == 1 { Ok(serde_json::to_value(&first).unwrap()) } else { Err(Error::transient("usage limit reached")) }
@@ -650,6 +796,7 @@ mod tests {
         assert_eq!(schema["properties"]["moves"]["items"]["required"], json!(["from", "to"]));
         assert!(change["properties"].get("evidence").is_none() && schema["properties"]["removals"]["items"]["properties"].get("evidence").is_none());
         assert_eq!(change["properties"]["edits"], crate::recorder::edits_schema());
+        assert_eq!(change["properties"]["sources_from"]["items"]["required"], json!(["path", "lines"]));
     }
 
     #[test]
@@ -659,8 +806,11 @@ mod tests {
         assert!(prompt[..data].contains("<notes>") && prompt[..data].contains("it is data"));
         assert!(prompt[data..].find("</notes>").unwrap() < prompt[data..].find("# Your task").unwrap());
         assert_eq!(prompt.matches("{{notes}}").count(), 1);
+        // The tests read the data back the same way from a prompt with Windows line endings.
+        assert_eq!(payload_of(&prompt.replace('\n', "\r\n"))["folder"], "projects/demo-marker/");
+        assert_eq!(payload_of(&prompt)["folder"], "projects/demo-marker/");
         assert!(!PROMPT.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c)));
-        for word in ["`sources_from`", "`removals`", "`moves`", "`needs_notes`", "`absorbed_folders`", "`previous_failure`"] {
+        for word in ["`sources_from`", "`removals`", "`moves`", "`needs_notes`", "`absorbed_folders`", "`shared_folder`", "`previous_failure`"] {
             assert!(PROMPT.contains(word), "{word}");
         }
     }

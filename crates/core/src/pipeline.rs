@@ -10,7 +10,7 @@ use crate::copy;
 use crate::error::{Error, Result};
 use crate::notes::{self, CatalogEntry};
 use crate::project;
-use crate::proposal::{change_log, check_snapshot, render_note, source_lines, summary_with_log, validate, without_sources, Change, Edit, Proposal, Scope};
+use crate::proposal::{carried_sources, change_log, check_snapshot, render_note, summary_with_log, validate, without_sources, Change, Edit, Proposal, Scope};
 use crate::queue::Job;
 use crate::settings::atomic_write;
 use crate::transcript::{check_prefix, parse, prefix_hash, read_identity, read_transcript, Origin, Parsed, Provider, Turn};
@@ -217,9 +217,9 @@ pub fn plan(prepared: &Prepared, request: &Request, proposal: &Proposal, knowled
     }
     for change in &proposal.changes {
         let change = relinked_change(change, &copy_file, &moves);
-        let text_of = |path: &String| relinked.get(path).or_else(|| request.base.get(path));
-        let old = text_of(&change.path).map(String::as_str);
-        let carried: Vec<String> = change.sources_from.iter().filter_map(text_of).flat_map(|text| source_lines(text)).collect();
+        let text_of = |path: &str| relinked.get(path).or_else(|| request.base.get(path)).map(String::as_str);
+        let old = text_of(&change.path);
+        let carried = carried_sources(&change, text_of)?;
         let link = |evidence: &crate::proposal::Evidence| copy::portable_link(&change.path, prepared.provider, &prepared.parsed.session_id, fallback_name, &evidence.reference);
         result.rendered.insert(change.path.clone(), render_note(&change, &prepared.project, &link, old, &carried)?);
     }

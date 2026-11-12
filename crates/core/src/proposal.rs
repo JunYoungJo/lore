@@ -36,11 +36,41 @@ pub struct Change {
     pub body: String,
     #[serde(default)]
     pub edits: Vec<Edit>,
-    /// Other notes whose content this change takes in. Their source lists are added to this note.
+    /// Other notes whose content this change takes in. Their source lines are added to this note.
     #[serde(default)]
-    pub sources_from: Vec<String>,
+    pub sources_from: Vec<SourceRef>,
     #[serde(default)]
     pub evidence: Vec<Evidence>,
+}
+
+/// A note whose content a change takes in, and which of its source lines go with that content.
+/// A recording names the note alone and takes every line. A cleanup, which is shown the lines,
+/// names the ones that support what it took, so that a note taken apart does not hand each
+/// piece the evidence of the others.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum SourceRef {
+    Whole(String),
+    /// `lines` counts from 1 in the note's source list. Empty takes every line.
+    Lines {
+        path: String,
+        #[serde(default)]
+        lines: Vec<usize>,
+    },
+}
+
+impl SourceRef {
+    pub fn path(&self) -> &str {
+        match self {
+            Self::Whole(path) | Self::Lines { path, .. } => path,
+        }
+    }
+}
+
+impl From<&str> for SourceRef {
+    fn from(path: &str) -> Self {
+        Self::Whole(path.to_string())
+    }
 }
 
 /// A note to delete: its subject is gone, or other notes now hold what it said.
@@ -211,8 +241,8 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
     for change in &proposal.changes {
         check_path(&change.path, &scope.writable)?;
         claim(&change.path)?;
-        for source in &change.sources_from {
-            if *source == change.path || !scope.editable.contains(source) {
+        for source in change.sources_from.iter().map(SourceRef::path) {
+            if source == change.path || !scope.editable.contains(source) {
                 return Err(Error::rejected(format!("sources_from must name another existing note whose body was provided: {source}")));
             }
         }
@@ -430,6 +460,35 @@ pub fn summary_with_log(summary: &str, log: &[String]) -> String {
 /// The lines of a note's source list, which the program owns.
 pub fn source_lines(note: &str) -> Vec<String> {
     split_note(note).sources
+}
+
+/// A note as a cleanup is shown it: the source list stays, as numbered quotations without their
+/// links, so that the model can say which lines go with the content it moves.
+pub fn with_numbered_sources(note: &str) -> String {
+    let lines = source_lines(note);
+    if lines.is_empty() {
+        return without_sources(note);
+    }
+    let quotes: Vec<String> = lines.iter().enumerate().map(|(index, line)| format!("{}. {}", index + 1, line.split_once(" — ").map_or(line.as_str(), |(_, quote)| quote))).collect();
+    format!("{}{SOURCES_HEADING}{}\n", without_sources(note), quotes.join("\n"))
+}
+
+/// The source lines a change takes over from the notes it names in `sources_from`.
+pub fn carried_sources<'a>(change: &Change, text_of: impl Fn(&str) -> Option<&'a str>) -> Result<Vec<String>> {
+    let mut carried = Vec::new();
+    for source in &change.sources_from {
+        let all = text_of(source.path()).map(source_lines).unwrap_or_default();
+        match source {
+            SourceRef::Lines { path, lines } if !lines.is_empty() => {
+                for number in lines {
+                    let line = number.checked_sub(1).and_then(|index| all.get(index));
+                    carried.push(line.cloned().ok_or_else(|| Error::rejected(format!("{path} has no source line {number}; its Sources list has {} lines.", all.len())))?);
+                }
+            }
+            _ => carried.extend(all),
+        }
+    }
+    Ok(carried)
 }
 
 /// Links to conversation copies are relative to the note, so text that came from a note at
@@ -946,6 +1005,28 @@ mod tests {
     }
 
     #[test]
+    fn only_the_chosen_source_lines_follow_the_content_and_a_line_that_does_not_exist_is_rejected() {
+        let ticket = "# 이슈 노트\n\n본문\n\n## Sources\n- [L30](<../../sources/claude/i.md#L30>) — 끝난 것부터 말해\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n";
+        let text_of = |path: &str| (path == OTHER).then_some(ticket);
+        let taking = |lines: Vec<usize>| Change { sources_from: vec![SourceRef::Lines { path: OTHER.into(), lines }], ..editing(vec![append("남은 점", "4GB 미만 미확인")]) };
+        assert_eq!(carried_sources(&taking(vec![2]), text_of).unwrap(), vec!["- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다".to_string()]);
+        assert_eq!(carried_sources(&taking(vec![]), text_of).unwrap().len(), 2);
+        assert_eq!(carried_sources(&Change { sources_from: vec![OTHER.into()], ..taking(vec![]) }, text_of).unwrap().len(), 2);
+        for missing in [vec![3], vec![0], vec![1, 9]] {
+            let error = carried_sources(&taking(missing), text_of).unwrap_err();
+            assert!(error.failure == crate::error::Failure::Rejected && error.to_string().contains("source line"), "{error}");
+        }
+
+        // The model is shown the list as numbered quotations, so it can name the lines.
+        assert_eq!(with_numbered_sources(ticket), "# 이슈 노트\n\n본문\n\n## Sources\n1. 끝난 것부터 말해\n2. 4GB 미만에서는 실행하지 않았습니다\n");
+        assert_eq!(with_numbered_sources("# 근거 없는 노트\n\n본문\n"), "# 근거 없는 노트\n\n본문\n");
+
+        // Both forms of an answer read: a path alone, and a path with line numbers.
+        let read: Change = serde_json::from_str(r#"{"path": "projects/demo/a.md", "kind": "decision", "authority": "mixed_evidence", "sources_from": ["projects/demo/b.md", {"path": "projects/demo/c.md", "lines": [2]}]}"#).unwrap();
+        assert_eq!(read.sources_from, vec![SourceRef::Whole("projects/demo/b.md".into()), SourceRef::Lines { path: "projects/demo/c.md".into(), lines: vec![2] }]);
+    }
+
+    #[test]
     fn links_to_conversation_copies_fit_the_folder_depth_of_the_note() {
         let text = "결정 ([근거](<../../sources/claude/t.md#L7>)), 다른 문서는 [여기](../other.md), 옛 링크 <D:/k/sources/claude/s.md:1>\n- [L2](<../sources/codex/u.md#L2>) — q";
         assert_eq!(fit_source_links(text, "common/a.md"), "결정 ([근거](<../sources/claude/t.md#L7>)), 다른 문서는 [여기](../other.md), 옛 링크 <D:/k/sources/claude/s.md:1>\n- [L2](<../sources/codex/u.md#L2>) — q");
@@ -960,7 +1041,7 @@ mod tests {
 
     #[test]
     fn a_cleanup_rests_on_the_notes_and_a_new_note_names_the_notes_it_came_from() {
-        let split = |sources_from: Vec<String>| unquoted(with_change(Change { path: "projects/demo/log-retention.md".into(), sources_from, ..proposal().changes[0].clone() }));
+        let split = |sources_from: Vec<SourceRef>| unquoted(with_change(Change { path: "projects/demo/log-retention.md".into(), sources_from, ..proposal().changes[0].clone() }));
         tidy(&split(vec![NOTE.into()]), &[NOTE]).unwrap();
         assert!(tidy(&split(vec![]), &[NOTE]).unwrap_err().to_string().contains("sources_from"));
         tidy(&unquoted(with_change(editing(vec![append("결정", "로그만 남깁니다.")]))), &[NOTE]).unwrap();

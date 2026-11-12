@@ -36,7 +36,8 @@
     "notes": true,
     "existing": "# 오류 알림 방침\n\n## 현재 결정\n\n2026-11-01: 오류를 놓치지 않도록 팝업을 띄웁니다.\n",
     "turns": [["user", "기존 팝업 방침을 바꿀게. 현장에서는 팝업이 작업을 방해했어. 앞으로 demo 앱은 팝업 없이 로그만 남겨."], ["assistant", "기존 결정의 이유를 보존하고 새 로그 전용 방침으로 갱신하겠습니다."]],
-    "expectation": "The existing alerts.md is edited. It states log-only as the current decision and keeps the earlier popup reason and why it changed."
+    "keeps": ["projects/demo/alerts.md"],
+    "expectation": "The existing alerts.md is edited, not removed. It states log-only as the current decision and keeps the earlier popup reason and why it changed."
   },
   {
     "id": "no-memory",
@@ -105,5 +106,31 @@
     "notes": true,
     "turns": [["user", "demo의 백업은 하루 한 번으로 정하자. 이 결정만 기억해."], ["assistant", "백업 주기는 하루 한 번으로 기록하겠습니다."]],
     "expectation": "Only the once-a-day decision is recorded. Retention, storage location, encryption and the like are not added as open issues."
+  },
+  {
+    "id": "obsolete-note",
+    "purpose": "Remove a note when the session shows its subject is gone, and leave unrelated notes alone.",
+    "language": "ko",
+    "existingNotes": {
+      "projects/demo/csv-import-wizard.md": "# CSV 가져오기 마법사는 3단계로 나눈다\n\n사용자 결정(2026-10-05): CSV 가져오기 마법사는 파일 선택, 열 매핑, 확인의 3단계로 나눕니다. 한 화면에 다 넣으면 현장 작업자가 헷갈리기 때문입니다.\n",
+      "projects/demo/error-alerts.md": "# 오류가 나면 팝업 없이 로그만 남긴다\n\n사용자 결정(2026-11-01): 오류가 나도 팝업을 띄우지 않고 로그만 남깁니다. 현장 작업자의 조작을 방해하면 안 되기 때문입니다.\n"
+    },
+    "turns": [["user", "CSV 가져오기 마법사는 통째로 뺐어. 고객사가 이제 JSON 업로드만 쓰기로 해서 코드도 다 지웠고 다시 넣을 계획도 없어."], ["assistant", "알겠습니다. CSV 가져오기 마법사 코드는 저장소에 남아 있지 않습니다."]],
+    "retires": ["projects/demo/csv-import-wizard.md"],
+    "unchanged": ["projects/demo/error-alerts.md"],
+    "mentions": ["JSON"],
+    "expectation": "No note still presents the three-step wizard as current: csv-import-wizard.md is removed, or restated as the record that the wizard was dropped. A note records that CSV import was dropped in favour of JSON upload and why, so that it is not brought back. error-alerts.md is untouched."
+  },
+  {
+    "id": "untouched-note",
+    "purpose": "Leave an old note alone when the session is about something else, even if it is written as a session report.",
+    "language": "ko",
+    "notes": true,
+    "existingNotes": {
+      "projects/demo/export-work-2026-09.md": "# 2026-09 내보내기 작업 기록\n\n9월 3일에 내보내기가 실패한다는 보고를 받고 로그를 확인했습니다. 타임아웃을 120초로 올렸지만 해결되지 않았고, 행을 페이지 단위로 읽게 바꾼 뒤 해결됐습니다.\n"
+    },
+    "turns": [["user", "demo 앱 설정 파일은 앞으로 TOML로만 써. YAML은 들여쓰기 실수가 계속 나와서 안 되겠어."], ["assistant", "설정 파일을 TOML로 통일하겠습니다."]],
+    "unchanged": ["projects/demo/export-work-2026-09.md"],
+    "expectation": "The TOML decision is recorded with its reason. The old export note is neither removed nor rewritten."
   }
 ]
