@@ -108,8 +108,11 @@ describe("review window", () => {
     expect(api.reviewDiff).toHaveBeenLastCalledWith("projects/demo/bg.md");
     expect(within(diff).getByText("Last review")).toBeInTheDocument();
     expect(within(diff).getByText("Current")).toBeInTheDocument();
-    expect(within(diff).getByText("−1 lines")).toBeInTheDocument();
+    expect(within(diff).getByText("−1 line")).toBeInTheDocument();
     expect(within(diff).getByText("+2 lines")).toBeInTheDocument();
+    // The choice of lines is offered even when this note has nothing to fold, so the bar is the same for every note.
+    expect(within(diff).getByRole("button", { name: "Changes only" })).toHaveAttribute("aria-pressed", "true");
+    expect(within(diff).getByRole("button", { name: "Whole note" })).toHaveAttribute("aria-pressed", "false");
     const changed = within(diff).getByRole("row", { name: "Line 3: Changed" });
     const [left, right] = within(changed).getAllByRole("cell");
     expect(within(left).getByText("팝업을 띄웁니다.").tagName).toBe("DEL");
@@ -129,9 +132,10 @@ describe("review window", () => {
     expect(diff).not.toHaveTextContent("같은 줄 5");
     expect(diff).toHaveTextContent("같은 줄 9");
     expect(diff).toHaveTextContent("넣은 줄 5");
-    await userEvent.click(within(diff).getByRole("button", { name: "Expand all" }));
+    await userEvent.click(within(diff).getByRole("button", { name: "Whole note" }));
     expect(diff).toHaveTextContent("같은 줄 5");
-    await userEvent.click(within(diff).getByRole("button", { name: "Fold unchanged lines" }));
+    expect(within(diff).getByRole("button", { name: "Whole note" })).toHaveAttribute("aria-pressed", "true");
+    await userEvent.click(within(diff).getByRole("button", { name: "Changes only" }));
     expect(diff).not.toHaveTextContent("같은 줄 5");
     await userEvent.click(within(diff).getByRole("button", { name: "Expand 6 unchanged lines" }));
     expect(diff).toHaveTextContent("같은 줄 5");

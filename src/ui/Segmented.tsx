@@ -5,8 +5,8 @@ export interface SegmentedOption<T extends string> {
   label: string;
 }
 
-export function Segmented<T extends string>({ value, options, onChange, label }: { value: T; options: SegmentedOption<T>[]; onChange(value: T): void; label: string }) {
-  const track: CSSProperties = { display: "flex", background: "var(--surface2)", borderRadius: 9, padding: 3, gap: 2 };
+export function Segmented<T extends string>({ value, options, onChange, label, compact = false }: { value: T; options: SegmentedOption<T>[]; onChange(value: T): void; label: string; compact?: boolean }) {
+  const track: CSSProperties = { display: "flex", flex: "none", background: "var(--surface2)", borderRadius: compact ? 8 : 9, padding: compact ? 2 : 3, gap: 2 };
   return (
     <div style={track} role="group" aria-label={label}>
       {options.map((option) => {
@@ -16,12 +16,13 @@ export function Segmented<T extends string>({ value, options, onChange, label }:
           whiteSpace: "nowrap",
           border: "none",
           cursor: "pointer",
-          fontSize: 12.5,
-          padding: "6px 13px",
-          borderRadius: 7,
+          fontSize: compact ? 11.5 : 12.5,
+          padding: compact ? "3px 10px" : "6px 13px",
+          borderRadius: compact ? 6 : 7,
           background: active ? "var(--surface)" : "transparent",
           color: active ? "var(--text)" : "var(--text2)",
-          fontWeight: active ? 600 : 400,
+          // A compact control is as wide as its labels, so a weight change would resize it on every switch.
+          fontWeight: compact ? 500 : active ? 600 : 400,
           boxShadow: active ? "var(--sh1)" : "none",
         };
         return (

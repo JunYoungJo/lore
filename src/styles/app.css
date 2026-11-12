@@ -509,7 +509,7 @@ svg.kind-deleted {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 9px 16px;
+  padding: 7px 16px;
   border-bottom: 1px solid var(--line);
   font-size: 12px;
 }
@@ -524,41 +524,21 @@ svg.kind-deleted {
   color: var(--text3);
 }
 
+/* The count wears the colour its lines have below, so it also says what the colour means. */
+.diff-stat {
+  white-space: nowrap;
+  line-height: 1.4;
+  font-variant-numeric: tabular-nums;
+}
+
 .diff-stat.del {
+  background: var(--danger-soft);
   color: var(--danger);
 }
 
 .diff-stat.add {
-  color: var(--ok);
-}
-
-.legend {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--text3);
-}
-
-.sw {
-  display: inline-block;
-  width: 10px;
-  height: 10px;
-  margin-left: 6px;
-  border-radius: 3px;
-}
-
-.sw.del {
-  background: var(--danger-soft);
-  outline: 1px solid var(--danger);
-}
-
-.sw.add {
   background: var(--ok-soft);
-  outline: 1px solid var(--ok);
-}
-
-.diff-toggle {
-  margin-top: 0;
+  color: var(--ok);
 }
 
 .diff-head {
@@ -574,7 +554,18 @@ svg.kind-deleted {
 }
 
 .diff-head div {
-  padding: 6px 16px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 5px 16px;
+}
+
+.diff-side {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .diff-head div:first-child {
