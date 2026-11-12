@@ -113,7 +113,6 @@ export function ReviewApp() {
   }, [viewing]);
 
   const files = review?.files ?? [];
-  const others = review?.others ?? [];
   const ready = review !== null && review.repository && !review.waiting;
   const picked = files.filter((file) => checked.has(file.path)).map((file) => file.path);
 
@@ -185,7 +184,9 @@ export function ReviewApp() {
                         <li key={group.folder} className="review-group">
                           <div className="review-group-head">
                             <GroupCheck label={`Select all in ${name}`} paths={group.files.map((file) => file.path)} checked={checked} onChange={check} />
-                            <span className="review-group-name">{name}</span>
+                            <span className="review-group-name" title={group.folder}>
+                              {name}
+                            </span>
                             <span className="review-group-count">{group.files.length}</span>
                           </div>
                           <ul className="review-list" aria-label={name}>
@@ -207,7 +208,6 @@ export function ReviewApp() {
                   </ul>
                 </>
               )}
-              {others.length > 0 && <div className="review-others">Other changed files: {others.length} (conversation copies and other repository files)</div>}
             </aside>
             {viewing && rows ? (
               <DiffView key={viewing} path={viewing} rows={rows} />

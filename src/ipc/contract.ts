@@ -129,7 +129,6 @@ export interface ReviewSnapshot {
   waiting: boolean;
   root: string;
   files: ReviewFile[];
-  others: FileChange[];
 }
 
 export interface Segment {

@@ -1,5 +1,5 @@
 use lore_core::queue::Queue;
-use lore_core::review::{self, ChangeKind, DiffRow, FileChange};
+use lore_core::review::{self, ChangeKind, DiffRow};
 use lore_core::transcript::Provider;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder, WindowEvent};
@@ -33,7 +33,6 @@ pub struct ReviewSnapshot {
     pub waiting: bool,
     pub root: String,
     pub files: Vec<ReviewFile>,
-    pub others: Vec<FileChange>,
 }
 
 fn error(value: impl std::fmt::Display) -> String {
@@ -92,7 +91,7 @@ pub fn end_review(app: AppHandle) {
 pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> {
     let root = state.settings().knowledge_root();
     let waiting = state.current().is_some() || state.operation_busy();
-    let mut snapshot = ReviewSnapshot { repository: review::is_repository(&root), waiting, root: root.to_string_lossy().replace('\\', "/"), files: Vec::new(), others: Vec::new() };
+    let mut snapshot = ReviewSnapshot { repository: review::is_repository(&root), waiting, root: root.to_string_lossy().replace('\\', "/"), files: Vec::new() };
     if waiting || !snapshot.repository {
         return Ok(snapshot);
     }
@@ -111,7 +110,6 @@ pub fn get_review(state: State<'_, AppState>) -> Result<ReviewSnapshot, String> 
             kind: change.kind,
         })
         .collect();
-    snapshot.others = changes.others;
     Ok(snapshot)
 }
 

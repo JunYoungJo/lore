@@ -38,10 +38,6 @@ function review(overrides: Partial<ReviewSnapshot> = {}): ReviewSnapshot {
       },
       { path: "projects/demo/new.md", kind: "added", sessions: [] },
     ],
-    others: [
-      { path: ".qmd/config/index.yml", kind: "modified" },
-      { path: "sources/claude/s.md", kind: "modified" },
-    ],
     ...overrides,
   };
 }
@@ -93,7 +89,6 @@ describe("review window", () => {
     expect(within(list).getByText("Deleted")).toBeInTheDocument();
     expect(within(list).getByText(/demo · 로그만 남기도록 바꿨습니다\./)).toBeInTheDocument();
     expect(within(list).queryByText("projects/demo")).not.toBeInTheDocument();
-    expect(screen.getByText("Other changed files: 2 (conversation copies and other repository files)")).toBeInTheDocument();
     expect(await screen.findByRole("region", { name: "Changes in common/old.md" })).toBeInTheDocument();
     expect(api.reviewDiff).toHaveBeenCalledWith("common/old.md");
   });
@@ -209,7 +204,7 @@ describe("review window", () => {
   });
 
   it("waits for the recording in progress and starts once it finishes", async () => {
-    api.getReview.mockResolvedValueOnce(review({ waiting: true, files: [], others: [] })).mockResolvedValueOnce(review());
+    api.getReview.mockResolvedValueOnce(review({ waiting: true, files: [] })).mockResolvedValueOnce(review());
     render(<ReviewApp />);
     expect(await screen.findByText("Review will begin after the current recording finishes.")).toBeInTheDocument();
     expect(screen.queryByRole("list", { name: "Changed memory notes" })).not.toBeInTheDocument();
@@ -220,7 +215,7 @@ describe("review window", () => {
   });
 
   it("explains when the memory store is not a git repository", async () => {
-    api.getReview.mockResolvedValue(review({ repository: false, files: [], others: [] }));
+    api.getReview.mockResolvedValue(review({ repository: false, files: [] }));
     render(<ReviewApp />);
     expect(await screen.findByText("D:/doc/knowledge is not a Git repository.")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /Commit/ })).not.toBeInTheDocument();
