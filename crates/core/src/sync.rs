@@ -10,7 +10,8 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Failure, Result};
+use crate::queue::{backoff_seconds, MAX_TRANSIENT_ATTEMPTS};
 use crate::review::{self, is_note};
 use crate::run;
 use crate::settings::{atomic_write, which};
@@ -112,11 +113,29 @@ pub struct Item {
     pub issue: Option<usize>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
 pub struct Comparison {
     pub plan: String,
+    /// Set when the comparison stopped for good. The user runs it again or skips it.
     pub error: Option<String>,
+    pub attempts: i64,
+    pub next_attempt_at: i64,
+    pub last_failure: Option<String>,
+}
+
+impl Comparison {
+    /// A model that could not run is tried again later, as a recording is. Any
+    /// other failure, or the last of those tries, waits for the user.
+    fn failed(&mut self, error: &Error, now: i64) {
+        self.attempts += 1;
+        self.last_failure = Some(error.to_string());
+        if error.failure == Failure::Transient && self.attempts < MAX_TRANSIENT_ATTEMPTS {
+            self.next_attempt_at = now + backoff_seconds(self.attempts);
+        } else {
+            self.error = Some(error.to_string());
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -500,7 +519,7 @@ fn merge(root: &Path, folder: &Path, local: &str, remote: &str) -> Result<(Strin
         state.items.retain(|known| items.iter().all(|item| item.id != known.id));
         state.items.extend(items);
         state.comparisons.retain(|comparison| comparison.plan != plan.id);
-        state.comparisons.push(Comparison { plan: plan.id.clone(), error: None });
+        state.comparisons.push(Comparison { plan: plan.id.clone(), ..Comparison::default() });
     })?;
     Ok((commit, listed))
 }
@@ -600,14 +619,14 @@ pub fn comparison_progress(folder: &Path, id: &str) -> Option<ComparisonProgress
     comparison::progress(&analysis_artifacts(folder, id))
 }
 
-/// The next merge whose notes still need a model comparison.
-pub fn pending_comparison(folder: &Path) -> Option<String> {
-    state(folder).comparisons.into_iter().find(|comparison| comparison.error.is_none()).map(|comparison| comparison.plan)
+/// The next merge whose notes still need a model comparison and can be compared now.
+pub fn pending_comparison(folder: &Path, now: i64) -> Option<String> {
+    state(folder).comparisons.into_iter().find(|comparison| comparison.error.is_none() && comparison.next_attempt_at <= now).map(|comparison| comparison.plan)
 }
 
-/// Let failed comparisons run again. They continue from their saved progress.
+/// Let failed comparisons run again now. They continue from their saved progress.
 pub fn retry_comparison(folder: &Path) -> Result<()> {
-    update(folder, |state| state.comparisons.iter_mut().for_each(|comparison| comparison.error = None))
+    update(folder, |state| state.comparisons.iter_mut().for_each(|comparison| *comparison = Comparison { plan: std::mem::take(&mut comparison.plan), ..Comparison::default() }))
 }
 
 /// Stop waiting for comparisons, for example when the user does not want them.
@@ -621,9 +640,9 @@ pub fn skip_comparisons(folder: &Path) -> Result<()> {
 /// Ask the model whether the notes both PCs changed now disagree. Reads only
 /// the saved versions, so recording and sync keep running meanwhile. Each
 /// disagreement becomes an item; returns how many were found.
-pub fn compare(folder: &Path, id: &str, identity: &str, request: &mut impl FnMut(&str, &Value, &Path) -> Result<Value>, changed: &mut impl FnMut()) -> Result<usize> {
+pub fn compare(folder: &Path, id: &str, request: &mut impl FnMut(&str, &Value, &Path) -> Result<Value>, changed: &mut impl FnMut()) -> Result<usize> {
     let mut plan = load_plan(folder, id)?;
-    let result = comparison::run(&plan, &analysis_artifacts(folder, id), identity, request, changed).and_then(|analysis| {
+    let result = comparison::run(&plan, &analysis_artifacts(folder, id), request, changed).and_then(|analysis| {
         validate_analysis(&plan, &analysis)?;
         Ok(analysis)
     });
@@ -657,9 +676,10 @@ pub fn compare(folder: &Path, id: &str, identity: &str, request: &mut impl FnMut
             Ok(found)
         }
         Err(error) => {
+            let now = chrono::Utc::now().timestamp();
             update(folder, |state| {
                 if let Some(comparison) = state.comparisons.iter_mut().find(|comparison| comparison.plan == id) {
-                    comparison.error = Some(error.to_string());
+                    comparison.failed(&error, now);
                 }
             })?;
             Err(error)

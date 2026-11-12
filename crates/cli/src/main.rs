@@ -8,7 +8,7 @@ use lore_core::hooks;
 use lore_core::migrate;
 use lore_core::qmd::Qmd;
 use lore_core::queue::{Job, Queue, Status};
-use lore_core::recorder::CliRecorder;
+use lore_core::recorder::Recorders;
 use lore_core::run::{fixed, RECORDER_MARK};
 use lore_core::scan;
 use lore_core::settings::{self, Paths};
@@ -105,11 +105,10 @@ fn run(args: &[String]) -> Result<()> {
                     })?;
                 }
                 "compare" => {
-                    let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
-                    let identity = serde_json::json!([recorder.backend, recorder.model, recorder.effort, recorder.command]).to_string();
+                    let recorders = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
                     lore_core::sync::retry_comparison(&folder)?;
-                    while let Some(id) = lore_core::sync::pending_comparison(&folder) {
-                        lore_core::sync::compare(&folder, &id, &identity, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts), &mut || {})?;
+                    while let Some(id) = lore_core::sync::pending_comparison(&folder, worker::now()) {
+                        lore_core::sync::compare(&folder, &id, &mut |prompt, schema, artifacts| recorders.request_json(prompt, schema, artifacts), &mut || {})?;
                     }
                 }
                 "resolve" => {
@@ -180,7 +179,7 @@ fn run(args: &[String]) -> Result<()> {
             };
             let (settings, queue) = open(&paths)?;
             settings.validate()?;
-            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs));
+            let recorder = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
             let once = args.iter().any(|arg| arg == "--once");
             loop {

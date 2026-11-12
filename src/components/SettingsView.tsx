@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, ChevronRight, FolderOpen } from "lucide-react";
 
 import * as api from "@/ipc/api";
-import type { ConnectionState, Snapshot } from "@/ipc/contract";
+import type { Backend, ConnectionState, Snapshot } from "@/ipc/contract";
 import { effortsFor, findChoice, HEAVY_EFFORTS } from "@/recordingModel";
 import { useAppStore } from "@/store/appStore";
 import { syncState } from "@/syncState";
@@ -14,6 +14,8 @@ import { AppUpdates } from "@/components/AppUpdates";
 
 const OTHER = "__other";
 const CLIENT = { claude: "Claude Code", codex: "Codex" } as const;
+const CLI_NAME: Record<Backend, string> = { claude: "Claude", codex: "Codex" };
+const CLI_COMMAND: Record<Backend, string> = { claude: "claude --print", codex: "codex exec" };
 const CONNECTION: Record<ConnectionState, string> = { connected: "Connected", partial: "Needs repair", missing: "Not connected" };
 
 type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget";
@@ -25,23 +27,16 @@ const LIMITS: { key: LimitKey; id: string; label: string; unit: string }[] = [
   { key: "notesBudget", id: "notes-budget", label: "Existing notes per recording", unit: "chars" },
 ];
 
-function CommitField({
-  id,
-  label,
-  value,
-  placeholder,
-  unit,
-  numeric = false,
-  onCommit,
-}: {
+interface CommitInputProps {
   id: string;
-  label: string;
   value: string;
   placeholder?: string;
   unit?: string;
   numeric?: boolean;
   onCommit: (text: string) => Promise<boolean>;
-}) {
+}
+
+function CommitInput({ id, value, placeholder, unit, numeric = false, onCommit }: CommitInputProps) {
   const [text, setText] = useState(value);
   const [editing, setEditing] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -56,45 +51,50 @@ function CommitField({
   };
 
   return (
-    <div className="set-row">
-      <label className="set-main set-title" htmlFor={id}>
-        {label}
-      </label>
-      <div className="set-field">
-        {saved && (
-          <span className="saved">
-            <Check size={12} strokeWidth={2.4} />
-            Saved
-          </span>
-        )}
-        <input
-          id={id}
-          className={`input mono set-input${numeric ? " num" : ""}`}
-          type={numeric ? "number" : "text"}
-          inputMode={numeric ? "numeric" : undefined}
-          min={numeric ? 1 : undefined}
-          value={text}
-          placeholder={placeholder}
-          onFocus={() => setEditing(true)}
-          onChange={(event) => {
-            setText(event.target.value);
-            setSaved(false);
-          }}
-          onBlur={() => void commit()}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") event.currentTarget.blur();
-          }}
-        />
-        {unit && <span className="set-unit">{unit}</span>}
-      </div>
+    <div className="set-field">
+      {saved && (
+        <span className="saved">
+          <Check size={12} strokeWidth={2.4} />
+          Saved
+        </span>
+      )}
+      <input
+        id={id}
+        className={`input mono set-input${numeric ? " num" : ""}`}
+        type={numeric ? "number" : "text"}
+        inputMode={numeric ? "numeric" : undefined}
+        min={numeric ? 1 : undefined}
+        value={text}
+        placeholder={placeholder}
+        onFocus={() => setEditing(true)}
+        onChange={(event) => {
+          setText(event.target.value);
+          setSaved(false);
+        }}
+        onBlur={() => void commit()}
+        onKeyDown={(event) => {
+          if (event.key === "Enter") event.currentTarget.blur();
+        }}
+      />
+      {unit && <span className="set-unit">{unit}</span>}
     </div>
   );
 }
 
-function RecordingModel({ snapshot }: { snapshot: Snapshot }) {
+function CommitField({ label, ...input }: CommitInputProps & { label: string }) {
+  return (
+    <div className="set-row">
+      <label className="set-main set-title" htmlFor={input.id}>
+        {label}
+      </label>
+      <CommitInput {...input} />
+    </div>
+  );
+}
+
+function CliFields({ snapshot, backend }: { snapshot: Snapshot; backend: Backend }) {
   const saveSettings = useAppStore((store) => store.saveSettings);
   const { settings } = snapshot;
-  const backend = settings.backend;
   const choices = snapshot.catalog[backend];
   const saved = settings.models[backend];
   const defaultModel = snapshot.defaultModels[backend];
@@ -106,26 +106,25 @@ function RecordingModel({ snapshot }: { snapshot: Snapshot }) {
   const keptEffort = (model: string | null) => (effort && effortsFor(snapshot, backend, model).includes(effort) ? effort : null);
   const chooseModel = (model: string | null) => saveSettings({ models: { ...settings.models, [backend]: model }, efforts: { ...settings.efforts, [backend]: keptEffort(model) } });
 
+  const id = (name: string) => `${backend}-${name}`;
+
   if (!choices) {
     return (
-      <CommitField
-        id="model"
-        label="Model"
-        value={saved ?? ""}
-        placeholder={`${defaultModel} (default)`}
-        onCommit={(text) => saveSettings({ models: { ...settings.models, [backend]: text } })}
-      />
+      <div className="cli-fields">
+        <div className="cli-field wide">
+          <label htmlFor={id("model")}>Model</label>
+          <CommitInput id={id("model")} value={saved ?? ""} placeholder={`${defaultModel} (default)`} onCommit={(text) => saveSettings({ models: { ...settings.models, [backend]: text } })} />
+        </div>
+      </div>
     );
   }
 
   return (
-    <>
-      <div className="set-row">
-        <label className="set-main set-title" htmlFor="model">
-          Model
-        </label>
+    <div className="cli-fields">
+      <div className="cli-field">
+        <label htmlFor={id("model")}>Model</label>
         <select
-          id="model"
+          id={id("model")}
           className="input set-select"
           value={other ? OTHER : (listed ?? "")}
           onChange={(event) => {
@@ -143,13 +142,10 @@ function RecordingModel({ snapshot }: { snapshot: Snapshot }) {
           <option value={OTHER}>Other…</option>
         </select>
       </div>
-      {other && <CommitField id="model-name" label="Model name" value={saved ?? ""} placeholder={defaultModel} onCommit={(text) => chooseModel(text.trim() || null)} />}
       {efforts.length > 0 && (
-        <div className="set-row">
-          <label className="set-main set-title" htmlFor="effort">
-            Effort
-          </label>
-          <select id="effort" className="input set-select" value={effort ?? ""} onChange={(event) => void saveSettings({ efforts: { ...settings.efforts, [backend]: event.target.value || null } })}>
+        <div className="cli-field">
+          <label htmlFor={id("effort")}>Effort</label>
+          <select id={id("effort")} className="input set-select" value={effort ?? ""} onChange={(event) => void saveSettings({ efforts: { ...settings.efforts, [backend]: event.target.value || null } })}>
             <option value="">{defaultEffort ? `Default · ${defaultEffort}` : "Default"}</option>
             {efforts.map((level) => (
               <option key={level} value={level}>
@@ -159,8 +155,67 @@ function RecordingModel({ snapshot }: { snapshot: Snapshot }) {
           </select>
         </div>
       )}
-      {effort && HEAVY_EFFORTS.includes(effort) && <div className="set-hint">Higher effort makes each recording slower and uses more of your allowance. If recordings time out, raise Recording timeout under Advanced.</div>}
-    </>
+      {other && (
+        <div className="cli-field wide">
+          <label htmlFor={id("model-name")}>Model name</label>
+          <CommitInput id={id("model-name")} value={saved ?? ""} placeholder={defaultModel} onCommit={(text) => chooseModel(text.trim() || null)} />
+        </div>
+      )}
+      {effort && HEAVY_EFFORTS.includes(effort) && <div className="cli-note">Higher effort makes each recording slower and uses more of your allowance. If recordings time out, raise Recording timeout under Advanced.</div>}
+    </div>
+  );
+}
+
+function Recording({ snapshot }: { snapshot: Snapshot }) {
+  const saveSettings = useAppStore((store) => store.saveSettings);
+  const { backend: first, fallback } = snapshot.settings;
+  const second: Backend = first === "claude" ? "codex" : "claude";
+
+  return (
+    <section className="group" aria-label="Recording">
+      {[first, second].map((cli) => {
+        const isFirst = cli === first;
+        const on = isFirst || fallback;
+        const found = snapshot.cliAvailable[cli];
+        const role = !found
+          ? "Not found on this PC."
+          : !on
+            ? "Not used for recording."
+            : !isFirst
+              ? `Used when ${CLI_NAME[first]} cannot run, for example at its usage limit.`
+              : fallback
+                ? "Used first."
+                : "Records every session.";
+        return (
+          <div key={cli} className={`cli${on ? "" : " off"}`} role="group" aria-label={CLI_NAME[cli]}>
+            <div className="cli-head">
+              <span className={`cli-order${on ? "" : " off"}`} aria-hidden="true">
+                {on ? (isFirst ? 1 : 2) : "–"}
+              </span>
+              <span className="cli-name">{CLI_NAME[cli]}</span>
+              {!found && (
+                <button type="button" className="pill ghost" onClick={() => void api.openIntegrations("tools")}>
+                  Set up…
+                </button>
+              )}
+              {on && !isFirst && (
+                <button type="button" className="pill ghost" onClick={() => void saveSettings({ backend: cli })}>
+                  Use first
+                </button>
+              )}
+              {isFirst
+                ? fallback && <Toggle label={`Record with ${CLI_NAME[cli]}`} checked onChange={() => void saveSettings({ backend: second, fallback: false })} />
+                : <Toggle label={`Record with ${CLI_NAME[cli]}`} checked={fallback} disabled={!found && !fallback} onChange={(next) => void saveSettings({ fallback: next })} />}
+            </div>
+            <div className="cli-role">{role}</div>
+            {on && <CliFields key={`${cli}:${snapshot.catalog[cli] ? "list" : "text"}`} snapshot={snapshot} backend={cli} />}
+          </div>
+        );
+      })}
+      <div className="set-hint">
+        {fallback ? "Lore records with the first CLI that can run. Each uses its own signed-in account’s allowance." : `Each recording runs ${CLI_COMMAND[first]} and uses your signed-in account’s allowance.`}
+      </div>
+    </section>
   );
 }
 
@@ -173,29 +228,13 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
   const [theme, setTheme] = useThemePreference();
   const [advanced, setAdvanced] = useState(false);
   const { settings } = snapshot;
-  const backend = settings.backend;
   const sync = syncState(snapshot, now);
 
   return (
     <div className="body">
       <AppUpdates snapshot={snapshot} />
       <div className="eyebrow">Recording</div>
-      <section className="group" aria-label="Recording">
-        <div className="set-row">
-          <span className="set-main set-title">Record with</span>
-          <Segmented
-            label="Recording CLI"
-            value={backend}
-            options={[
-              { value: "codex", label: "Codex" },
-              { value: "claude", label: "Claude" },
-            ]}
-            onChange={(next) => void saveSettings({ backend: next })}
-          />
-        </div>
-        <RecordingModel key={`${backend}:${snapshot.catalog[backend] ? "list" : "text"}`} snapshot={snapshot} />
-        <div className="set-hint">Each recording runs {backend === "claude" ? "claude --print" : "codex exec"} and uses your signed-in account’s allowance.</div>
-      </section>
+      <Recording snapshot={snapshot} />
 
       <div className="eyebrow">Memory &amp; sync</div>
       <section className="group" aria-label="Memory and sync">

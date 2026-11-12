@@ -104,7 +104,7 @@ macOS builds use ad-hoc signing, without Apple Developer ID or notarization. mac
 - Git 2.38+ for the synchronization workflow, plus a remote and branch upstream when sharing between PCs.
 - For building: stable Rust, Node.js 24, pnpm, and the [Tauri 2 prerequisites](https://v2.tauri.app/start/prerequisites/) for your OS.
 
-Model calls use the selected CLI's authentication and usage limits. They may incur provider charges. Conversations and relevant notes are sent to that provider for processing.
+Model calls use the authentication and usage limits of the CLI that runs: the first one under **Settings → Recording**, or the second one when it is turned on and the first cannot run. They may incur provider charges. Conversations and relevant notes are sent to that provider for processing.
 
 ### Build and run
 

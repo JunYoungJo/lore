@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
 
-use crate::error::{Error, Result};
+use crate::error::{Error, Failure, Result};
 use crate::proposal::{Proposal, EDIT_OPS};
 use crate::run::{self, Limit};
 use crate::settings::{atomic_write, Settings};
@@ -81,8 +81,18 @@ pub struct CliRecorder {
 
 impl CliRecorder {
     pub fn from_settings(settings: &Settings, workdir: &Path, limit: Limit) -> Self {
-        let command = if settings.backend == "claude" { settings.commands.claude.clone() } else { settings.commands.codex.clone() };
-        Self { backend: settings.backend.clone(), model: settings.model().map(str::to_string), effort: settings.effort().map(str::to_string), command, workdir: workdir.to_path_buf(), limit }
+        Self::for_backend(settings, &settings.backend, workdir, limit)
+    }
+
+    pub fn for_backend(settings: &Settings, backend: &str, workdir: &Path, limit: Limit) -> Self {
+        Self {
+            backend: backend.to_string(),
+            model: settings.model_of(backend).map(str::to_string),
+            effort: settings.effort_of(backend).map(str::to_string),
+            command: settings.command_of(backend).to_vec(),
+            workdir: workdir.to_path_buf(),
+            limit,
+        }
     }
 
     pub fn defaulting_to(mut self, model: Option<String>) -> Self {
@@ -203,6 +213,44 @@ impl Recorder for CliRecorder {
     }
 }
 
+/// Run `attempt` with each entry in order until one can run. Only a failure to run
+/// (a usage limit, an expired login, an outage, a timeout) moves on to the next
+/// entry; an answer the program rejected is not the CLI's fault and is returned.
+pub fn first_that_runs<R, T>(entries: &[R], name: impl Fn(&R) -> &str, mut attempt: impl FnMut(&R) -> Result<T>) -> Result<T> {
+    let mut failures: Vec<String> = Vec::new();
+    for (index, entry) in entries.iter().enumerate() {
+        match attempt(entry) {
+            Err(error) if error.failure == Failure::Transient && index + 1 < entries.len() => failures.push(format!("{}: {error}", name(entry))),
+            Err(error) if error.failure == Failure::Transient && !failures.is_empty() => {
+                failures.push(format!("{}: {error}", name(entry)));
+                return Err(Error::transient(failures.join("\n")));
+            }
+            result => return result,
+        }
+    }
+    Err(Error::transient("No recording CLI is configured."))
+}
+
+/// The recording CLIs in the order they are tried.
+pub struct Recorders(pub Vec<CliRecorder>);
+
+impl Recorders {
+    pub fn from_settings(settings: &Settings, workdir: &Path, limit: Limit, listed_default: impl Fn(&str) -> Option<String>) -> Self {
+        Self(settings.backends().into_iter().map(|backend| CliRecorder::for_backend(settings, backend, workdir, limit.clone()).defaulting_to(listed_default(backend))).collect())
+    }
+
+    pub fn request_json(&self, prompt: &str, schema: &Value, artifacts: &Path) -> Result<Value> {
+        first_that_runs(&self.0, |recorder| recorder.backend.as_str(), |recorder| recorder.request_json(prompt, schema, artifacts))
+    }
+}
+
+impl Recorder for Recorders {
+    fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal> {
+        let prompt = build_prompt(payload);
+        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -261,6 +309,54 @@ mod tests {
         assert_eq!(model_in(&settings), "gpt-x");
         settings.models = Models::default();
         assert_eq!(model_in(&settings), DEFAULT_CODEX_MODEL);
+    }
+
+    #[test]
+    fn the_next_cli_runs_only_when_the_one_before_it_could_not_run() {
+        let run = |replies: [Option<Result<u8>>; 2]| {
+            let mut replies = replies;
+            let mut called = Vec::new();
+            let result = first_that_runs(&["claude", "codex"], |name| *name, |name| {
+                called.push(*name);
+                replies[called.len() - 1].take().expect("this CLI must not run")
+            });
+            (result, called)
+        };
+
+        let (result, called) = run([Some(Ok(1)), None]);
+        assert_eq!((result.unwrap(), called), (1, vec!["claude"]));
+
+        let (result, called) = run([Some(Err(Error::transient("usage limit reached"))), Some(Ok(2))]);
+        assert_eq!((result.unwrap(), called), (2, vec!["claude", "codex"]));
+
+        let (result, called) = run([Some(Err(Error::rejected("bad quotation"))), None]);
+        let error = result.unwrap_err();
+        assert_eq!((error.failure, error.message.as_str(), called), (Failure::Rejected, "bad quotation", vec!["claude"]));
+
+        let (result, _) = run([Some(Err(Error::transient("usage limit reached"))), Some(Err(Error::transient("not signed in")))]);
+        let error = result.unwrap_err();
+        assert_eq!((error.failure, error.message.as_str()), (Failure::Transient, "claude: usage limit reached\ncodex: not signed in"));
+
+        let (result, _) = run([Some(Err(Error::transient("usage limit reached"))), Some(Err(Error::rejected("bad quotation")))]);
+        let error = result.unwrap_err();
+        assert_eq!((error.failure, error.message.as_str()), (Failure::Rejected, "bad quotation"));
+
+        let alone = first_that_runs(&["claude"], |name| *name, |_| Err::<u8, _>(Error::transient("usage limit reached"))).unwrap_err();
+        assert_eq!((alone.failure, alone.message.as_str()), (Failure::Transient, "usage limit reached"));
+    }
+
+    #[test]
+    fn each_cli_in_the_order_runs_its_own_model_and_command() {
+        let mut settings = Settings { backend: "claude".into(), fallback: true, models: Models { codex: None, claude: Some("opus".into()) }, ..Settings::default() };
+        settings.commands.claude = vec!["claude.exe".into()];
+        settings.commands.codex = vec!["codex.exe".into()];
+        let listed = |backend: &str| (backend == "codex").then(|| "gpt-listed".to_string());
+        let described = |settings: &Settings| -> Vec<(String, Option<String>, Vec<String>)> {
+            Recorders::from_settings(settings, Path::new("w"), run::fixed(1), listed).0.into_iter().map(|recorder| (recorder.backend, recorder.model, recorder.command)).collect()
+        };
+        assert_eq!(described(&settings), vec![("claude".into(), Some("opus".into()), vec!["claude.exe".to_string()]), ("codex".into(), Some("gpt-listed".into()), vec!["codex.exe".to_string()])]);
+        settings.fallback = false;
+        assert_eq!(described(&settings).len(), 1);
     }
 
     #[test]

@@ -102,7 +102,7 @@ macOS 빌드에는 ad-hoc 서명을 적용하며, Apple Developer ID와 공증�
 - 동기화에는 Git 2.38 이상과 기억 저장소의 remote·현재 브랜치 upstream이 필요합니다.
 - 소스 빌드에는 stable Rust, Node.js 24, pnpm과 운영체제별 [Tauri 2 사전 준비](https://v2.tauri.app/start/prerequisites/)가 필요합니다.
 
-모델 호출은 선택한 CLI의 인증과 사용 한도를 사용하며 제공자의 과금이 발생할 수 있습니다. 처리에 필요한 대화와 기억 문서는 해당 모델 제공자에게 전달됩니다.
+모델 호출은 실행되는 CLI의 인증과 사용 한도를 사용하며 제공자의 과금이 발생할 수 있습니다. 실행되는 CLI는 **Settings → Recording**의 첫째 CLI이고, 둘째 CLI를 켜 두었는데 첫째가 실행되지 못하면 둘째입니다. 처리에 필요한 대화와 기억 문서는 해당 모델 제공자에게 전달됩니다.
 
 ### 빌드와 실행
 

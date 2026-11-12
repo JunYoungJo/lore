@@ -33,11 +33,11 @@ Closing the window with **Later** or **Close** in the header keeps the items.
 
 ## Model comparison
 
-After a sync, if there are **notes changed on both PCs**, the app compares only those notes with the recording model (Codex or Claude). Notes changed on only one side are not compared. The comparison reads only data saved at merge time, so recording and sync continue meanwhile. Model calls use your account's usage.
+After a sync, if there are **notes changed on both PCs**, the app compares only those notes with the recording CLIs, in the order set under **Settings → Recording**. When the first CLI cannot run, the next one continues from the saved position. Notes changed on only one side are not compared. The comparison reads only data saved at merge time, so recording and sync continue meanwhile. Model calls use your account's usage.
 
 The model reads the changed parts first, then requests additional source text and surrounding conversation segment by segment as needed. The program checks that quotes actually appear in the provided material and that each passage to edit appears exactly once in the merged note; if not, it sends the reason back to the model and asks it to answer again. When an option is applied, it checks again that existing source links are kept. These checks do not prove whether a statement is true, its scope, or whether it is the latest decision. Contradictions the model misses can remain.
 
-If a comparison cannot finish, the sync window shows the error with **Try again** and **Skip**. The notes are already synced, so skipping loses nothing. When the app restarts, an in-progress comparison resumes from its saved position.
+A comparison whose model could not run, for example at a usage limit, is tried again by itself: after 1 minute, then doubling up to a 1-hour interval, 8 tries in all. The sync window says when the next try is. After the last try, or when a comparison fails for another reason, the sync window shows the error with **Try again** and **Skip**. The notes are already synced, so skipping loses nothing. When the app restarts, an in-progress comparison resumes from its saved position.
 
 If a note changed again after the comparison and an option's edit passage can no longer be found, applying it is refused. In that case, edit the note yourself and remove the item.
 

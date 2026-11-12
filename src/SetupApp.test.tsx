@@ -20,7 +20,7 @@ function fixture(step = 0): SetupSnapshot {
   return {
     progress: { step, completed: false, deferred: false, providers: ["codex"], testStartedAt: null, recallConfirmed: false },
     settings: {
-      knowledgeRoot: "/Users/test/Documents/lore-memory", backend: "claude", models: { codex: null, claude: "opus" }, efforts: { codex: null, claude: null },
+      knowledgeRoot: "/Users/test/Documents/lore-memory", backend: "claude", fallback: false, models: { codex: null, claude: "opus" }, efforts: { codex: null, claude: null },
       modelTimeoutSecs: 1800, qmdTimeoutSecs: 900, claudeProjectsDir: "/sessions/claude", codexSessionsDir: "/sessions/codex",
       idleSecs: 600, since: 42, paused: false, syncEnabled: false, maxChars: 50000, notesBudget: 100000, qmdIndex: "index",
       commands: { codex: ["/tools/codex"], claude: ["/tools/claude"], qmd: ["/tools/qmd"] },

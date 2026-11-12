@@ -85,6 +85,8 @@ impl Efforts {
 pub struct Settings {
     pub knowledge_root: String,
     pub backend: String,
+    /// Use the other CLI when `backend` cannot run.
+    pub fallback: bool,
     pub models: Models,
     pub efforts: Efforts,
     #[serde(rename = "model", skip_serializing)]
@@ -108,6 +110,7 @@ pub struct Settings {
 pub struct EditableSettings {
     pub knowledge_root: String,
     pub backend: String,
+    pub fallback: bool,
     pub models: Models,
     pub efforts: Efforts,
     pub model_timeout_secs: u64,
@@ -126,6 +129,7 @@ impl Default for Settings {
         Self {
             knowledge_root: slash(home.join("Documents").join("lore-memory")),
             backend: "codex".into(),
+            fallback: false,
             models: Models::default(),
             efforts: Efforts::default(),
             single_model: None,
@@ -187,14 +191,32 @@ impl Settings {
         Ok(())
     }
 
+    /// The recording CLIs in the order they are tried.
+    pub fn backends(&self) -> Vec<&str> {
+        let other = if self.backend == "claude" { "codex" } else { "claude" };
+        if self.fallback { vec![self.backend.as_str(), other] } else { vec![self.backend.as_str()] }
+    }
+
     pub fn model(&self) -> Option<&str> {
-        let model = if self.backend == "claude" { &self.models.claude } else { &self.models.codex };
-        model.as_deref()
+        self.model_of(&self.backend)
     }
 
     pub fn effort(&self) -> Option<&str> {
-        let effort = if self.backend == "claude" { &self.efforts.claude } else { &self.efforts.codex };
+        self.effort_of(&self.backend)
+    }
+
+    pub fn model_of(&self, backend: &str) -> Option<&str> {
+        let model = if backend == "claude" { &self.models.claude } else { &self.models.codex };
+        model.as_deref()
+    }
+
+    pub fn effort_of(&self, backend: &str) -> Option<&str> {
+        let effort = if backend == "claude" { &self.efforts.claude } else { &self.efforts.codex };
         effort.as_deref()
+    }
+
+    pub fn command_of(&self, backend: &str) -> &[String] {
+        if backend == "claude" { &self.commands.claude } else { &self.commands.codex }
     }
 
     fn move_single_model(&mut self) {
@@ -210,6 +232,7 @@ impl Settings {
         Settings {
             knowledge_root: change.knowledge_root,
             backend: change.backend,
+            fallback: change.fallback,
             models: change.models.trimmed(),
             efforts: change.efforts.trimmed(),
             model_timeout_secs: change.model_timeout_secs,
@@ -352,6 +375,7 @@ mod tests {
         EditableSettings {
             knowledge_root: "E:/notes".into(),
             backend: "claude".into(),
+            fallback: true,
             models: Models { codex: Some(" gpt-6.1-sol ".into()), claude: Some("opus".into()) },
             efforts: Efforts { codex: Some(" high ".into()), claude: Some(" ".into()) },
             model_timeout_secs: 1_200,
@@ -367,6 +391,7 @@ mod tests {
         let expected = Settings {
             knowledge_root: "E:/notes".into(),
             backend: "claude".into(),
+            fallback: true,
             models: Models { codex: Some("gpt-6.1-sol".into()), claude: Some("opus".into()) },
             efforts: Efforts { codex: Some("high".into()), claude: None },
             model_timeout_secs: 1_200,
@@ -386,6 +411,18 @@ mod tests {
         assert_eq!(settings.model(), Some("opus"));
         assert_eq!(Settings { backend: "codex".into(), ..settings.clone() }.model(), Some("gpt-6.1-sol"));
         assert_eq!(Settings { backend: "codex".into(), models: Models::default(), ..settings }.model(), None);
+    }
+
+    #[test]
+    fn the_other_cli_is_tried_second_only_when_fallback_is_on() {
+        let claude = Settings { backend: "claude".into(), models: Models { codex: Some("gpt-x".into()), claude: Some("opus".into()) }, efforts: Efforts { codex: Some("low".into()), claude: None }, ..Settings::default() };
+        assert_eq!(claude.backends(), vec!["claude"]);
+        let both = Settings { fallback: true, ..claude.clone() };
+        assert_eq!(both.backends(), vec!["claude", "codex"]);
+        assert_eq!(Settings { backend: "codex".into(), ..both.clone() }.backends(), vec!["codex", "claude"]);
+        assert_eq!((both.model_of("codex"), both.effort_of("codex"), both.effort_of("claude")), (Some("gpt-x"), Some("low"), None));
+        let older: Settings = serde_json::from_str(r#"{"backend": "claude"}"#).unwrap();
+        assert!(!older.fallback);
     }
 
     #[test]

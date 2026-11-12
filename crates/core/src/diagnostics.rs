@@ -29,7 +29,7 @@ pub fn inspect(paths: &Paths, cli: &Path) -> Value {
     let mut commands = serde_json::Map::new();
     for (name, command) in [("codex", &settings.commands.codex), ("claude", &settings.commands.claude), ("qmd", &settings.commands.qmd)] {
         let available = command_available(command);
-        if !available && (name == "qmd" || name == settings.backend) {
+        if !available && (name == "qmd" || settings.backends().contains(&name)) {
             problems.push(format!("The {name} executable was not found. Install it or set commands.{name} in settings.json."));
         }
         commands.insert(name.into(), json!({"command": command, "available": available}));

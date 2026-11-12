@@ -4,6 +4,9 @@ use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+/// A time after every scheduled retry, for asking what is waiting at all.
+const LATER: i64 = i64::MAX;
+
 struct Fixture {
     _dir: tempfile::TempDir,
     local: PathBuf,
@@ -126,9 +129,9 @@ fn decision(source: &str, quote: &str) -> Value {
     }])
 }
 fn compare(f: &Fixture, replies: &mut dyn FnMut(usize) -> Value) -> lore_core::error::Result<usize> {
-    let id = sync::pending_comparison(&f.folder).expect("a comparison is waiting");
+    let id = sync::pending_comparison(&f.folder, LATER).expect("a comparison is waiting");
     let mut calls = 0;
-    sync::compare(&f.folder, &id, "fixture", &mut |_, _, _| {
+    sync::compare(&f.folder, &id, &mut |_, _, _| {
         calls += 1;
         Ok(replies(calls))
     }, &mut || {})
@@ -313,9 +316,9 @@ fn a_rejected_model_reply_is_sent_back_with_the_reason_instead_of_stopping_the_c
     contradict(&f);
     run(&f);
     let mut prompts = Vec::new();
-    let id = sync::pending_comparison(&f.folder).unwrap();
+    let id = sync::pending_comparison(&f.folder, LATER).unwrap();
     let mut calls = 0;
-    let found = sync::compare(&f.folder, &id, "fixture", &mut |prompt, _, _| {
+    let found = sync::compare(&f.folder, &id, &mut |prompt, _, _| {
         calls += 1;
         prompts.push(prompt.to_string());
         Ok(if calls == 1 { reply(decision(&format!("remote:{NOTE}"), "원문에 없는 문장")) } else { reply(decision(&format!("remote:{NOTE}"), "오류 팝업을 표시합니다.")) })
@@ -332,9 +335,9 @@ fn a_read_request_the_program_cannot_serve_is_sent_back_instead_of_stopping_the_
     contradict(&f);
     run(&f);
     let mut prompts = Vec::new();
-    let id = sync::pending_comparison(&f.folder).unwrap();
+    let id = sync::pending_comparison(&f.folder, LATER).unwrap();
     let mut calls = 0;
-    let found = sync::compare(&f.folder, &id, "fixture", &mut |prompt, _, _| {
+    let found = sync::compare(&f.folder, &id, &mut |prompt, _, _| {
         calls += 1;
         prompts.push(prompt.to_string());
         Ok(if calls == 1 {
@@ -359,12 +362,52 @@ fn a_comparison_that_keeps_failing_is_reported_without_touching_sync() {
     assert!(error.to_string().contains("원문에 없는 문장"));
     let state = sync::state(&f.folder);
     assert!(state.comparisons[0].error.is_some());
-    assert!(sync::pending_comparison(&f.folder).is_none());
+    assert!(sync::pending_comparison(&f.folder, LATER).is_none());
     assert!(!sync::summary(&f.folder).comparing);
     write(&f.local, OTHER_NOTE, "# 계획\n");
     assert!(run(&f).sent);
     sync::retry_comparison(&f.folder).unwrap();
-    assert!(sync::pending_comparison(&f.folder).is_some());
+    assert!(sync::pending_comparison(&f.folder, LATER).is_some());
+}
+
+#[test]
+fn a_comparison_whose_model_could_not_run_waits_and_then_runs_again_by_itself() {
+    let f = fixture();
+    contradict(&f);
+    run(&f);
+    let id = sync::pending_comparison(&f.folder, LATER).unwrap();
+    let before = chrono::Utc::now().timestamp();
+    let error = sync::compare(&f.folder, &id, &mut |_, _, _| Err(lore_core::error::Error::transient("usage limit reached")), &mut || {}).unwrap_err();
+    assert_eq!(error.to_string(), "usage limit reached");
+    let waiting = sync::state(&f.folder).comparisons.remove(0);
+    assert_eq!((waiting.error, waiting.attempts, waiting.last_failure.as_deref()), (None, 1, Some("usage limit reached")));
+    // The first wait is one minute, as for a recording.
+    assert!(waiting.next_attempt_at >= before + 60);
+    assert!(sync::pending_comparison(&f.folder, waiting.next_attempt_at - 1).is_none());
+    assert_eq!(sync::pending_comparison(&f.folder, waiting.next_attempt_at).as_deref(), Some(id.as_str()));
+    assert!(sync::summary(&f.folder).comparing);
+
+    let found = compare(&f, &mut |_| reply(decision(&format!("remote:{NOTE}"), "오류 팝업을 표시합니다."))).unwrap();
+    assert_eq!(found, 1);
+    assert!(sync::state(&f.folder).comparisons.is_empty());
+}
+
+#[test]
+fn a_comparison_stops_for_the_user_after_the_last_automatic_try() {
+    let f = fixture();
+    contradict(&f);
+    run(&f);
+    let id = sync::pending_comparison(&f.folder, LATER).unwrap();
+    for attempt in 1..=lore_core::queue::MAX_TRANSIENT_ATTEMPTS {
+        assert_eq!(sync::pending_comparison(&f.folder, LATER).as_deref(), Some(id.as_str()), "attempt {attempt}");
+        sync::compare(&f.folder, &id, &mut |_, _, _| Err(lore_core::error::Error::transient("usage limit reached")), &mut || {}).unwrap_err();
+    }
+    let stopped = sync::state(&f.folder).comparisons.remove(0);
+    assert_eq!(stopped.error.as_deref(), Some("usage limit reached"));
+    assert!(sync::pending_comparison(&f.folder, LATER).is_none());
+    sync::retry_comparison(&f.folder).unwrap();
+    let again = sync::state(&f.folder).comparisons.remove(0);
+    assert_eq!((again.error, again.attempts, again.next_attempt_at, again.last_failure), (None, 0, 0, None));
 }
 
 #[test]

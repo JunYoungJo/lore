@@ -56,6 +56,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     settings: {
       knowledgeRoot: "D:/doc/knowledge",
       backend: "codex",
+      fallback: false,
       models: { codex: null, claude: null },
       efforts: { codex: null, claude: null },
       modelTimeoutSecs: 600,
@@ -89,6 +90,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     catalog: { codex: null, claude: null },
     defaultModels: { codex: "gpt-6.1-sol", claude: "haiku" },
     defaultEfforts: { codex: "low", claude: null },
+    cliAvailable: { codex: true, claude: true },
     ...overrides,
   };
 }
@@ -561,15 +563,52 @@ describe("settings view", () => {
     await userEvent.click(header);
   }
 
-  it("applies a CLI switch at once, keeps each CLI's model and has no save button", async () => {
+  const cli = (name: "Claude" | "Codex") => screen.getByRole("group", { name });
+  const cliOrder = () => within(screen.getByRole("region", { name: "Recording" })).getAllByRole("group").map((group) => group.getAttribute("aria-label"));
+
+  it("lists each recording CLI with its own model, turns the second one on at once and has no save button", async () => {
     await openSettings(snapshot({ settings: { ...snapshot().settings, backend: "claude", models: { codex: null, claude: "opus" } } }));
     expect(screen.queryByRole("button", { name: "Save" })).not.toBeInTheDocument();
-    expect(screen.getByLabelText("Model")).toHaveValue("opus");
-    await userEvent.click(screen.getByRole("button", { name: "Codex" }));
-    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "codex", models: { codex: null, claude: "opus" } }));
-    expect(await screen.findByLabelText("Model")).toHaveValue("");
-    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
-    expect(await screen.findByDisplayValue("opus")).toBeInTheDocument();
+    expect(cliOrder()).toEqual(["Claude", "Codex"]);
+    expect(within(cli("Claude")).getByText("Records every session.")).toBeInTheDocument();
+    expect(within(cli("Claude")).getByLabelText("Model")).toHaveValue("opus");
+    expect(within(cli("Claude")).queryByRole("switch")).not.toBeInTheDocument();
+    expect(within(cli("Codex")).getByText("Not used for recording.")).toBeInTheDocument();
+    expect(within(cli("Codex")).queryByLabelText("Model")).not.toBeInTheDocument();
+    expect(screen.getByText("Each recording runs claude --print and uses your signed-in account’s allowance.")).toBeInTheDocument();
+
+    await userEvent.click(within(cli("Codex")).getByRole("switch", { name: "Record with Codex" }));
+    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "claude", fallback: true, models: { codex: null, claude: "opus" } }));
+    expect(await within(cli("Codex")).findByLabelText("Model")).toHaveValue("");
+    expect(within(cli("Codex")).getByText("Used when Claude cannot run, for example at its usage limit.")).toBeInTheDocument();
+    expect(within(cli("Claude")).getByText("Used first.")).toBeInTheDocument();
+    expect(within(cli("Claude")).getByLabelText("Model")).toHaveValue("opus");
+    expect(screen.getByText("Lore records with the first CLI that can run. Each uses its own signed-in account’s allowance.")).toBeInTheDocument();
+  });
+
+  it("moves the second CLI to the front and stops using the first", async () => {
+    await openSettings(snapshot({ settings: { ...snapshot().settings, backend: "claude", fallback: true, models: { codex: "gpt-6.1-sol", claude: "opus" } } }));
+    await userEvent.click(within(cli("Codex")).getByRole("button", { name: "Use first" }));
+    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "codex", fallback: true }));
+    await waitFor(() => expect(cliOrder()).toEqual(["Codex", "Claude"]));
+    expect(within(cli("Codex")).queryByRole("button", { name: "Use first" })).not.toBeInTheDocument();
+    expect(within(cli("Codex")).getByLabelText("Model")).toHaveValue("gpt-6.1-sol");
+
+    await userEvent.click(within(cli("Codex")).getByRole("switch", { name: "Record with Codex" }));
+    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "claude", fallback: false }));
+    await waitFor(() => expect(cliOrder()).toEqual(["Claude", "Codex"]));
+    expect(within(cli("Claude")).getByText("Records every session.")).toBeInTheDocument();
+    expect(within(cli("Codex")).getByRole("switch", { name: "Record with Codex" })).not.toBeChecked();
+  });
+
+  it("does not turn on a CLI that is not on this PC and opens its setup", async () => {
+    await openSettings(snapshot({ cliAvailable: { codex: true, claude: false } }));
+    expect(within(cli("Claude")).getByText("Not found on this PC.")).toBeInTheDocument();
+    expect(within(cli("Claude")).getByRole("switch", { name: "Record with Claude" })).toBeDisabled();
+    expect(within(cli("Codex")).queryByRole("button", { name: "Set up…" })).not.toBeInTheDocument();
+    await userEvent.click(within(cli("Claude")).getByRole("button", { name: "Set up…" }));
+    expect(api.openIntegrations).toHaveBeenLastCalledWith("tools");
+    expect(api.saveSettings).not.toHaveBeenCalled();
   });
 
   it("saves a model when the field is left and says it was saved", async () => {
@@ -578,6 +617,7 @@ describe("settings view", () => {
     expect(api.saveSettings).toHaveBeenCalledWith({
       knowledgeRoot: "D:/doc/knowledge",
       backend: "codex",
+      fallback: false,
       models: { codex: "gpt-6.1-sol", claude: null },
       efforts: { codex: null, claude: null },
       modelTimeoutSecs: 600,
@@ -604,13 +644,13 @@ describe("settings view", () => {
     expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ models: { codex: null, claude: null } }));
   });
 
-  it("keeps a model typed just before switching the CLI", async () => {
+  it("keeps a model typed just before turning the second CLI on", async () => {
     await openSettings();
     await userEvent.type(screen.getByLabelText("Model"), "gpt-6.1-sol");
-    await userEvent.click(screen.getByRole("button", { name: "Claude" }));
+    await userEvent.click(within(cli("Claude")).getByRole("switch", { name: "Record with Claude" }));
     await waitFor(() => expect(api.saveSettings).toHaveBeenCalledTimes(2));
-    expect(api.saveSettings).toHaveBeenNthCalledWith(1, expect.objectContaining({ backend: "codex", models: { codex: "gpt-6.1-sol", claude: null } }));
-    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "claude", models: { codex: "gpt-6.1-sol", claude: null } }));
+    expect(api.saveSettings).toHaveBeenNthCalledWith(1, expect.objectContaining({ fallback: false, models: { codex: "gpt-6.1-sol", claude: null } }));
+    expect(api.saveSettings).toHaveBeenLastCalledWith(expect.objectContaining({ backend: "codex", fallback: true, models: { codex: "gpt-6.1-sol", claude: null } }));
   });
 
   it("lists the models the CLI reported, names the default and saves the chosen one", async () => {
@@ -686,6 +726,7 @@ describe("settings view", () => {
     expect(api.saveSettings).toHaveBeenCalledWith({
       knowledgeRoot: "D:/doc/knowledge",
       backend: "codex",
+      fallback: false,
       models: { codex: null, claude: null },
       efforts: { codex: null, claude: null },
       modelTimeoutSecs: 1200,

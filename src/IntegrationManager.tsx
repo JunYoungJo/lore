@@ -392,13 +392,14 @@ export function IntegrationManager() {
 
   useEffect(() => {
     let disposed = false;
-    const folder = new URLSearchParams(window.location.search).get("section") === "folder";
+    const wanted = new URLSearchParams(window.location.search).get("section");
+    const folder = wanted === "folder";
     setAskedFolder(folder);
     void refresh()
       .then((next) => {
         if (disposed) return;
         const all = statuses(next, null);
-        setSection(folder ? "folder" : (ORDER.find((key) => all[key].tone === "warn") ?? "codex"));
+        setSection(folder ? "folder" : wanted === "tools" ? "tools" : (ORDER.find((key) => all[key].tone === "warn") ?? "codex"));
       })
       .catch((e) => !disposed && setError(errorMessage(e)));
     void recheck();
@@ -414,6 +415,8 @@ export function IntegrationManager() {
       if (wanted === "folder") {
         setAskedFolder(true);
         setSection("folder");
+      } else if (wanted === "tools") {
+        setSection("tools");
       }
     });
     return () => void stop.then((unlisten) => unlisten());

@@ -8,7 +8,7 @@ use lore_core::recorder::{DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_EFFORT, DEFAULT_CO
 use lore_core::review;
 use lore_core::settings::{self, EditableSettings, Efforts, Models, Paths, Settings};
 use lore_core::transcript::Provider;
-use lore_core::{platform, setup, worker};
+use lore_core::{diagnostics, platform, setup, worker};
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
@@ -38,7 +38,15 @@ pub struct Snapshot {
     pub catalog: Catalog,
     pub default_models: Models,
     pub default_efforts: Efforts,
+    pub cli_available: CliAvailable,
     pub update: crate::updates::Status,
+}
+
+/// Whether each recording CLI's command is found on this PC.
+#[derive(Serialize)]
+pub struct CliAvailable {
+    pub codex: bool,
+    pub claude: bool,
 }
 
 #[derive(Serialize)]
@@ -110,6 +118,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let connections = connections(&settings, &state.paths, &hooks);
     let catalog = state.catalog();
     let default_models = Models { codex: Some(catalog.default_model("codex").unwrap_or_else(|| DEFAULT_CODEX_MODEL.into())), claude: Some(DEFAULT_CLAUDE_MODEL.into()) };
+    let cli_available = CliAvailable { codex: diagnostics::command_available(&settings.commands.codex), claude: diagnostics::command_available(&settings.commands.claude) };
     Ok(Snapshot {
         state: label,
         current,
@@ -135,6 +144,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         catalog,
         default_models,
         default_efforts: Efforts { codex: Some(DEFAULT_CODEX_EFFORT.into()), claude: None },
+        cli_available,
     })
 }
 

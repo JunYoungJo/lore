@@ -44,7 +44,7 @@ export const syncNow = (): Promise<void> => invoke("sync_now");
 export const deferSync = (): Promise<void> => invoke("defer_sync");
 
 export const openSetup = (): Promise<void> => invoke("open_setup");
-export const openIntegrations = (section?: "folder"): Promise<void> => invoke("open_integrations", { section: section ?? null });
+export const openIntegrations = (section?: "folder" | "tools"): Promise<void> => invoke("open_integrations", { section: section ?? null });
 export const onIntegrationsSection = (handler: (section: string) => void): Promise<UnlistenFn> => listen<string>("integrations-section", (event) => handler(event.payload));
 export const setupCheckTools = (): Promise<import("./contract").ToolChecks> => invoke("setup_check_tools");
 export const setupPickFolder = (): Promise<string | null> => invoke("setup_pick_folder");

@@ -4,7 +4,7 @@ import { Check, CircleCheck, FileText, GitCompare, LoaderCircle, Sparkles, Trian
 import * as api from "@/ipc/api";
 import type { DiffRow, SyncItem, SyncItemFile, SyncItemView, SyncSnapshot } from "@/ipc/contract";
 import { DiffView } from "@/components/DiffView";
-import { fileName, relativePhrase } from "@/format";
+import { fileName, minutesUntil, relativePhrase } from "@/format";
 import { useTheme } from "@/theme";
 import { BrandMark } from "@/ui/BrandMark";
 import { WindowClose } from "@/ui/WindowClose";
@@ -249,12 +249,19 @@ export function SyncApp() {
     </div>
   );
   const comparison = snapshot.comparison;
-  const comparing = snapshot.summary.comparing && (
-    <p className="sync-busy" role="status">
-      <LoaderCircle size={15} className="spin" />
-      {snapshot.model} is comparing the notes both PCs changed{comparison ? (comparison.stage === "checking" ? ` · checking ${comparison.total} groups together` : ` · ${comparison.completed} of ${plural(comparison.total, "group")}`) : ""}
-    </p>
-  );
+  const retryAt = snapshot.comparisonRetryAt;
+  const comparing =
+    snapshot.summary.comparing &&
+    (retryAt !== null && retryAt > now ? (
+      <p className="sync-busy" role="status">
+        The comparison could not run and will be tried again in about {minutesUntil(retryAt, now)} min. Your notes are synced either way.{snapshot.comparisonRetryReason ? ` (${snapshot.comparisonRetryReason})` : ""}
+      </p>
+    ) : (
+      <p className="sync-busy" role="status">
+        <LoaderCircle size={15} className="spin" />
+        {snapshot.model} is comparing the notes both PCs changed{comparison ? (comparison.stage === "checking" ? ` · checking ${comparison.total} groups together` : ` · ${comparison.completed} of ${plural(comparison.total, "group")}`) : ""}
+      </p>
+    ));
   const comparisonFailed = snapshot.comparisonError && (
     <div className="sync-error-box">
       <div className="sync-error-head">The comparison could not finish. Your notes are synced either way.</div>

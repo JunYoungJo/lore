@@ -141,7 +141,7 @@ pub async fn setup_check_tools(app: AppHandle) -> Result<Value, String> {
 
 #[tauri::command]
 pub async fn open_integrations(app: AppHandle, section: Option<String>) -> Result<(), String> {
-    let section = section.filter(|section| section == "folder");
+    let section = section.filter(|section| section == "folder" || section == "tools");
     if let Some(window) = app.get_webview_window("integrations") {
         window.show().map_err(err)?;
         if let Some(section) = &section { app.emit_to("integrations", "integrations-section", section).map_err(err)?; }

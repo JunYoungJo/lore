@@ -2,11 +2,12 @@ use crate::state::AppState;
 use lore_core::error::{Error, Result};
 use lore_core::qmd::Qmd;
 use lore_core::queue::{Queue, Status};
-use lore_core::recorder::CliRecorder;
+use lore_core::recorder::Recorders;
 use lore_core::review::{self, DiffRow};
 use lore_core::run;
 use lore_core::settings::{self, Paths, Settings};
 use lore_core::sync::{self, Item, Outcome, Summary};
+use lore_core::worker;
 use serde::Serialize;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -27,6 +28,9 @@ pub struct Snapshot {
     items: Vec<Item>,
     comparison: Option<sync::ComparisonProgress>,
     comparison_error: Option<String>,
+    /// When a comparison whose model could not run is tried again, and why it failed.
+    comparison_retry_at: Option<i64>,
+    comparison_retry_reason: Option<String>,
     index_pending: bool,
 }
 
@@ -95,6 +99,7 @@ pub fn get_sync(state: State<'_, AppState>) -> std::result::Result<Snapshot, Str
     let folder = sync::folder(&state.paths, &root);
     let stored = sync::state(&folder);
     let waiting = stored.comparisons.iter().find(|comparison| comparison.error.is_none());
+    let retry = waiting.filter(|comparison| comparison.next_attempt_at > worker::now());
     Ok(Snapshot {
         root: root.to_string_lossy().into(),
         enabled: settings.sync_enabled,
@@ -105,6 +110,8 @@ pub fn get_sync(state: State<'_, AppState>) -> std::result::Result<Snapshot, Str
         review: review::working_changes(&root).ok().flatten().map(|changes| changes.notes.len()),
         comparison: waiting.and_then(|comparison| sync::comparison_progress(&folder, &comparison.plan)),
         comparison_error: stored.comparisons.iter().find_map(|comparison| comparison.error.clone()),
+        comparison_retry_at: retry.map(|comparison| comparison.next_attempt_at),
+        comparison_retry_reason: retry.and_then(|comparison| comparison.last_failure.clone()),
         index_pending: stored.index_pending,
         items: stored.items,
     })
@@ -288,7 +295,7 @@ static COMPARING: AtomicBool = AtomicBool::new(false);
 /// Compare the notes both PCs changed, in the background. It reads only the
 /// versions saved at merge time, so recording and sync continue meanwhile.
 pub fn resume_comparisons(app: &AppHandle) {
-    if sync::pending_comparison(&folder(&app.state::<AppState>())).is_none() || COMPARING.swap(true, Ordering::SeqCst) {
+    if sync::pending_comparison(&folder(&app.state::<AppState>()), worker::now()).is_none() || COMPARING.swap(true, Ordering::SeqCst) {
         return;
     }
     let app = app.clone();
@@ -297,11 +304,11 @@ pub fn resume_comparisons(app: &AppHandle) {
         loop {
             let settings = state.settings();
             let folder = sync::folder(&state.paths, &settings.knowledge_root());
-            let Some(id) = sync::pending_comparison(&folder) else { break };
-            let recorder = CliRecorder::from_settings(&settings, &state.paths.recorder_workdir(), run::fixed(settings.model_timeout_secs)).defaulting_to(state.catalog().default_model(&settings.backend));
-            let identity = serde_json::json!([recorder.backend, recorder.model, recorder.effort, recorder.command]).to_string();
+            let Some(id) = sync::pending_comparison(&folder, worker::now()) else { break };
+            let catalog = state.catalog();
+            let recorders = Recorders::from_settings(&settings, &state.paths.recorder_workdir(), run::fixed(settings.model_timeout_secs), |backend| catalog.default_model(backend));
             changed(&app);
-            let found = sync::compare(&folder, &id, &identity, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts), &mut || {
+            let found = sync::compare(&folder, &id, &mut |prompt, schema, artifacts| recorders.request_json(prompt, schema, artifacts), &mut || {
                 if let Some(progress) = sync::comparison_progress(&folder, &id) {
                     let _ = app.emit("sync-comparison-progress", progress);
                 }

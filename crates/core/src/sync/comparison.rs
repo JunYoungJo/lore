@@ -501,14 +501,15 @@ fn save(folder: &Path, checkpoint: &Checkpoint, changed: &mut impl FnMut()) -> R
 pub(super) fn run(
     plan: &Plan,
     folder: &Path,
-    identity: &str,
     request: &mut impl FnMut(&str, &Value, &Path) -> Result<Value>,
     changed: &mut impl FnMut(),
 ) -> Result<Analysis> {
     let mut docs = documents(plan);
+    // The key names the notes being compared, not the model: a finished group stays
+    // finished when another CLI takes over, because the program checked its result.
     let key = digest(
         format!(
-            "paged-v2:{identity}:{}",
+            "paged-v3:{}",
             serde_json::to_string(&json!([
                 plan.id,
                 plan.local,
@@ -926,7 +927,6 @@ mod tests {
         let analysis = run(
             &plan,
             dir.path(),
-            "model-a",
             &mut |text, _, _| {
                 let payload = data(text);
                 assert!(!text.contains(&original));
@@ -981,7 +981,6 @@ mod tests {
         let analysis = run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, schema, _| {
                 calls += 1;
                 let payload = data(text);
@@ -1017,7 +1016,6 @@ mod tests {
         let failed = run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 data(text);
                 calls += 1;
@@ -1036,7 +1034,6 @@ mod tests {
         run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, folder| {
                 data(text);
                 retried.push(folder.to_string_lossy().into_owned());
@@ -1068,7 +1065,6 @@ mod tests {
         assert!(run(
             &plan,
             dir.path(),
-            "model",
             &mut |_, _, _| Ok(done(vec![proposed.clone()])),
             &mut || {}
         )
@@ -1097,7 +1093,6 @@ mod tests {
         run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 data(text);
                 calls += 1;
@@ -1127,7 +1122,6 @@ mod tests {
         let analysis = run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 calls += 1;
                 let payload = data(text);
@@ -1170,7 +1164,6 @@ mod tests {
         run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 data(text);
                 calls += 1;
@@ -1189,43 +1182,6 @@ mod tests {
     }
 
     #[test]
-    fn changing_the_model_invalidates_saved_comparison_results() {
-        let plan = fixture(&["projects/a/policy.md", "projects/b/policy.md"]);
-        let dir = tempfile::tempdir().unwrap();
-        let mut calls = 0;
-        assert!(run(
-            &plan,
-            dir.path(),
-            "old-model",
-            &mut |_, _, _| {
-                calls += 1;
-                if calls == 2 {
-                    Err(Error::transient("offline"))
-                } else {
-                    Ok(done(vec![]))
-                }
-            },
-            &mut || {}
-        )
-        .is_err());
-        let mut first = String::new();
-        run(
-            &plan,
-            dir.path(),
-            "new-model",
-            &mut |_, _, folder| {
-                if first.is_empty() {
-                    first = folder.to_string_lossy().into_owned();
-                }
-                Ok(done(vec![]))
-            },
-            &mut || {},
-        )
-        .unwrap();
-        assert!(first.contains("group-0"));
-    }
-
-    #[test]
     fn a_failure_after_a_source_request_keeps_the_reading_position_and_findings() {
         let path = "projects/demo/policy.md";
         let mut plan = fixture(&[path]);
@@ -1240,7 +1196,7 @@ mod tests {
         });
         let dir = tempfile::tempdir().unwrap();
         let mut calls = 0;
-        assert!(run(&plan, dir.path(), "model", &mut |_,_,_| {
+        assert!(run(&plan, dir.path(), &mut |_,_,_| {
             calls += 1;
             if calls == 2 { return Err(Error::transient("offline")); }
             let mut reply = done(vec![]);
@@ -1251,7 +1207,6 @@ mod tests {
         let result = run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 let payload = data(text);
                 assert_eq!(
@@ -1281,7 +1236,6 @@ mod tests {
         let result = run(
             &plan,
             dir.path(),
-            "model",
             &mut |text, _, _| {
                 calls += 1;
                 if data(text)["stage"] == "consistency" {

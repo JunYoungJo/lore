@@ -5,7 +5,7 @@ use std::time::Instant;
 use lore_core::error::Failure;
 use lore_core::qmd::Qmd;
 use lore_core::queue::{Job, Queue};
-use lore_core::recorder::CliRecorder;
+use lore_core::recorder::Recorders;
 use lore_core::run::Limit;
 use lore_core::settings::Settings;
 use lore_core::worker::{self, Outcome, Reporter, WorkerLock};
@@ -101,8 +101,9 @@ pub fn spawn(app: AppHandle) {
         let mut last_sync = Instant::now().checked_sub(SYNC_EVERY).unwrap_or_else(Instant::now);
         // Notes recorded since the last sync. They are shared as soon as the queue is idle.
         let mut unsent = false;
-        crate::sync::resume_comparisons(&app);
         loop {
+            // A comparison whose model could not run becomes due again later.
+            crate::sync::resume_comparisons(&app);
             let settings = state.settings();
             if settings.sync_enabled && !state.setup_busy() && !state.reviewing() && !state.syncing() && last_sync.elapsed() >= SYNC_EVERY {
                 last_sync = Instant::now();
@@ -119,7 +120,8 @@ pub fn spawn(app: AppHandle) {
                 state.wait(ERROR_WAIT);
                 continue;
             }
-            let recorder = CliRecorder::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone()).defaulting_to(state.catalog().default_model(&settings.backend));
+            let catalog = state.catalog();
+            let recorder = Recorders::from_settings(&settings, &paths.recorder_workdir(), model_limit.clone(), |backend| catalog.default_model(backend));
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), qmd_limit.clone());
             let operation = state.operation();
             // Re-check under the same gate used by sync and review commits.

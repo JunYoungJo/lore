@@ -29,7 +29,7 @@ const views: Record<string, SyncItemView> = {
   },
 };
 function snapshot(overrides: Partial<SyncSnapshot> = {}): SyncSnapshot {
-  return { root: "/knowledge", enabled: true, busy: false, summary: { phase: "idle", message: null, items: 0, comparing: false, lastSyncedAt: NOW - 300 }, tracking: "main ↔ origin/main", model: "Claude opus", review: null, items: [], comparison: null, comparisonError: null, indexPending: false, ...overrides };
+  return { root: "/knowledge", enabled: true, busy: false, summary: { phase: "idle", message: null, items: 0, comparing: false, lastSyncedAt: NOW - 300 }, tracking: "main ↔ origin/main", model: "Claude opus", review: null, items: [], comparison: null, comparisonError: null, comparisonRetryAt: null, comparisonRetryReason: null, indexPending: false, ...overrides };
 }
 const listed = (items: SyncItem[], overrides: Partial<SyncSnapshot> = {}) => snapshot({ items, summary: { phase: "idle", message: null, items: items.length, comparing: false, lastSyncedAt: NOW - 300 }, ...overrides });
 
@@ -179,6 +179,17 @@ describe("model comparison", () => {
     render(<SyncApp />);
     expect(await screen.findByRole("status")).toHaveTextContent("Claude opus is comparing the notes both PCs changed · 1 of 3 groups");
     expect(screen.getByRole("button", { name: "Mark as checked" })).toBeEnabled();
+  });
+
+  it("says when a comparison whose model could not run is tried again, without asking for anything", async () => {
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(NOW * 1000));
+    api.getSync.mockResolvedValue(snapshot({ summary: { phase: "idle", message: null, items: 0, comparing: true, lastSyncedAt: NOW }, comparisonRetryAt: NOW + 450, comparisonRetryReason: "claude: usage limit reached" }));
+    render(<SyncApp />);
+    const status = await screen.findByText(/The comparison could not run/);
+    expect(status).toHaveTextContent("The comparison could not run and will be tried again in about 8 min. Your notes are synced either way. (claude: usage limit reached)");
+    expect(screen.queryByText(/is comparing the notes/)).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Try again" })).not.toBeInTheDocument();
   });
 
   it("offers to retry or skip a comparison that could not finish", async () => {

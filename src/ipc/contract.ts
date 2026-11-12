@@ -70,6 +70,8 @@ export type Catalog = Record<Backend, ModelChoice[] | null>;
 export interface Settings {
   knowledgeRoot: string;
   backend: Backend;
+  /** Use the other CLI when `backend` cannot run. */
+  fallback: boolean;
   models: Models;
   efforts: Efforts;
   modelTimeoutSecs: number;
@@ -86,7 +88,7 @@ export interface Settings {
   commands: Commands;
 }
 
-export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
+export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "fallback" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
 
 export type HookState = "connected" | "other_path" | "missing";
 
@@ -175,6 +177,7 @@ export interface Snapshot {
   catalog: Catalog;
   defaultModels: Record<Backend, string>;
   defaultEfforts: Efforts;
+  cliAvailable: Record<Backend, boolean>;
 }
 
 export interface SetupProgress {
@@ -244,4 +247,4 @@ export interface SyncItem { id: string; kind: "merged" | "kept" | "decision"; pl
 export interface SyncItemFile { path: string; base: string | null; local: string | null; remote: string | null; merged: string | null; rows: DiffRow[] }
 export interface SyncItemView { item: SyncItem; files: SyncItemFile[]; issue: SyncIssue | null; sources: SyncSource[] }
 export interface SyncComparisonProgress { completed: number; total: number; stage: string; reads: number; error: string | null }
-export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; tracking: string | null; model: string; review: number | null; items: SyncItem[]; comparison: SyncComparisonProgress | null; comparisonError: string | null; indexPending: boolean }
+export interface SyncSnapshot { root: string; enabled: boolean; busy: boolean; summary: SyncSummary; tracking: string | null; model: string; review: number | null; items: SyncItem[]; comparison: SyncComparisonProgress | null; comparisonError: string | null; comparisonRetryAt: number | null; comparisonRetryReason: string | null; indexPending: boolean }
