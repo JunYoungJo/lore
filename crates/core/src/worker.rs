@@ -184,8 +184,13 @@ pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, recorder: &dyn Re
     Ok(Some((job, outcome)))
 }
 
-pub fn cleanup_activity(provider: Provider, target: &Target, result: &Result<cleanup::Outcome>, at: i64) -> Activity {
-    let base = Activity { id: 0, at, job_id: "cleanup".into(), provider, project: Some(target.folder.clone()), kind: "cleaned".into(), summary: None, notes: Vec::new(), error: None };
+/// The activity entries of one cleanup run share this id, so the folders of a run are listed together.
+pub fn cleanup_run_id(run: i64) -> String {
+    format!("cleanup-{run}")
+}
+
+pub fn cleanup_activity(provider: Provider, target: &Target, run: i64, result: &Result<cleanup::Outcome>, at: i64) -> Activity {
+    let base = Activity { id: 0, at, job_id: cleanup_run_id(run), provider, project: Some(target.folder.clone()), kind: "cleaned".into(), summary: None, notes: Vec::new(), error: None };
     match result {
         Ok(outcome) => Activity { summary: Some(summary_with_log(&outcome.summary, &outcome.log)), notes: outcome.touched(), error: outcome.incomplete.clone(), ..base },
         Err(error) => Activity { kind: "cleanup_failed".into(), error: Some(error.message.clone()), ..base },
@@ -211,12 +216,30 @@ fn clean_folder(settings: &Settings, paths: &Paths, qmd: &Qmd, target: &Target, 
 }
 
 /// Tidy one folder of notes with the recording model, commit the result, and list it in the
-/// activity. The caller holds the same gate as a recording, so the two never write at once.
-pub fn clean(queue: &Queue, settings: &Settings, paths: &Paths, qmd: &Qmd, target: &Target, ask: cleanup::Ask) -> Result<cleanup::Outcome> {
+/// activity under the run it belongs to. The caller holds the same gate as a recording, so the
+/// two never write at once.
+pub fn clean(queue: &Queue, settings: &Settings, paths: &Paths, qmd: &Qmd, target: &Target, run: i64, ask: cleanup::Ask) -> Result<cleanup::Outcome> {
     let result = clean_folder(settings, paths, qmd, target, ask);
     let provider = Provider::parse(&settings.backend).unwrap_or(Provider::Claude);
-    queue.add_activity(&cleanup_activity(provider, target, &result, now()))?;
+    queue.add_activity(&cleanup_activity(provider, target, run, &result, now()))?;
+    // What the run came to is remembered, so that the folder is not counted as never cleaned.
+    match &result {
+        Ok(outcome) => queue.cleanup_finished(&target.folder, now(), !outcome.touched().is_empty(), outcome.incomplete.as_deref())?,
+        Err(error) => queue.cleanup_failed(&target.folder, now(), &error.message)?,
+    }
     result
+}
+
+/// Undo the last cleanup of a folder and list that in the activity. Returns a note about the
+/// search index when it could not be refreshed; the notes themselves are back either way.
+pub fn undo_cleanup(queue: &Queue, settings: &Settings, qmd: &Qmd, folder: &str) -> Result<Option<String>> {
+    let root = settings.knowledge_root();
+    let notes = cleanup::undo(&root, folder)?;
+    let stale = qmd.ensure_index(&root).and_then(|()| qmd.refresh()).err().map(|error| format!("The notes are back, but the search index was not refreshed: {error}"));
+    let provider = Provider::parse(&settings.backend).unwrap_or(Provider::Claude);
+    let summary = Some("The cleanup of this folder was undone.".to_string());
+    queue.add_activity(&Activity { id: 0, at: now(), job_id: "cleanup-undo".into(), provider, project: Some(folder.to_string()), kind: "cleanup_undone".into(), summary, notes, error: stale.clone() })?;
+    Ok(stale)
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -381,12 +404,15 @@ mod tests {
     fn a_cleanup_without_qmd_never_calls_the_model_and_is_listed_as_failed() {
         let fixture = fixture();
         let qmd = Qmd::new(&fixture.settings, &fixture.paths.recorder_workdir(), crate::run::fixed(5));
-        let error = clean(&fixture.queue, &fixture.settings, &fixture.paths, &qmd, &demo_folder(), &mut |_, _, _| panic!("the model must not run without qmd")).unwrap_err();
+        let error = clean(&fixture.queue, &fixture.settings, &fixture.paths, &qmd, &demo_folder(), 700, &mut |_, _, _| panic!("the model must not run without qmd")).unwrap_err();
         assert!(error.message.contains("qmd"), "{error}");
         let recent = fixture.queue.recent_activity(5).unwrap();
-        assert_eq!((recent[0].kind.as_str(), recent[0].project.as_deref(), recent[0].job_id.as_str()), ("cleanup_failed", Some("demo"), "cleanup"));
+        assert_eq!((recent[0].kind.as_str(), recent[0].project.as_deref(), recent[0].job_id.as_str()), ("cleanup_failed", Some("demo"), "cleanup-700"));
         assert!(recent[0].error.as_deref().unwrap().contains("qmd"));
         assert!(!fixture.paths.reviews().exists());
+        // The failure is remembered for the folder, without counting as a finished cleanup.
+        let check = &fixture.queue.cleanup_checks().unwrap()["demo"];
+        assert!(check.at == 0 && check.failed_at > 0 && check.error.as_deref().unwrap().contains("qmd"), "{check:?}");
     }
 
     #[test]
@@ -398,15 +424,15 @@ mod tests {
             log: vec!["Removed projects/demo/popup.md: BG 노트에 들어 있습니다.".into()],
             incomplete: None,
         };
-        let entry = cleanup_activity(Provider::Codex, &demo_folder(), &Ok(outcome.clone()), 100);
-        assert_eq!((entry.kind.as_str(), entry.provider, entry.at, entry.project.as_deref()), ("cleaned", Provider::Codex, 100, Some("demo")));
+        let entry = cleanup_activity(Provider::Codex, &demo_folder(), 90, &Ok(outcome.clone()), 100);
+        assert_eq!((entry.kind.as_str(), entry.provider, entry.at, entry.project.as_deref(), entry.job_id.as_str()), ("cleaned", Provider::Codex, 100, Some("demo"), "cleanup-90"));
         assert_eq!(entry.notes, vec!["projects/demo/bg.md".to_string(), "projects/demo/popup.md".to_string()]);
         assert_eq!(entry.summary.as_deref(), Some("팝업 노트를 합쳤습니다.\nRemoved projects/demo/popup.md: BG 노트에 들어 있습니다."));
         assert_eq!(entry.error, None);
 
-        let stopped = cleanup_activity(Provider::Claude, &demo_folder(), &Ok(cleanup::Outcome { incomplete: Some("usage limit reached".into()), ..outcome }), 100);
+        let stopped = cleanup_activity(Provider::Claude, &demo_folder(), 90, &Ok(cleanup::Outcome { incomplete: Some("usage limit reached".into()), ..outcome }), 100);
         assert_eq!((stopped.kind.as_str(), stopped.error.as_deref()), ("cleaned", Some("usage limit reached")));
-        let failed = cleanup_activity(Provider::Claude, &demo_folder(), &Err(Error::rejected("Invalid memory path: x")), 100);
+        let failed = cleanup_activity(Provider::Claude, &demo_folder(), 90, &Err(Error::rejected("Invalid memory path: x")), 100);
         assert_eq!((failed.kind.as_str(), failed.error.as_deref(), failed.notes.len()), ("cleanup_failed", Some("Invalid memory path: x"), 0));
     }
 

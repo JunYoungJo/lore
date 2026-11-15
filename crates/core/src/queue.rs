@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 
 use rusqlite::{params, Connection, OptionalExtension, Row};
 use serde::Serialize;
 
+use crate::cleanup::Check;
 use crate::error::{Error, Failure, Result};
 use crate::transcript::{canonical_path, digest, Provider};
 
@@ -170,6 +172,13 @@ impl Queue {
                 notes TEXT NOT NULL DEFAULT '[]',
                 error TEXT
             );
+            CREATE TABLE IF NOT EXISTS cleanups (
+                folder TEXT PRIMARY KEY,
+                at INTEGER NOT NULL DEFAULT 0,
+                changed INTEGER NOT NULL DEFAULT 0,
+                failed_at INTEGER NOT NULL DEFAULT 0,
+                error TEXT
+            );
             CREATE TABLE IF NOT EXISTS seen_files (
                 path TEXT PRIMARY KEY,
                 size INTEGER NOT NULL,
@@ -316,6 +325,32 @@ impl Queue {
         let last = self.connection.last_insert_rowid();
         self.connection.execute("DELETE FROM activity WHERE id <= ?1", params![last - ACTIVITY_KEPT])?;
         Ok(())
+    }
+
+    /// A cleanup run of `folder` finished. `note` says why it stopped before the whole folder was done.
+    pub fn cleanup_finished(&self, folder: &str, at: i64, changed: bool, note: Option<&str>) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO cleanups (folder, at, changed, failed_at, error) VALUES (?1, ?2, ?3, 0, ?4)
+             ON CONFLICT(folder) DO UPDATE SET at = ?2, changed = ?3, failed_at = 0, error = ?4",
+            params![folder, at, changed, note],
+        )?;
+        Ok(())
+    }
+
+    /// A cleanup run of `folder` failed. What the last finished run came to is kept.
+    pub fn cleanup_failed(&self, folder: &str, at: i64, error: &str) -> Result<()> {
+        self.connection.execute(
+            "INSERT INTO cleanups (folder, failed_at, error) VALUES (?1, ?2, ?3)
+             ON CONFLICT(folder) DO UPDATE SET failed_at = ?2, error = ?3",
+            params![folder, at, error],
+        )?;
+        Ok(())
+    }
+
+    pub fn cleanup_checks(&self) -> Result<BTreeMap<String, Check>> {
+        let mut statement = self.connection.prepare("SELECT folder, at, changed, failed_at, error FROM cleanups")?;
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, Check { at: row.get(1)?, changed: row.get(2)?, failed_at: row.get(3)?, error: row.get(4)? })))?;
+        Ok(rows.collect::<rusqlite::Result<BTreeMap<_, _>>>()?)
     }
 
     pub fn clear_activity(&self) -> Result<usize> {
@@ -511,6 +546,21 @@ mod tests {
         let recent = queue.recent_activity(10).unwrap();
         assert_eq!(recent.iter().map(|a| a.kind.as_str()).collect::<Vec<_>>(), vec!["recorded", "started"]);
         assert_eq!(recent[0].notes, vec!["projects/demo/a.md".to_string()]);
+    }
+
+    #[test]
+    fn a_failed_cleanup_keeps_what_the_last_finished_one_came_to() {
+        let dir = tempfile::tempdir().unwrap();
+        let queue = Queue::open(&dir.path().join("state.sqlite")).unwrap();
+        assert!(queue.cleanup_checks().unwrap().is_empty());
+        queue.cleanup_failed("demo", 50, "The model timed out.").unwrap();
+        assert_eq!(queue.cleanup_checks().unwrap()["demo"], Check { at: 0, changed: false, failed_at: 50, error: Some("The model timed out.".into()) });
+        queue.cleanup_finished("demo", 100, true, None).unwrap();
+        assert_eq!(queue.cleanup_checks().unwrap()["demo"], Check { at: 100, changed: true, failed_at: 0, error: None });
+        queue.cleanup_failed("demo", 200, "qmd was not found.").unwrap();
+        assert_eq!(queue.cleanup_checks().unwrap()["demo"], Check { at: 100, changed: true, failed_at: 200, error: Some("qmd was not found.".into()) });
+        queue.cleanup_finished("demo", 300, false, Some("Stopped early.")).unwrap();
+        assert_eq!(queue.cleanup_checks().unwrap()["demo"], Check { at: 300, changed: false, failed_at: 0, error: Some("Stopped early.".into()) });
     }
 
     #[test]

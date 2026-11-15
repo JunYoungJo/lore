@@ -2,7 +2,7 @@ export type Provider = "claude" | "codex";
 
 export type JobStatus = "pending" | "applying" | "index_pending" | "done" | "failed" | "skipped";
 
-export type ActivityKind = "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started" | "cleaned" | "cleanup_failed";
+export type ActivityKind = "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started" | "cleaned" | "cleanup_failed" | "cleanup_undone";
 
 export interface Current {
   jobId: string;
@@ -11,17 +11,59 @@ export interface Current {
   startedAt: number;
 }
 
-/** A cleanup the user asked for. `startedAt` is null while it waits for the worker. */
-export interface Cleaning {
+/** One folder of a cleanup run. `absorb` names the folders merged into it. `startedAt` is null while it waits. */
+export interface CleanupItem {
   folder: string;
   absorb: string[];
+  state: "waiting" | "running" | "done" | "failed";
   startedAt: number | null;
+}
+
+/** The folders one request asked to clean up, cleaned one after another. It is gone once the last one is done. */
+export interface CleanupRun {
+  id: number;
+  items: CleanupItem[];
+}
+
+/** A folder to clean up and the folders to merge into it first. */
+export interface CleanupTarget {
+  folder: string;
+  absorb: string[];
+}
+
+/** The last cleanup that changed a folder, or the undoing of it. `commit` is null when it cannot be undone. */
+export interface CleanupLast {
+  at: number;
+  kind: "changed" | "undone";
+  commit: string | null;
+  summary: string;
+  changed: string[];
+  removed: { path: string; reason: string }[];
+  moved: { from: string; to: string }[];
 }
 
 /** A folder of notes that can be cleaned up: "common" or a project. */
 export interface CleanupFolder {
   name: string;
   notes: number;
+  /** Notes that are new or changed since the last cleanup; all of them when there was none. */
+  fresh: number;
+  due: boolean;
+  last: CleanupLast | null;
+  /** When a later run looked at the folder and found nothing to change. */
+  checkedAt: number | null;
+  failedAt: number | null;
+  failure: string | null;
+}
+
+export interface CleanupSnapshot {
+  repository: boolean;
+  folders: CleanupFolder[];
+  run: CleanupRun | null;
+  /** Why a run that waits has not started yet. */
+  blocked: string | null;
+  auto: boolean;
+  dueNotes: number;
 }
 
 export interface Counts {
@@ -96,6 +138,8 @@ export interface Settings {
   since: number;
   paused: boolean;
   syncEnabled: boolean;
+  /** Clean up a folder of notes without being asked once enough of its notes have changed. */
+  autoCleanup: boolean;
   maxChars: number;
   notesBudget: number;
   qmdIndex: string;
@@ -177,7 +221,9 @@ export interface Snapshot {
   syncing?: boolean;
   state: "idle" | "working" | "paused" | "reviewing";
   current: Current | null;
-  cleanup: Cleaning | null;
+  cleanup: CleanupRun | null;
+  /** The folders with enough changed notes to be worth a cleanup, as of the last look. */
+  cleanupDue: { name: string; fresh: number }[];
   counts: Counts;
   recent: Activity[];
   attention: Job[];

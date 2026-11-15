@@ -1265,28 +1265,230 @@ svg.kind-deleted {
   margin: 0;
 }
 
-.cleanup {
-  padding: 10px 12px 12px;
+/* The cleanup window. It shares the review window's frame: a list on the left, the chosen item on the right. */
+.cleanup-window .review-head .btn {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
 }
 
-.cleanup .cli-fields {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+.cleanup-window .review-head .head-sub {
+  white-space: normal;
+}
+
+.cleanup-list {
+  padding-right: 10px;
+}
+
+.cleanup-more {
+  margin-top: 22px;
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+.cleanup-more:hover {
+  color: var(--accent);
+}
+
+.cleanup-row .check:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.cleanup-standing {
+  margin-top: 4px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text3);
+}
+
+.cleanup-standing.due {
+  color: var(--text2);
+}
+
+.cleanup-standing.danger {
+  color: var(--danger);
+}
+
+.badge.cleanup-waiting {
+  background: var(--surface2);
+  color: var(--text2);
+}
+
+.badge.cleanup-running {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.cleanup-done {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.cleanup-failed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.cleanup-detail {
+  min-width: 0;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
+}
+
+.cleanup-detail-head {
+  margin-bottom: 14px;
+}
+
+.cleanup-detail .banner {
+  margin: 0 0 12px;
+}
+
+.cleanup-line {
+  margin: 0 0 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text2);
+}
+
+.cleanup-line.strong {
   margin: 0;
+  font-weight: 600;
+  color: var(--text);
 }
 
-.cleanup-foot {
+.cleanup-last-head {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-top: 10px;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
-.cleanup-note {
-  flex: 1;
-  min-width: 0;
-  font-size: 11.5px;
-  line-height: 1.45;
+.cleanup-summary {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--text);
+}
+
+/* Korean breaks between words, not inside them. */
+.cleanup-summary,
+.cleanup-note-why,
+.cleanup-line {
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.cleanup-eyebrow {
+  margin: 16px 0 6px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
   color: var(--text3);
+}
+
+.cleanup-note-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: 12.5px;
+  line-height: 1.45;
+  text-align: left;
+  color: var(--text);
+}
+
+.cleanup-note-row > svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--text3);
+}
+
+.cleanup-note-row.gone > svg {
+  color: var(--danger);
+}
+
+.cleanup-note-row.open {
+  cursor: pointer;
+}
+
+.cleanup-note-row.open:hover {
+  background: var(--surface2);
+}
+
+.cleanup-note-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cleanup-note-main.moved {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.cleanup-note-name {
+  overflow-wrap: anywhere;
+  font-weight: 600;
+}
+
+.cleanup-note-row.gone .cleanup-note-name,
+.cleanup-note-name.old {
+  font-weight: 500;
+  color: var(--text2);
+  text-decoration: line-through;
+}
+
+.cleanup-note-why {
+  color: var(--text2);
+}
+
+.cleanup-merge {
+  min-width: 0;
+  margin: 26px 0 0;
+  padding: 2px 0 0;
+  border: none;
+  border-top: 1px solid var(--line);
+}
+
+.cleanup-hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text2);
+}
+
+.cleanup-merge-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cleanup-merge-row .input.set-select {
+  width: 240px;
+}
+
+.cleanup-window .review-actions .grow.plain {
+  color: var(--text2);
 }
 
 .cli-field .set-field,

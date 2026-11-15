@@ -15,6 +15,7 @@ import {
   Plug,
   RotateCw,
   Share2,
+  Undo2,
   type LucideIcon,
 } from "lucide-react";
 import { useRef, useState, type RefObject } from "react";
@@ -36,6 +37,7 @@ const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label
   failed: { glyph: CircleAlert, tint: "red", label: "Failed", tone: "danger" },
   cleaned: { glyph: Eraser, tint: "green", label: "Nothing to clean up", tone: "" },
   cleanup_failed: { glyph: CircleAlert, tint: "red", label: "Cleanup failed", tone: "danger" },
+  cleanup_undone: { glyph: Undo2, tint: "neutral", label: "Cleanup undone", tone: "" },
 };
 
 const plural = (count: number, one: string, many = `${one}s`) => `${count} ${count === 1 ? one : many}`;
@@ -57,8 +59,10 @@ function QueueLink({ snapshot }: { snapshot: Snapshot }) {
 function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
   const togglePause = useAppStore((store) => store.togglePause);
   const { current, settings } = snapshot;
-  // A cleanup that still waits for its turn shows in Settings, where it was asked for.
-  const cleaning = snapshot.cleanup?.startedAt != null ? { folder: snapshot.cleanup.folder, startedAt: snapshot.cleanup.startedAt } : null;
+  // A run that still waits for its turn shows in the cleanup window, where it was asked for.
+  const items = snapshot.cleanup?.items ?? [];
+  const position = items.findIndex((item) => item.state === "running");
+  const cleaning = position >= 0 ? { folder: items[position].folder, startedAt: items[position].startedAt ?? now, position: position + 1, total: items.length } : null;
   const chosen = settings.models[settings.backend];
   const model = `${providerLabel(settings.backend)}${chosen ? ` ${chosen}` : ""}`;
 
@@ -80,7 +84,8 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     glyph = LoaderCircle;
     tint = "blue";
     title = `Cleaning up ${cleaning.folder}`;
-    sub = `${model} · ${elapsed(cleaning.startedAt, now)}`;
+    sub = [cleaning.total > 1 && `${cleaning.position} of ${cleaning.total} folders`, model, elapsed(cleaning.startedAt, now)].filter(Boolean).join(" · ");
+    action = { label: "View", run: () => void api.openCleanup() };
   } else if (snapshot.syncing) {
     tone = "paused";
     glyph = GitCompare;
@@ -120,7 +125,7 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
           )}
         </div>
         {action && (
-          <button type="button" className="pill primary" onClick={action.run}>
+          <button type="button" className={`pill ${cleaning ? "ghost" : "primary"}`} onClick={action.run}>
             {action.label}
           </button>
         )}
@@ -227,6 +232,21 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       run: () => void api.openSync(),
     });
   }
+  // With automatic cleanup on, the due folders are cleaned without anyone asking.
+  const due = [...(snapshot.cleanupDue ?? [])].sort((a, b) => b.fresh - a.fresh);
+  if (due.length > 0 && !snapshot.cleanup && !snapshot.settings.autoCleanup) {
+    // The line is short, so it says why first and names the folders with the most changed notes.
+    const named = due.slice(0, 2).map((folder) => folder.name);
+    list.push({
+      key: "cleanup",
+      glyph: Eraser,
+      tint: "blue",
+      title: `${plural(due.length, "folder")} to clean up`,
+      detail: `Many notes changed in ${due.length > 2 ? `${named.join(", ")} and ${due.length - 2} more` : named.join(" and ")}`,
+      action: "Open",
+      run: () => void api.openCleanup(),
+    });
+  }
   return list;
 }
 
@@ -314,15 +334,9 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
   const name = activity.project ?? providerLabel(activity.provider);
   const hasNotes = activity.notes.length > 0;
-  const removed = activity.notes.filter((note) => goneNotes(activity.summary).has(note)).length;
-  const label =
-    activity.kind === "recorded"
-      ? `${plural(activity.notes.length, "note")} updated`
-      : activity.kind === "cleaned" && hasNotes
-        ? `${activity.notes.length - removed} changed · ${removed} removed`
-        : kind.label;
+  const label = activity.kind === "recorded" ? `${plural(activity.notes.length, "note")} updated` : kind.label;
   const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? summaryLine(activity.summary);
-  const kindTone = activity.kind === "cleaned" && hasNotes ? "ok" : kind.tone;
+  const kindTone = kind.tone;
   const tone = activity.error ? "danger" : hasNotes ? "" : "muted";
   return (
     <div className="row activity">
@@ -351,12 +365,68 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
   );
 }
 
+const isCleanup = (activity: Activity) => activity.kind === "cleaned" || activity.kind === "cleanup_failed";
+
+/** The recent activity as rows: a cleanup run is one row however many folders it cleaned. */
+function activityRows(recent: Activity[]): Activity[][] {
+  const rows: Activity[][] = [];
+  const runs = new Map<string, Activity[]>();
+  for (const activity of recent) {
+    // The folders of one run share an id; an entry written before runs existed stands alone.
+    const run = isCleanup(activity) && /^cleanup-\d+$/.test(activity.jobId) ? activity.jobId : null;
+    const row = run ? runs.get(run) : undefined;
+    if (row) {
+      row.push(activity);
+      continue;
+    }
+    const started = [activity];
+    if (run) runs.set(run, started);
+    rows.push(started);
+  }
+  return rows;
+}
+
+function CleanupRow({ folders, now }: { folders: Activity[]; now: number }) {
+  const failed = folders.filter((folder) => folder.kind === "cleanup_failed").length;
+  const removed = folders.reduce((sum, folder) => sum + folder.notes.filter((note) => goneNotes(folder.summary).has(note)).length, 0);
+  const changed = folders.reduce((sum, folder) => sum + folder.notes.length, 0) - removed;
+  const only = folders.length === 1 ? folders[0] : null;
+  const name = only ? (only.project ?? "Cleanup") : plural(folders.length, "folder");
+  const allFailed = failed === folders.length;
+  const label = allFailed ? "Cleanup failed" : changed + removed === 0 ? "Nothing to clean up" : `${changed} changed · ${removed} removed`;
+  const names = folders.map((folder) => folder.project).filter(Boolean).reverse().join(" · ");
+  const stopped = only?.kind === "cleaned" && only.error ? `Stopped early: ${only.error}` : null;
+  // The line is cut when it is long, so a failure among the folders comes before their names.
+  const detail = only ? (stopped ?? only.error ?? summaryLine(only.summary)) : `${failed > 0 && !allFailed ? `${failed} failed · ` : ""}${names}`;
+  const danger = allFailed || Boolean(stopped);
+  return (
+    <div className="row activity">
+      <IconChip glyph={allFailed ? CircleAlert : Eraser} tint={allFailed ? "red" : "green"} />
+      <div className="row-main">
+        <div className="row-title">
+          <span className="name" title={name}>
+            {name}
+          </span>
+          <span className="badge">{providerLabel(folders[0].provider)}</span>
+          <button type="button" className={`row-kind ${allFailed ? "danger" : changed + removed > 0 ? "ok" : ""} notes-btn`} title="Open the cleanup window" onClick={() => void api.openCleanup()}>
+            {label}
+          </button>
+        </div>
+        <div className={`row-line ${danger ? "danger" : changed + removed > 0 ? "" : "muted"}`} title={detail || undefined}>
+          {detail}
+        </div>
+      </div>
+      <span className="row-time">{relativeTime(folders[0].at, now)}</span>
+    </div>
+  );
+}
+
 export function StatusView({ snapshot }: { snapshot: Snapshot }) {
   const now = useNow(15_000);
   const clearActivity = useAppStore((store) => store.clearActivity);
   const [confirming, setConfirming] = useState(false);
   const clearButton = useRef<HTMLButtonElement>(null);
-  const recent = snapshot.recent.filter((activity) => KINDS[activity.kind]);
+  const recent = activityRows(snapshot.recent.filter((activity) => KINDS[activity.kind]));
   const canReview = Boolean(snapshot.review);
 
   return (
@@ -392,7 +462,7 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
             <div>Completed recordings will appear here.</div>
           </div>
         ) : (
-          recent.map((activity) => <ActivityRow key={activity.id} activity={activity} now={now} canReview={canReview} />)
+          recent.map((row) => (isCleanup(row[0]) ? <CleanupRow key={row[0].id} folders={row} now={now} /> : <ActivityRow key={row[0].id} activity={row[0]} now={now} canReview={canReview} />))
         )}
       </section>
     </div>

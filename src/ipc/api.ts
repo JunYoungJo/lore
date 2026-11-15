@@ -11,8 +11,12 @@ export const setPaused = (paused: boolean): Promise<void> => invoke("set_paused"
 export const retryJob = (id: string): Promise<boolean> => invoke("retry_job", { id });
 export const discardJob = (id: string): Promise<boolean> => invoke("discard_job", { id });
 export const clearActivity = (): Promise<number> => invoke("clear_activity");
-export const getCleanupFolders = (): Promise<import("./contract").CleanupFolder[]> => invoke("get_cleanup_folders");
-export const startCleanup = (folder: string, absorb: string[]): Promise<void> => invoke("start_cleanup", { folder, absorb });
+export const openCleanup = (): Promise<void> => invoke("open_cleanup");
+export const getCleanup = (): Promise<import("./contract").CleanupSnapshot> => invoke("get_cleanup");
+export const startCleanup = (targets: import("./contract").CleanupTarget[]): Promise<void> => invoke("start_cleanup", { targets });
+export const stopCleanup = (): Promise<void> => invoke("stop_cleanup");
+export const undoCleanup = (folder: string): Promise<string | null> => invoke("undo_cleanup", { folder });
+export const setAutoCleanup = (enabled: boolean): Promise<void> => invoke("set_auto_cleanup", { enabled });
 export const openReview = (): Promise<void> => invoke("open_review");
 export const beginReview = (): Promise<void> => invoke("begin_review");
 export const endReview = (): Promise<void> => invoke("end_review");

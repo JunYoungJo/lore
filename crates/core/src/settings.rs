@@ -103,6 +103,8 @@ pub struct Settings {
     pub qmd_index: String,
     pub commands: Commands,
     pub sync_enabled: bool,
+    /// Clean up a folder of notes without being asked once enough of its notes have changed.
+    pub auto_cleanup: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +147,7 @@ impl Default for Settings {
             qmd_index: "index".into(),
             commands: Commands::default(),
             sync_enabled: false,
+            auto_cleanup: false,
         }
     }
 }

@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 
 use lore_core::catalog::{self, Catalog};
-use lore_core::cleanup;
 use lore_core::hooks::{self, HookState, HookStatus};
 use lore_core::pipeline;
 use lore_core::queue::{Activity, Counts, Job, Queue, Status};
@@ -15,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use tauri_plugin_autostart::ManagerExt;
 use tauri_plugin_opener::OpenerExt;
 
-use crate::state::{AppState, Cleaning, Current};
+use crate::state::{AppState, CleanupRun, Current, Due, ItemState};
 use crate::tray;
 
 #[derive(Serialize)]
@@ -23,7 +22,9 @@ use crate::tray;
 pub struct Snapshot {
     pub state: &'static str,
     pub current: Option<Current>,
-    pub cleanup: Option<Cleaning>,
+    pub cleanup: Option<CleanupRun>,
+    /// The folders with enough changed notes to be worth a cleanup, as of the last look.
+    pub cleanup_due: Vec<Due>,
     pub counts: Counts,
     pub recent: Vec<Activity>,
     pub attention: Vec<Job>,
@@ -106,7 +107,7 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
     let reviewing = state.reviewing();
     let sync = lore_core::sync::summary(&lore_core::sync::folder(&state.paths, &settings.knowledge_root()));
     let syncing = state.syncing();
-    let label = if current.is_some() || cleanup.as_ref().is_some_and(|cleaning| cleaning.started_at.is_some()) {
+    let label = if current.is_some() || cleanup.as_ref().is_some_and(|run| run.items.iter().any(|item| item.state == ItemState::Running)) {
         "working"
     } else if reviewing || syncing {
         "reviewing"
@@ -126,8 +127,10 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         state: label,
         current,
         cleanup,
+        cleanup_due: state.due(),
         counts,
-        recent: queue.recent_activity(30).map_err(error)?,
+        // A cleanup run lists one entry per folder, and the window shows a run as one line.
+        recent: queue.recent_activity(60).map_err(error)?,
         attention: queue
             .jobs_with_status(&[Status::Failed, Status::Applying, Status::IndexPending], 20)
             .map_err(error)?
@@ -213,28 +216,11 @@ pub fn clear_activity(app: AppHandle, state: State<'_, AppState>) -> Result<usiz
     Ok(cleared)
 }
 
-// Async and off the main thread: counting reads every note in the memory folder.
-#[tauri::command]
-pub async fn get_cleanup_folders(app: AppHandle) -> Result<Vec<cleanup::Folder>, String> {
-    tauri::async_runtime::spawn_blocking(move || cleanup::folders(&app.state::<AppState>().settings().knowledge_root()).map_err(error)).await.map_err(error)?
-}
-
-/// Hold a cleanup for the worker, which runs it between recordings under the same gate.
-#[tauri::command]
-pub fn start_cleanup(app: AppHandle, state: State<'_, AppState>, folder: String, absorb: Vec<String>) -> Result<(), String> {
-    let target = cleanup::Target { folder, absorb };
-    target.check().map_err(error)?;
-    if !state.request_cleanup(target) {
-        return Err("A cleanup is already waiting or running.".into());
-    }
-    let _ = app.emit("state-changed", ());
-    Ok(())
-}
-
 #[tauri::command]
 pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: EditableSettings) -> Result<(), String> {
     let mut merged = state.settings().edited(settings);
-    if merged.knowledge_root != state.settings().knowledge_root && state.operation_busy() {
+    let moved = merged.knowledge_root != state.settings().knowledge_root;
+    if moved && state.operation_busy() {
         return Err("The memory folder cannot be changed while recording or syncing.".into());
     }
     merged.validate().map_err(error)?;
@@ -242,6 +228,11 @@ pub fn save_settings(app: AppHandle, state: State<'_, AppState>, settings: Edita
     settings::save(&state.paths.settings(), &merged).map_err(error)?;
     state.set_problem(None);
     state.replace_settings(merged);
+    if moved {
+        // Another memory folder has other folders to clean up.
+        state.set_due(Vec::new());
+        crate::cleanup::refresh_due(&app);
+    }
     tray::refresh_tooltip(&app);
     let _ = app.emit("state-changed", ());
     Ok(())

@@ -182,7 +182,7 @@ pub fn side_by_side(old: &str, new: &str) -> Vec<DiffRow> {
 }
 
 pub fn since_commit(recent: &[Activity], last_commit: Option<i64>) -> Vec<&Activity> {
-    recent.iter().filter(|activity| matches!(activity.kind.as_str(), "recorded" | "cleaned") && last_commit.is_none_or(|time| activity.at > time)).collect()
+    recent.iter().filter(|activity| matches!(activity.kind.as_str(), "recorded" | "cleaned" | "cleanup_undone") && last_commit.is_none_or(|time| activity.at > time)).collect()
 }
 
 /// What an activity says about one note. A summary names, on the lines after its first, each
@@ -282,6 +282,52 @@ pub fn commit_all(root: &Path, message: &str) -> Result<bool> {
 pub fn record_commit(root: &Path) -> Result<bool> {
     ensure_reviewed(root)?;
     commit_all(root, &record_message(&local_date()))
+}
+
+/// One commit of the memory folder and the files it changed.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Commit {
+    pub id: String,
+    pub at: i64,
+    pub subject: String,
+    pub body: String,
+    pub files: Vec<FileChange>,
+}
+
+/// Every commit, newest first. Empty when the folder is not a repository or has no commit yet.
+/// A merge commit lists no files; what it brought in is listed by the commits it merged.
+pub fn history(root: &Path) -> Result<Vec<Commit>> {
+    if !is_repository(root) || resolve(root, "HEAD").is_none() {
+        return Ok(Vec::new());
+    }
+    let output = git(root, &["log", "--no-renames", "--name-status", "-z", "--format=%x1e%H%x1f%ct%x1f%s%x1f%b%x1f"], None)?;
+    let commits = output.split('\x1e').filter_map(|record| {
+        let mut fields = record.splitn(5, '\x1f');
+        let (id, at, subject, body, files) = (fields.next()?, fields.next()?, fields.next()?, fields.next()?, fields.next()?);
+        // Git starts the file list on a new line even when it separates the entries with NUL.
+        let files = parse_name_status(&files.replace("\0\n", "\0"));
+        Some(Commit { id: id.to_string(), at: at.parse().ok()?, subject: subject.to_string(), body: body.trim().to_string(), files })
+    });
+    Ok(commits.collect())
+}
+
+/// Undo one commit with a new commit that carries `message`. When later changes touch the same
+/// lines the folder is left as it was and the caller is told that the commit cannot be undone.
+pub fn revert(root: &Path, commit: &str, message: &str) -> Result<()> {
+    // Notes written but not committed yet get their own commit first, as before a cleanup.
+    record_commit(root)?;
+    if in_progress(root)? {
+        return Err(Error::permanent("Finish the Git merge or rebase in the memory folder first."));
+    }
+    if git(root, &["revert", "--no-commit", commit], None).is_err() {
+        // Everything was committed above, so going back to the last commit loses nothing.
+        if git(root, &["revert", "--abort"], None).is_err() {
+            git(root, &["reset", "--hard", "-q", "HEAD"], None)?;
+        }
+        return Err(Error::permanent("The same notes changed again afterwards, so this cannot be undone automatically."));
+    }
+    git(root, &["commit", "-q", "--allow-empty", "-F", "-"], Some(message))?;
+    Ok(())
 }
 
 fn parse_name_status(output: &str) -> Vec<FileChange> {

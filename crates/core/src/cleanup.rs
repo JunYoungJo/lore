@@ -62,24 +62,158 @@ impl Target {
     }
 }
 
+/// A folder is due for a cleanup once this many of its notes are new or changed since the last one.
+pub const DUE_NOTES: usize = 10;
+const CLEANED: &str = "Clean up memory notes (";
+const UNDONE: &str = "Undo cleanup of memory notes (";
+
+/// What the last cleanup run on this PC came to. It is kept in the app's database, because a
+/// run that changes nothing leaves no commit and a run that fails leaves nothing at all.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Check {
+    /// When the last run that finished did so; 0 when none has.
+    pub at: i64,
+    pub changed: bool,
+    /// When the last run failed; 0 when the last run finished.
+    pub failed_at: i64,
+    /// Why the last run failed, or why it stopped before the whole folder was done.
+    pub error: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Gone {
+    pub path: String,
+    pub reason: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Moved {
+    pub from: String,
+    pub to: String,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LastKind {
+    Changed,
+    Undone,
+}
+
+/// The last cleanup that changed a folder, read from its commit, or the undoing of it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Last {
+    pub at: i64,
+    pub kind: LastKind,
+    /// The commit that undoing would revert. `None` once it is undone, or when the memory
+    /// folder is not a repository.
+    pub commit: Option<String>,
+    pub summary: String,
+    pub changed: Vec<String>,
+    pub removed: Vec<Gone>,
+    pub moved: Vec<Moved>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct Folder {
     pub name: String,
     pub notes: usize,
+    /// Notes that are new or changed since the last cleanup; all of them when there was none.
+    pub fresh: usize,
+    pub due: bool,
+    pub last: Option<Last>,
+    /// When a later run looked at the folder and found nothing to change.
+    pub checked_at: Option<i64>,
+    pub failed_at: Option<i64>,
+    pub failure: Option<String>,
 }
 
-/// The folders that hold notes: the shared one first, then the projects by name.
-pub fn folders(knowledge_root: &Path) -> Result<Vec<Folder>> {
-    let mut counts: BTreeMap<String, usize> = BTreeMap::new();
-    for path in notes::load_all(knowledge_root)?.into_keys() {
-        let name = match path.split('/').collect::<Vec<_>>().as_slice() {
-            ["projects", project, _] => project.to_string(),
-            _ => COMMON.to_string(),
-        };
-        *counts.entry(name).or_default() += 1;
+/// The folder a cleanup commit, or the commit undoing one, is about.
+fn marked(commit: &review::Commit) -> Option<&str> {
+    let rest = commit.subject.strip_prefix(CLEANED).or_else(|| commit.subject.strip_prefix(UNDONE))?;
+    rest.split_once(", ").map(|(folder, _)| folder)
+}
+
+fn last_of(commit: &review::Commit) -> Last {
+    if commit.subject.starts_with(UNDONE) {
+        return Last { at: commit.at, kind: LastKind::Undone, commit: None, summary: String::new(), changed: Vec::new(), removed: Vec::new(), moved: Vec::new() };
     }
-    let shared = counts.remove(COMMON).map(|notes| Folder { name: COMMON.into(), notes });
-    Ok(shared.into_iter().chain(counts.into_iter().map(|(name, notes)| Folder { name, notes })).collect())
+    let mut summary = String::new();
+    let mut removed = Vec::new();
+    let mut moved = Vec::new();
+    // The message is the summary and then the lines of `proposal::change_log`.
+    for line in commit.body.lines().map(str::trim).filter(|line| !line.is_empty()) {
+        let gone = line.strip_prefix("Removed ").and_then(|rest| rest.split_once(": "));
+        let went = line.strip_prefix("Moved ").and_then(|rest| rest.split_once(" to "));
+        match (gone, went) {
+            (Some((path, reason)), _) if review::is_note(path) => removed.push(Gone { path: path.into(), reason: reason.into() }),
+            (_, Some((from, to))) if review::is_note(from) && review::is_note(to) => moved.push(Moved { from: from.into(), to: to.into() }),
+            _ if summary.is_empty() => summary = line.to_string(),
+            _ => {}
+        }
+    }
+    let written = |change: &&review::FileChange| change.kind != review::ChangeKind::Deleted && review::is_note(&change.path);
+    let changed = commit.files.iter().filter(written).map(|change| change.path.clone()).collect();
+    Last { at: commit.at, kind: LastKind::Changed, commit: Some(commit.id.clone()), summary, changed, removed, moved }
+}
+
+fn folder_of(path: &str) -> String {
+    match path.split('/').collect::<Vec<_>>().as_slice() {
+        ["projects", project, _] => project.to_string(),
+        _ => COMMON.to_string(),
+    }
+}
+
+/// The folders that hold notes, the shared one first and then the projects by name, each with
+/// what its last cleanup did and how many notes have changed since. Nothing here calls a model:
+/// the commits of the memory folder and `checks` say all of it.
+pub fn folders(knowledge_root: &Path, checks: &BTreeMap<String, Check>) -> Result<Vec<Folder>> {
+    let mut held: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for path in notes::load_all(knowledge_root)?.into_keys() {
+        held.entry(folder_of(&path)).or_default().insert(path);
+    }
+    let history = review::history(knowledge_root)?;
+    let describe = |(name, paths): (String, BTreeSet<String>)| {
+        let marker = history.iter().find(|commit| marked(commit) == Some(name.as_str()));
+        let check = checks.get(&name);
+        let finished = check.filter(|check| check.at > 0);
+        let since = marker.map_or(0, |commit| commit.at).max(finished.map_or(0, |check| check.at));
+        let fresh = if since == 0 {
+            paths.len()
+        } else {
+            let later = history.iter().filter(|commit| commit.at > since).flat_map(|commit| &commit.files);
+            later.filter(|change| paths.contains(&change.path)).map(|change| &change.path).collect::<BTreeSet<_>>().len()
+        };
+        let last = marker.map(last_of).or_else(|| {
+            // Without a repository there is no commit to read; the run is still remembered.
+            let check = finished.filter(|check| check.changed)?;
+            Some(Last { at: check.at, kind: LastKind::Changed, commit: None, summary: String::new(), changed: Vec::new(), removed: Vec::new(), moved: Vec::new() })
+        });
+        let checked_at = finished.filter(|check| !check.changed && marker.is_none_or(|commit| check.at >= commit.at)).map(|check| check.at);
+        let failed_at = check.map(|check| check.failed_at).filter(|at| *at > 0);
+        Folder { notes: paths.len(), fresh, due: fresh >= DUE_NOTES, last, checked_at, failed_at, failure: check.and_then(|check| check.error.clone()), name }
+    };
+    let shared = held.remove(COMMON).map(|paths| describe((COMMON.to_string(), paths)));
+    Ok(shared.into_iter().chain(held.into_iter().map(describe)).collect())
+}
+
+/// The targets of a run over several folders, in the order they are cleaned: the projects by
+/// name and the shared folder last, since cleaning a project can add to the shared notes.
+pub fn in_order(mut targets: Vec<Target>) -> Vec<Target> {
+    targets.sort_by(|a, b| (a.folder == COMMON, &a.folder).cmp(&(b.folder == COMMON, &b.folder)));
+    targets.dedup_by(|a, b| a.folder == b.folder);
+    targets
+}
+
+/// Undo the last cleanup of a folder with one commit that reverts it. Returns the notes that
+/// came back or changed back.
+pub fn undo(knowledge_root: &Path, folder: &str) -> Result<Vec<String>> {
+    let history = review::history(knowledge_root)?;
+    let newest = history.iter().find(|commit| marked(commit) == Some(folder));
+    let commit = newest.filter(|commit| commit.subject.starts_with(CLEANED)).ok_or_else(|| Error::permanent(format!("{folder} has no cleanup to undo.")))?;
+    let message = format!("{UNDONE}{folder}, {})\n\nThis reverts commit {}.\n", review::local_date(), commit.id);
+    review::revert(knowledge_root, &commit.id, &message)?;
+    Ok(commit.files.iter().filter(|change| review::is_note(&change.path)).map(|change| change.path.clone()).collect())
 }
 
 /// The notes a cleanup can touch: those of its folders and, for a project, the shared ones.
@@ -342,7 +476,7 @@ pub fn run(knowledge_root: &Path, target: &Target, budget: usize, today: &str, a
 }
 
 pub fn commit_message(target: &Target, date: &str, summary: &str, log: &[String]) -> String {
-    let mut message = format!("Clean up memory notes ({}, {date})\n", target.folder);
+    let mut message = format!("{CLEANED}{}, {date})\n", target.folder);
     for paragraph in [summary.trim().to_string(), log.join("\n")] {
         if !paragraph.is_empty() {
             message.push_str(&format!("\n{paragraph}\n"));
@@ -461,8 +595,21 @@ mod tests {
     fn the_folders_that_can_be_cleaned_are_listed_with_their_note_counts() {
         let fixture = Fixture::new(&[("common/a.md", "# A"), ("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/old/queue.md", OLD), ("projects/demo/notes.txt", "x"), ("sources/claude/a.md", "copy")]);
         fs::create_dir_all(fixture.root().join("projects/empty")).unwrap();
-        let listed: Vec<(String, usize)> = folders(fixture.root()).unwrap().into_iter().map(|folder| (folder.name, folder.notes)).collect();
-        assert_eq!(listed, vec![("common".to_string(), 1), ("demo".to_string(), 2), ("old".to_string(), 1)]);
+        let listed = folders(fixture.root(), &BTreeMap::new()).unwrap();
+        let counts: Vec<(&str, usize)> = listed.iter().map(|folder| (folder.name.as_str(), folder.notes)).collect();
+        assert_eq!(counts, vec![("common", 1), ("demo", 2), ("old", 1)]);
+        // A folder that was never cleaned counts every note as new, and is due once it holds enough.
+        assert!(listed.iter().all(|folder| folder.fresh == folder.notes && !folder.due && folder.last.is_none() && folder.checked_at.is_none()));
+        let many: Vec<(String, &str)> = (0..DUE_NOTES).map(|index| (format!("projects/big/n{index}.md"), "# N")).collect();
+        let grown = Fixture::new(&many.iter().map(|(path, text)| (path.as_str(), *text)).collect::<Vec<_>>());
+        assert!(folders(grown.root(), &BTreeMap::new()).unwrap()[0].due);
+    }
+
+    #[test]
+    fn a_run_over_several_folders_cleans_the_shared_folder_last_and_each_folder_once() {
+        let named = |folder: &str| Target { folder: folder.into(), absorb: vec![] };
+        let order: Vec<String> = in_order(vec![named("common"), named("zeta"), named("alpha"), named("zeta")]).into_iter().map(|target| target.folder).collect();
+        assert_eq!(order, vec!["alpha", "zeta", "common"]);
     }
 
     #[test]
@@ -744,14 +891,113 @@ mod tests {
         String::from_utf8_lossy(&output.stdout).to_string()
     }
 
-    #[test]
-    fn a_cleanup_is_one_commit_of_its_own_that_says_what_was_removed_and_moved() {
-        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/old/queue.md", OLD)]);
-        let root = fixture.root();
+    fn repository(root: &Path) {
         git(root, &["init", "-q"]);
         git(root, &["config", "user.name", "Lore Test"]);
         git(root, &["config", "user.email", "lore@example.invalid"]);
         git(root, &["config", "commit.gpgsign", "false"]);
+    }
+
+    /// Commit everything with a commit time of `at` seconds, so that tests can order commits.
+    fn commit_at(root: &Path, at: i64, message: &str) {
+        git(root, &["add", "-A"]);
+        let date = format!("@{at} +0000");
+        let output = std::process::Command::new("git").args(["commit", "-q", "-m", message]).env("GIT_AUTHOR_DATE", &date).env("GIT_COMMITTER_DATE", &date).current_dir(root).output().unwrap();
+        assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    }
+
+    /// A folder whose `popup.md` was merged into `bg.md` by a cleanup, with a recording after it.
+    fn cleaned_once() -> Fixture {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/other/queue.md", OLD)]);
+        let root = fixture.root();
+        repository(root);
+        commit_at(root, 100, "Record memory notes (2026-11-01)");
+        fs::write(root.join("projects/demo/bg.md"), BG.replace("TP 로그만", "TP 로그와 팝업 문구만")).unwrap();
+        fs::remove_file(root.join("projects/demo/popup.md")).unwrap();
+        commit_at(root, 200, &commit_message(&demo(), "2026-11-02", "팝업 노트를 BG 노트에 합쳤습니다.", &["Removed projects/demo/popup.md: BG 노트가 모두 담습니다.".to_string()]));
+        fs::write(root.join("projects/demo/new.md"), "# 새 노트\n").unwrap();
+        fs::write(root.join("projects/other/queue.md"), OLD.replace("하나만", "둘까지")).unwrap();
+        commit_at(root, 300, "Record memory notes (2026-11-03)");
+        fixture
+    }
+
+    fn named<'a>(folders: &'a [Folder], name: &str) -> &'a Folder {
+        folders.iter().find(|folder| folder.name == name).unwrap()
+    }
+
+    #[test]
+    fn a_folder_shows_what_its_last_cleanup_did_and_how_many_notes_changed_since() {
+        let fixture = cleaned_once();
+        let listed = folders(fixture.root(), &BTreeMap::new()).unwrap();
+        let demo = named(&listed, "demo");
+        assert_eq!((demo.notes, demo.fresh, demo.checked_at), (2, 1, None));
+        let last = demo.last.as_ref().unwrap();
+        assert_eq!((last.at, last.kind, last.summary.as_str()), (200, LastKind::Changed, "팝업 노트를 BG 노트에 합쳤습니다."));
+        assert!(last.commit.is_some());
+        assert_eq!(last.changed, vec!["projects/demo/bg.md"]);
+        assert_eq!(last.removed, vec![Gone { path: "projects/demo/popup.md".into(), reason: "BG 노트가 모두 담습니다.".into() }]);
+        // The other folder was never cleaned, so its one note counts as new.
+        let other = named(&listed, "other");
+        assert_eq!((other.fresh, other.last.is_none()), (1, true));
+
+        // A run that found nothing to change is known only from the app's database.
+        let checks = BTreeMap::from([
+            ("other".to_string(), Check { at: 250, ..Check::default() }),
+            ("demo".to_string(), Check { at: 400, failed_at: 500, error: Some("The model timed out.".into()), ..Check::default() }),
+        ]);
+        let listed = folders(fixture.root(), &checks).unwrap();
+        let other = named(&listed, "other");
+        assert_eq!((other.fresh, other.checked_at, other.last.is_none()), (1, Some(250), true));
+        let demo = named(&listed, "demo");
+        assert_eq!((demo.fresh, demo.checked_at, demo.failed_at, demo.failure.as_deref()), (0, Some(400), Some(500), Some("The model timed out.")));
+        assert_eq!(demo.last.as_ref().unwrap().at, 200);
+    }
+
+    #[test]
+    fn undoing_a_cleanup_brings_the_notes_back_with_one_commit() {
+        let fixture = cleaned_once();
+        let root = fixture.root();
+        let mut touched = undo(root, "demo").unwrap();
+        touched.sort();
+        assert_eq!(touched, vec!["projects/demo/bg.md", "projects/demo/popup.md"]);
+        assert_eq!(fixture.read("projects/demo/popup.md").as_deref(), Some(POPUP));
+        assert_eq!(fixture.read("projects/demo/bg.md").as_deref(), Some(BG));
+        // What was recorded after the cleanup stays.
+        assert!(fixture.read("projects/demo/new.md").is_some());
+        assert!(git(root, &["log", "-1", "--format=%s"]).starts_with("Undo cleanup of memory notes (demo, "));
+        assert_eq!(git(root, &["status", "--porcelain"]), "");
+
+        // An undone cleanup is not offered again, and undoing does not make the folder due at once.
+        let listed = folders(root, &BTreeMap::new()).unwrap();
+        let demo = named(&listed, "demo");
+        let last = demo.last.as_ref().unwrap();
+        assert_eq!((last.kind, last.commit.as_ref(), demo.fresh), (LastKind::Undone, None, 0));
+        assert!(undo(root, "demo").unwrap_err().to_string().contains("no cleanup to undo"));
+        assert!(undo(root, "other").unwrap_err().to_string().contains("no cleanup to undo"));
+    }
+
+    #[test]
+    fn a_cleanup_whose_notes_changed_again_is_not_undone_and_nothing_is_left_half_done() {
+        let fixture = cleaned_once();
+        let root = fixture.root();
+        let edited = BG.replace("TP 로그만", "아무것도 남기지 않습니다. 로그도");
+        fs::write(root.join("projects/demo/bg.md"), &edited).unwrap();
+        commit_at(root, 400, "Record memory notes (2026-11-04)");
+        let before = git(root, &["rev-parse", "HEAD"]);
+
+        let error = undo(root, "demo").unwrap_err();
+        assert!(error.to_string().contains("cannot be undone automatically"), "{error}");
+        assert_eq!(fixture.read("projects/demo/bg.md").as_deref(), Some(edited.as_str()));
+        assert_eq!(fixture.read("projects/demo/popup.md"), None);
+        assert_eq!(git(root, &["status", "--porcelain"]), "");
+        assert_eq!(git(root, &["rev-parse", "HEAD"]), before);
+    }
+
+    #[test]
+    fn a_cleanup_is_one_commit_of_its_own_that_says_what_was_removed_and_moved() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/old/queue.md", OLD)]);
+        let root = fixture.root();
+        repository(root);
         git(root, &["add", "-A"]);
         git(root, &["commit", "-q", "-m", "Start"]);
         // A recording that was written but not committed yet stays out of the cleanup commit.

@@ -4,6 +4,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri::Manager;
 
 mod background;
+mod cleanup;
 mod commands;
 mod review;
 mod state;
@@ -50,6 +51,7 @@ pub fn run() {
             let _ = handle.notification().on_action(move |_| tray::open_popover(&opener));
             watch::spawn(handle.clone());
             commands::refresh_catalog(&handle);
+            cleanup::refresh_due(&handle);
             background::spawn(handle.clone());
             updates::check_on_startup(handle);
             Ok(())
@@ -61,8 +63,12 @@ pub fn run() {
             commands::retry_job,
             commands::discard_job,
             commands::clear_activity,
-            commands::get_cleanup_folders,
-            commands::start_cleanup,
+            cleanup::open_cleanup,
+            cleanup::get_cleanup,
+            cleanup::start_cleanup,
+            cleanup::stop_cleanup,
+            cleanup::undo_cleanup,
+            cleanup::set_auto_cleanup,
             commands::save_settings,
             commands::set_autostart,
             commands::open_note,

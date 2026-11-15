@@ -40,11 +40,13 @@ const USAGE: &str = "Usage: lore-cli <command>
                                   Move original-session links to conversation copies (preview by default)
   refresh-copies [--apply]        Rebuild queued conversation copies and update note links
                                   Defaults to preview; tray app must be closed
-  cleanup [<folder>] [--absorb <folder>]... [--dry-run]
+  cleanup [<folder>] [--absorb <folder>]... [--dry-run | --undo]
                                   Merge repeated notes and remove outdated ones in a project folder
-                                  or in common, with the recording model. Without a folder, lists them.
+                                  or in common, with the recording model. Without a folder, lists them
+                                  with how many notes changed since their last cleanup.
                                   --absorb merges another project folder into it. Applied and committed
-                                  at once unless --dry-run; tray app must be closed to apply
+                                  at once unless --dry-run; tray app must be closed to apply.
+                                  --undo reverts the folder's last cleanup with one commit
   --help, -h                     Show this help
   --version, -V                  Show the CLI version";
 
@@ -262,11 +264,22 @@ fn run(args: &[String]) -> Result<()> {
             settings.validate()?;
             let root = settings.knowledge_root();
             let Some(folder) = args.get(1).filter(|arg| !arg.starts_with("--")) else {
-                for folder in cleanup::folders(&root)? {
-                    println!("{} ({} {})", folder.name, folder.notes, if folder.notes == 1 { "note" } else { "notes" });
+                for folder in cleanup::folders(&root, &queue.cleanup_checks()?)? {
+                    let since = if folder.last.is_none() && folder.checked_at.is_none() { "never cleaned up".to_string() } else { format!("{} changed since the last cleanup", folder.fresh) };
+                    println!("{} ({} {}, {since}){}", folder.name, folder.notes, if folder.notes == 1 { "note" } else { "notes" }, if folder.due { " *" } else { "" });
                 }
+                println!("* has {} or more notes to look at.", cleanup::DUE_NOTES);
                 return Ok(());
             };
+            if args.iter().any(|arg| arg == "--undo") {
+                let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
+                    return Err(Error::transient("The tray app or another worker is running. Undo the cleanup in its cleanup window."));
+                };
+                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+                let stale = worker::undo_cleanup(&queue, &settings, &qmd, folder)?;
+                println!("{}", stale.unwrap_or_else(|| format!("Undid the last cleanup of {folder}.")));
+                return Ok(());
+            }
             let absorb = args.iter().zip(args.iter().skip(1)).filter(|(flag, _)| *flag == "--absorb").map(|(_, folder)| folder.clone()).collect();
             let target = cleanup::Target { folder: folder.clone(), absorb };
             let recorders = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
@@ -281,7 +294,7 @@ fn run(args: &[String]) -> Result<()> {
                     return Err(Error::transient("The tray app or another worker is running."));
                 };
                 let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
-                worker::clean(&queue, &settings, &paths, &qmd, &target, &mut ask)?
+                worker::clean(&queue, &settings, &paths, &qmd, &target, worker::now(), &mut ask)?
             };
             println!("{}", serde_json::to_string_pretty(&outcome)?);
         }

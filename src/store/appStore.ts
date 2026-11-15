@@ -31,7 +31,7 @@ interface AppStore {
   retry: (id: string) => Promise<void>;
   discard: (id: string) => Promise<void>;
   clearActivity: () => Promise<void>;
-  startCleanup: (folder: string, absorb: string[]) => Promise<void>;
+  setAutoCleanup: (enabled: boolean) => Promise<void>;
   setAutostart: (enabled: boolean) => Promise<void>;
   setSyncEnabled: (enabled: boolean) => Promise<void>;
   syncNow: () => Promise<void>;
@@ -120,7 +120,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     retry: (id) => attempt(() => api.retryJob(id)),
     discard: (id) => attempt(() => api.discardJob(id)),
     clearActivity: () => attempt(() => api.clearActivity()),
-    startCleanup: (folder, absorb) => attempt(() => api.startCleanup(folder, absorb)),
+    setAutoCleanup: (enabled) => attempt(() => api.setAutoCleanup(enabled)),
     setAutostart: (enabled) => attempt(() => api.setAutostart(enabled)),
     setSyncEnabled: (enabled) => attempt(() => api.setSyncEnabled(enabled)),
     syncNow: () => attempt(() => api.syncNow()),

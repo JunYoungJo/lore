@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { Check, ChevronRight, FolderOpen } from "lucide-react";
 
 import * as api from "@/ipc/api";
-import type { Backend, CleanupFolder, ConnectionState, Snapshot } from "@/ipc/contract";
+import type { Backend, ConnectionState, Snapshot } from "@/ipc/contract";
 import { effortsFor, findChoice, HEAVY_EFFORTS } from "@/recordingModel";
 import { useAppStore } from "@/store/appStore";
 import { syncState } from "@/syncState";
@@ -219,36 +219,19 @@ function Recording({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
-const COMMON = "common";
-
+/** The way into the cleanup window, and whether cleanups start by themselves. The work itself is done in that window. */
 function Cleanup({ snapshot }: { snapshot: Snapshot }) {
-  const startCleanup = useAppStore((store) => store.startCleanup);
-  const [open, setOpen] = useState(false);
-  const [folders, setFolders] = useState<CleanupFolder[]>([]);
-  const [folder, setFolder] = useState("");
-  const [merge, setMerge] = useState("");
-  const cleaning = snapshot.cleanup;
-  const choosing = open && !cleaning;
-
-  useEffect(() => {
-    if (!choosing) return;
-    let stale = false;
-    api
-      .getCleanupFolders()
-      .then((list) => !stale && setFolders(list))
-      .catch((error) => useAppStore.setState({ error: error instanceof Error ? error.message : String(error) }));
-    return () => {
-      stale = true;
-    };
-  }, [choosing]);
-
-  const named = (item: CleanupFolder) => `${item.name} · ${item.notes} ${item.notes === 1 ? "note" : "notes"}`;
-  const canMerge = folder !== "" && folder !== COMMON;
-  const status = !cleaning
-    ? "Merge repeated notes and remove outdated ones, one folder at a time."
-    : cleaning.startedAt !== null
-      ? `Cleaning up ${cleaning.folder}…`
-      : `${cleaning.folder} cleanup starts when ${snapshot.settings.paused ? "recording is resumed" : "the current work is done"}.`;
+  const setAutoCleanup = useAppStore((store) => store.setAutoCleanup);
+  const items = snapshot.cleanup?.items ?? [];
+  const running = items.find((item) => item.state === "running");
+  const due = snapshot.cleanupDue?.length ?? 0;
+  const status = running
+    ? `Cleaning up ${running.folder}…`
+    : items.length > 0
+      ? "A cleanup is waiting for its turn."
+      : due > 0
+        ? `${due} ${due === 1 ? "folder has" : "folders have"} many notes that changed since the last cleanup.`
+        : "Merge notes that repeat each other and remove the ones that are out of date.";
 
   return (
     <>
@@ -257,64 +240,17 @@ function Cleanup({ snapshot }: { snapshot: Snapshot }) {
           <div className="set-title">Clean up notes</div>
           <div className="set-sub">{status}</div>
         </div>
-        <button type="button" className="pill ghost" aria-expanded={choosing} disabled={Boolean(cleaning)} onClick={() => setOpen(!open)}>
-          Clean up…
+        <button type="button" className="pill ghost" onClick={() => void api.openCleanup()}>
+          Open cleanup
         </button>
       </div>
-      {choosing && (
-        <div className="cleanup">
-          <div className="cli-fields">
-            <div className="cli-field">
-              <label htmlFor="cleanup-folder">Folder to clean up</label>
-              <select
-                id="cleanup-folder"
-                className="input set-select"
-                value={folder}
-                onChange={(event) => {
-                  setFolder(event.target.value);
-                  setMerge("");
-                }}
-              >
-                <option value="">Choose a folder</option>
-                {folders.map((item) => (
-                  <option key={item.name} value={item.name}>
-                    {named(item)}
-                  </option>
-                ))}
-              </select>
-            </div>
-            {canMerge && (
-              <div className="cli-field">
-                <label htmlFor="cleanup-merge">Merge another folder into it</label>
-                <select id="cleanup-merge" className="input set-select" value={merge} onChange={(event) => setMerge(event.target.value)}>
-                  <option value="">None</option>
-                  {folders
-                    .filter((item) => item.name !== COMMON && item.name !== folder)
-                    .map((item) => (
-                      <option key={item.name} value={item.name}>
-                        {named(item)}
-                      </option>
-                    ))}
-                </select>
-              </div>
-            )}
-          </div>
-          <div className="cleanup-foot">
-            <span className="cleanup-note">The recording model reads the whole folder. Its changes are applied and committed at once; check them in the review window.</span>
-            <button
-              type="button"
-              className="pill primary"
-              disabled={!folder}
-              onClick={() => {
-                setOpen(false);
-                void startCleanup(folder, merge ? [merge] : []);
-              }}
-            >
-              Start cleanup
-            </button>
-          </div>
+      <div className="set-row">
+        <div className="set-main">
+          <div className="set-title">Clean up automatically</div>
+          <div className="set-sub">Clean up a folder after a recording once many of its notes have changed. Each cleanup can be undone.</div>
         </div>
-      )}
+        <Toggle label="Clean up automatically" checked={snapshot.settings.autoCleanup} onChange={(enabled) => void setAutoCleanup(enabled)} />
+      </div>
     </>
   );
 }
