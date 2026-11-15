@@ -896,6 +896,8 @@ mod tests {
         git(root, &["config", "user.name", "Lore Test"]);
         git(root, &["config", "user.email", "lore@example.invalid"]);
         git(root, &["config", "commit.gpgsign", "false"]);
+        // Git for Windows converts line endings by default; the tests compare file contents exactly.
+        git(root, &["config", "core.autocrlf", "false"]);
     }
 
     /// Commit everything with a commit time of `at` seconds, so that tests can order commits.
