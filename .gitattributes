@@ -1,0 +1,11 @@
+# Source files are checked out with LF on every PC. Without this, Git for Windows checks them
+# out with CRLF, and a file the program reads as text (a prompt, a test fixture) then differs
+# between Windows and the other platforms.
+* text=auto eol=lf
+
+# The Windows installer script keeps the line endings the PC's Git settings give it, as before.
+*.nsh text !eol
+
+*.png binary
+*.ico binary
+*.icns binary
