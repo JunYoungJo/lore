@@ -1784,3 +1784,297 @@ svg.kind-deleted {
 .update-notes { padding: 10px 12px; max-height: 150px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 11px; line-height: 1.6; color: var(--text2); }
 .update-actions { display: flex; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; }
 .update-error { color: var(--danger); overflow-wrap: anywhere; }
+
+/* The candidates window. It shares the review window's frame: the candidates on the left, the chosen one on the right. */
+.candidates-window .review-body {
+  /* 540px at the size the window opens with; narrower in a small window, so the chosen candidate keeps its room. */
+  grid-template-columns: clamp(380px, 48%, 540px) minmax(0, 1fr);
+}
+
+.candidates-window .head-sub {
+  white-space: normal;
+}
+
+.candidates-window .review-actions .grow.plain {
+  color: var(--text2);
+}
+
+.cand-all-count {
+  margin-left: auto;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+/* Every row is two lines of the sentence and one line about it, so the list keeps one rhythm. */
+.cand-text {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  height: 2.9em;
+  overflow: hidden;
+  font-size: 12.5px;
+  font-weight: 600;
+  line-height: 1.45;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+}
+
+.cand-meta {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 6px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: var(--text2);
+  white-space: nowrap;
+}
+
+/* In a narrow window the middle of the line is cut, so the kind and the wait keep their places. */
+.cand-about {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cand-wait {
+  flex: none;
+  color: var(--text3);
+  font-variant-numeric: tabular-nums;
+}
+
+.cand-wait.soon {
+  color: var(--warn);
+}
+
+.cand-relation.differs {
+  color: var(--accent);
+}
+
+.cand-relation.obsolete {
+  color: var(--danger);
+}
+
+.badge.cand-kind {
+  min-width: 68px;
+  text-align: center;
+}
+
+.badge.cand-kind.decision {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.cand-kind.correction {
+  background: var(--warn-soft);
+  color: var(--warn);
+}
+
+.badge.cand-kind.lesson {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.cand-left-out {
+  margin: 0 10px 6px 0;
+  padding: 8px 11px;
+  border: 1px dashed var(--line2);
+  border-radius: 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--text2);
+}
+
+.cand-left-out button {
+  padding: 0;
+  border: none;
+  background: none;
+  font: inherit;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.cand-left-out ul {
+  margin: 6px 0 0;
+  padding-left: 16px;
+}
+
+.cand-written-link {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: calc(100% - 10px);
+  margin-top: 14px;
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cand-written-link:hover {
+  border-color: var(--line2);
+}
+
+.cand-written-link.active {
+  border-color: var(--accent);
+  box-shadow: var(--ring);
+}
+
+.cand-detail-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cand-label {
+  display: block;
+}
+
+.cand-sentence {
+  display: block;
+  min-height: 76px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.55;
+  word-break: keep-all;
+}
+
+.cand-quote {
+  margin: 0 0 6px;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: var(--surface2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.cand-quote-who {
+  margin-bottom: 4px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text3);
+}
+
+.cand-note {
+  padding: 6px 6px 10px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+}
+
+.cand-note-label {
+  margin: 6px 8px 0;
+  font-size: 11.5px;
+  color: var(--text3);
+}
+
+.cand-passage {
+  margin: 6px 8px 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: var(--surface2);
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--text2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.cand-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-top: 22px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.cand-wait-note {
+  font-size: 11.5px;
+  color: var(--text3);
+}
+
+.cand-batch {
+  margin-bottom: 18px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cand-batch:last-child {
+  border-bottom: none;
+}
+
+.cleanup-standing.cand-late {
+  color: var(--warn);
+}
+
+.cand-result-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.badge.cand-action {
+  min-width: 62px;
+  text-align: center;
+}
+
+.badge.cand-action.created {
+  background: var(--ok-soft);
+  color: var(--ok);
+}
+
+.badge.cand-action.edited {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.badge.cand-action.removed {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.cand-working {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent);
+}
+
+.candidates-window .review-actions .grow.cand-working {
+  color: var(--accent);
+}
+
+.cand-failed {
+  margin: 0 0 12px;
+}
+
+.cand-failed-main {
+  min-width: 0;
+}
+
+.cand-failed-why {
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+  color: var(--text2);
+}
+
+.cand-failed-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 9px;
+}

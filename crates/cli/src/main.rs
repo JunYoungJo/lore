@@ -2,33 +2,39 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
+use lore_core::candidate::Kind;
 use lore_core::cleanup;
 use lore_core::error::{Error, Result};
-use lore_core::hook;
+use lore_core::hook::{self, Hook};
 use lore_core::hooks;
-use lore_core::migrate;
+use lore_core::mark::{self, Mark};
 use lore_core::qmd::Qmd;
-use lore_core::queue::{Job, Queue, Status};
+use lore_core::queue::{Queue, Status};
 use lore_core::recorder::Recorders;
 use lore_core::run::{fixed, RECORDER_MARK};
 use lore_core::scan;
 use lore_core::settings::{self, Paths};
 use lore_core::transcript::Provider;
-use lore_core::worker::{self, Discarded, Outcome, Reporter, WorkerLock};
+use lore_core::worker::{self, Discarded, Outcome, Reporter, Work, WorkerLock};
 
 const USAGE: &str = "Usage: lore-cli <command>
-  hook <claude|codex>              Queue session-end / pre-compaction hook input (JSON on stdin)
+  hook <claude|codex>              Handle hook input (JSON on stdin): queue a session that ended or is
+                                  about to be compacted, or tell a session how to mark
+  mark <decision|correction|lesson> <sentence>
+                                  Mark something worth remembering, from inside a session. Prints one
+                                  line that Lore reads from the session file; writes nothing
   enqueue <claude|codex> <file>     Queue a transcript file
   scan                            Find sessions missed by hooks and queue them
-  work [--once]                   Process queued jobs (tray app must be closed)
+  work [--once]                   Process queued sessions and approved candidates (tray app must be closed)
+  candidates                      List the candidates waiting for review
+  candidates approve <id>...|all  Approve candidates; work then writes them into the notes
+  candidates discard <id>...      Discard candidates
   status                          Show queue counts and failed jobs
   sync <status|now|compare|resolve|dismiss>
                                   Check upstream, compare, preview, and apply memory changes
   doctor                          Diagnose this PC's paths, CLIs, and qmd setup (read-only)
   index                           Register memory collections and refresh this PC's qmd index
   project                         Show the current Git repository's memory project ID
-  portable-links [--apply]         Convert old absolute source links to relative links and anchors
-                                  Defaults to preview; apply preserves backups and recovery state
   retry <job-id>                  Requeue a failed or skipped job
   discard <job-id>                Skip a failed segment, or stop an unreadable session
   hooks                           Show Claude / Codex hook connection status
@@ -36,10 +42,6 @@ const USAGE: &str = "Usage: lore-cli <command>
   disconnect <claude|codex>       Remove only Lore hooks (backs up the previous file)
   integrations disconnect <claude|codex>
                                   Remove unchanged Lore-owned MCP, rules, skill, and hooks
-  migrate-links [--apply] [--backup <folder>]
-                                  Move original-session links to conversation copies (preview by default)
-  refresh-copies [--apply]        Rebuild queued conversation copies and update note links
-                                  Defaults to preview; tray app must be closed
   cleanup [<folder>] [--absorb <folder>]... [--dry-run | --undo]
                                   Merge repeated notes and remove outdated ones in a project folder
                                   or in common, with the recording model. Without a folder, lists them
@@ -53,13 +55,25 @@ const USAGE: &str = "Usage: lore-cli <command>
 struct PrintReporter;
 
 impl Reporter for PrintReporter {
-    fn started(&self, job: &Job, project: &str) {
-        println!("Recording started: {project} ({})", job.id);
+    fn started(&self, work: &Work, project: &str) {
+        let what = if matches!(work, Work::Session(_)) { "Reading a session" } else { "Writing approved candidates" };
+        println!("{what}: {project} ({})", work.id());
     }
 
-    fn finished(&self, job: &Job, outcome: &Outcome) {
-        println!("{}: {}", job.id, serde_json::to_string(outcome).unwrap_or_default());
+    fn finished(&self, work: &Work, outcome: &Outcome) {
+        println!("{}: {}", work.id(), serde_json::to_string(outcome).unwrap_or_default());
     }
+
+    fn session_ended(&self, project: &str, candidates: usize) {
+        println!("{project}: the session ended with {candidates} candidate(s) to review. List them with `lore-cli candidates`.");
+    }
+}
+
+fn candidate_ids(args: &[String]) -> Result<Vec<i64>> {
+    if args.is_empty() {
+        return Err(Error::permanent("Name at least one candidate ID."));
+    }
+    args.iter().map(|arg| arg.parse().map_err(|_| Error::permanent(format!("Not a candidate ID: {arg}")))).collect()
 }
 
 fn provider(value: Option<&String>) -> Result<Provider> {
@@ -103,8 +117,8 @@ fn run(args: &[String]) -> Result<()> {
                 "status" => {}
                 "now" => {
                     let queue = Queue::open(&paths.database())?;
-                    if !queue.jobs_with_status(&[Status::Applying], 1)?.is_empty() {
-                        return Err(Error::permanent("Finish the interrupted recording with work first."));
+                    if queue.write_interrupted()? {
+                        return Err(Error::permanent("Approved candidates were being written into the notes when Lore stopped. Finish that with work first."));
                     }
                     lore_core::sync::sync(&root, &folder, || {
                         let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
@@ -140,24 +154,17 @@ fn run(args: &[String]) -> Result<()> {
             let repository = lore_core::project::resolve_checked(&std::env::current_dir()?)?.ok_or_else(|| Error::permanent("No Git repository or valid project ID was found in the current folder."))?;
             println!("{}", serde_json::json!({"project": repository.name, "repository": repository.root}));
         }
-        "index" | "portable-links" => {
+        "index" => {
             let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
                 return Err(Error::transient("The tray app or another worker is running."));
             };
             let settings = settings::load_or_init(&paths.settings(), worker::now())?;
             settings.validate()?;
-            if command == "index" {
-                let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
-                if !qmd.available() { return Err(Error::permanent("qmd was not found. Run doctor to check the executable path.")); }
-                qmd.ensure_index(&settings.knowledge_root())?;
-                qmd.refresh()?;
-                println!("This PC’s qmd index was refreshed.");
-            } else {
-                let apply = args.iter().any(|arg| arg == "--apply");
-                let report = lore_core::portable::migrate(&settings.knowledge_root(), &paths.root.join("migration/portable-links.pending.json"), apply)?;
-                println!("{}", serde_json::to_string_pretty(&report)?);
-                if !apply { println!("Preview only. Add --apply to write the changes."); }
-            }
+            let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
+            if !qmd.available() { return Err(Error::permanent("qmd was not found. Run doctor to check the executable path.")); }
+            qmd.ensure_index(&settings.knowledge_root())?;
+            qmd.refresh()?;
+            println!("This PC’s qmd index was refreshed.");
         }
         "hook" => {
             if std::env::var_os(RECORDER_MARK).is_some() {
@@ -166,16 +173,46 @@ fn run(args: &[String]) -> Result<()> {
             let provider = provider(args.get(1))?;
             let mut input = String::new();
             std::io::stdin().read_to_string(&mut input)?;
-            let (settings, queue) = open(&paths)?;
-            if let Some(transcript) = hook::transcript_for(provider, &input, Path::new(&settings.codex_sessions_dir))? {
-                println!("{}", queue.enqueue(provider, &transcript, worker::now())?);
+            // Only a Codex event without a file path needs the settings, to find the session by its id.
+            let sessions_dir = || Ok(PathBuf::from(settings::load_or_init(&paths.settings(), worker::now())?.codex_sessions_dir));
+            match hook::read(provider, &input, sessions_dir)? {
+                Hook::Session { transcript, ended } => println!("{}", Queue::open(&paths.database())?.enqueue(provider, &transcript, ended, worker::now())?),
+                // Runs on every prompt, so it reads no settings and opens no database: it only
+                // prints what the session is told.
+                Hook::Prompt => println!("{}", hook::prompt_output(&std::env::current_exe()?)),
+                Hook::Ignored => {}
             }
+        }
+        "mark" => {
+            let kind = args.get(1).and_then(|value| Kind::parse(value)).ok_or_else(|| Error::permanent("Use mark <decision|correction|lesson> <sentence>."))?;
+            let text = args[2..].join(" ").trim().to_string();
+            if text.is_empty() {
+                return Err(Error::permanent("Use mark <decision|correction|lesson> <sentence>."));
+            }
+            println!("{}", mark::line(&Mark { kind, text }));
         }
         "enqueue" => {
             let provider = provider(args.get(1))?;
             let transcript = args.get(2).ok_or_else(|| Error::permanent("A transcript path is required."))?;
             let (_, queue) = open(&paths)?;
-            println!("{}", queue.enqueue(provider, Path::new(transcript), worker::now())?);
+            println!("{}", queue.enqueue(provider, Path::new(transcript), true, worker::now())?);
+        }
+        "candidates" => {
+            let (_, queue) = open(&paths)?;
+            match args.get(1).map(String::as_str) {
+                None => {
+                    for candidate in queue.waiting_candidates()? {
+                        println!("{} [{}] {} ({}) {}", candidate.id, candidate.kind.as_str(), candidate.project, serde_json::to_string(&candidate.relation.kind)?.trim_matches('"'), candidate.text);
+                    }
+                }
+                Some("approve") => {
+                    let ids = if args.get(2).map(String::as_str) == Some("all") { queue.waiting_candidates()?.iter().map(|candidate| candidate.id).collect() } else { candidate_ids(&args[2..])? };
+                    let batches = queue.approve_candidates(&ids, false, worker::now())?;
+                    println!("Approved into {} apply batch(es). Run work, or open the tray app, to write them into the notes.", batches.len());
+                }
+                Some("discard") => println!("Discarded: {}", queue.discard_candidates(&candidate_ids(&args[2..])?, worker::now())?),
+                Some(_) => return Err(Error::permanent("Use candidates, candidates approve <id>...|all, or candidates discard <id>...")),
+            }
         }
         "scan" => {
             let (settings, queue) = open(&paths)?;
@@ -190,8 +227,10 @@ fn run(args: &[String]) -> Result<()> {
             let recorder = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
             let once = args.iter().any(|arg| arg == "--once");
+            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorder.request_json(prompt, schema, artifacts);
             loop {
-                match worker::step(&queue, &settings, &paths, &recorder, &qmd, &PrintReporter)? {
+                worker::approve_overdue(&queue, &settings, worker::now())?;
+                match worker::step(&queue, &settings, &paths, &mut ask, &qmd, &PrintReporter)? {
                     None => {
                         println!("No jobs to process.");
                         break;
@@ -205,7 +244,7 @@ fn run(args: &[String]) -> Result<()> {
             let (_, queue) = open(&paths)?;
             let counts = queue.counts(worker::now(), None)?;
             println!("{}", serde_json::to_string_pretty(&counts)?);
-            for job in queue.jobs_with_status(&[Status::Failed, Status::Pending, Status::Applying, Status::IndexPending], 50)? {
+            for job in queue.jobs_with_status(&[Status::Failed, Status::Pending], 50)? {
                 println!("{} {:?} {} {}", job.id, job.status, job.project.as_deref().unwrap_or("-"), job.last_error.as_deref().unwrap_or(""));
             }
         }
@@ -249,16 +288,6 @@ fn run(args: &[String]) -> Result<()> {
                 removed => println!("Disconnected {removed} {} hooks: {} (previous settings backed up in the same folder)", provider.as_str(), config.display()),
             }
         }
-        "migrate-links" => {
-            let (settings, _) = open(&paths)?;
-            let apply = args.iter().any(|arg| arg == "--apply");
-            let backup = args.iter().position(|arg| arg == "--backup").and_then(|index| args.get(index + 1)).map(PathBuf::from);
-            let report = migrate::migrate_links(&settings.knowledge_root(), backup.as_deref(), apply)?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            if !apply {
-                println!("Preview only. Add --apply to write the changes.");
-            }
-        }
         "cleanup" => {
             let (settings, queue) = open(&paths)?;
             settings.validate()?;
@@ -297,20 +326,6 @@ fn run(args: &[String]) -> Result<()> {
                 worker::clean(&queue, &settings, &paths, &qmd, &target, worker::now(), &mut ask)?
             };
             println!("{}", serde_json::to_string_pretty(&outcome)?);
-        }
-        "refresh-copies" => {
-            let Some(_lock) = WorkerLock::try_acquire(&paths.lock())? else {
-                return Err(Error::transient("The tray app or another worker is running."));
-            };
-            let (settings, queue) = open(&paths)?;
-            let apply = args.iter().any(|arg| arg == "--apply");
-            let all = [Status::Pending, Status::Applying, Status::IndexPending, Status::Done, Status::Failed, Status::Skipped];
-            let jobs = queue.jobs_with_status(&all, usize::MAX >> 1)?;
-            let report = migrate::refresh_copies(&settings.knowledge_root(), &jobs, apply)?;
-            println!("{}", serde_json::to_string_pretty(&report)?);
-            if !apply {
-                println!("Preview only. Add --apply to write the changes.");
-            }
         }
         _ => {
             println!("{USAGE}");

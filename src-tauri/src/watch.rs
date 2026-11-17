@@ -22,7 +22,7 @@ pub fn spawn(app: AppHandle) {
             }
             seen = Some(text.clone());
             let running = state.settings();
-            match settings::reloaded(&text, &running) {
+            match settings::reloaded(&text, &running, lore_core::worker::now()) {
                 Ok(loaded) => {
                     if reported.take().is_some_and(|message| state.problem().as_deref() == Some(message.as_str())) {
                         state.set_problem(None);

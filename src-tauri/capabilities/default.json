@@ -2,6 +2,6 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Capability for the tray popover and the windows it opens",
-  "windows": ["tray", "review", "sync", "cleanup", "setup", "integrations"],
+  "windows": ["tray", "candidates", "review", "sync", "cleanup", "setup", "integrations"],
   "permissions": ["core:default", "core:window:allow-start-dragging", "notification:default"]
 }

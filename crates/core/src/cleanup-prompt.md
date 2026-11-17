@@ -54,7 +54,6 @@ A statement that moves to another note is easily made stronger or wider than it 
 - **Its reason, conditions and exceptions.**
 - **Its limits**, such as "not verified", "checked in the code only" or "as of 2026-11-09".
 - **The user's own words** where the note quotes them.
-- **Every link into `sources/`** that appears in the text you move, exactly as written, because it leads to the conversation the statement came from.
 
 Everything you write comes from the notes. You are rearranging what is recorded, and a sentence that no note supports has no source the reader could check.
 
@@ -88,7 +87,7 @@ When `shared_folder` is null, the folder being cleaned is the shared folder itse
 - `absorbed_folders`: folders whose notes are being merged into `folder`. Their notes can be moved into `folder`, named in `sources_from`, or removed. They are not edited in place. Usually empty.
 - `shared_folder`: the folder of notes shared by every project, or null. See "The shared folder".
 - `today`: the date of this cleanup.
-- `notes`: the notes you can change, as path and text. Each text begins with front matter and the title line, which the program writes. A note that has evidence ends with a "Sources" section: a numbered list of the quotations from the sessions the note was written from. The program owns this list and the links behind it. You cannot edit it, and you use its numbers in `sources_from` to say which quotations go with content you move.
+- `notes`: the notes you can change, as path and text. Each text begins with front matter and the title line, which the program writes. A note that has evidence ends with a "Sources" section: a numbered list of what was said in the sessions the note was written from, each line with the day, who said it (`user` or `agent`) and the words. The program owns this list. You cannot edit it, and you use its numbers in `sources_from` to say which lines go with content you move.
 - `note_catalog`: further notes of these folders, as path and title only. They are listed when the notes are too many for one request, and you cannot change them. When one of them looks like it repeats or contradicts a note in `notes`, or is the shared note a correction belongs in, return no changes and put its path in `needs_notes`. The program then asks again with its text.
 - `previous_failure`: present when the program rejected your previous answer for these notes, and says why. Correct that problem this time.
 

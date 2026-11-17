@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
-import type { DiffRow, EditableSettings, Job, Provider, ReviewSnapshot, Snapshot } from "./contract";
+import type { CandidateScope, CandidatesSnapshot, DiffRow, EditableSettings, Job, Provider, ReviewSnapshot, Snapshot } from "./contract";
 
 export type { Activity, Counts, Current, DiffRow, EditableSettings, HookStatus, Job, ReviewSnapshot, Settings, Snapshot } from "./contract";
 
@@ -11,6 +11,15 @@ export const setPaused = (paused: boolean): Promise<void> => invoke("set_paused"
 export const retryJob = (id: string): Promise<boolean> => invoke("retry_job", { id });
 export const discardJob = (id: string): Promise<boolean> => invoke("discard_job", { id });
 export const clearActivity = (): Promise<number> => invoke("clear_activity");
+export const openCandidates = (): Promise<void> => invoke("open_candidates");
+export const getCandidates = (): Promise<CandidatesSnapshot> => invoke("get_candidates");
+/** Change the sentence, the scope or both of a candidate that still waits. Null leaves that part as it is. */
+export const editCandidate = (id: number, text: string | null, scope: CandidateScope | null): Promise<boolean> => invoke("edit_candidate", { id, text, scope });
+export const approveCandidates = (ids: number[]): Promise<number> => invoke("approve_candidates", { ids });
+export const discardCandidates = (ids: number[]): Promise<number> => invoke("discard_candidates", { ids });
+export const retryApply = (id: number): Promise<boolean> => invoke("retry_apply", { id });
+export const releaseApply = (id: number): Promise<boolean> => invoke("release_apply", { id });
+export const setAutoApprove = (enabled: boolean, days: number): Promise<void> => invoke("set_auto_approve", { enabled, days });
 export const openCleanup = (): Promise<void> => invoke("open_cleanup");
 export const getCleanup = (): Promise<import("./contract").CleanupSnapshot> => invoke("get_cleanup");
 export const startCleanup = (targets: import("./contract").CleanupTarget[]): Promise<void> => invoke("start_cleanup", { targets });

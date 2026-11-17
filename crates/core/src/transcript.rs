@@ -7,6 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
+use crate::mark::{marks_in, Placed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -65,7 +66,15 @@ pub struct Parsed {
     pub cwd: String,
     pub worker_session: bool,
     pub turns: Vec<Turn>,
+    /// What the session marked as worth remembering, read from the results of its tool calls.
+    pub marks: Vec<Placed>,
     pub complete_lines: usize,
+}
+
+/// The output of the tool calls a Claude Code record carries back to the model.
+fn claude_tool_outputs(record: &Value) -> Vec<&Value> {
+    let blocks = record.get("message").and_then(|message| message.get("content")).and_then(Value::as_array);
+    blocks.map(|blocks| blocks.iter().filter(|block| block.get("type").and_then(Value::as_str) == Some("tool_result")).filter_map(|block| block.get("content")).collect()).unwrap_or_default()
 }
 
 const INJECTED_PREFIXES: [&str; 5] = [
@@ -270,7 +279,14 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                     }
                     continue;
                 }
-                if kind != Some("response_item") || payload.get("type").and_then(Value::as_str) != Some("message") {
+                let item = payload.get("type").and_then(Value::as_str).unwrap_or("");
+                if kind == Some("response_item") && item.ends_with("_output") && !worker {
+                    if let Some(output) = payload.get("output") {
+                        result.marks.extend(marks_in(output).into_iter().map(|mark| Placed { line: number, mark }));
+                    }
+                    continue;
+                }
+                if kind != Some("response_item") || item != "message" {
                     continue;
                 }
                 let kinds = payload.get("internal_chat_message_metadata_passthrough").and_then(|meta| meta.get("content_item_kinds")).and_then(Value::as_array);
@@ -289,6 +305,11 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                     let Some((text, origin)) = queued_input(&record) else { continue };
                     ("user".to_string(), text, text_field(&record, "uuid"), origin)
                 } else {
+                    if !truthy(record.get("isSidechain")) {
+                        for output in claude_tool_outputs(&record) {
+                            result.marks.extend(marks_in(output).into_iter().map(|mark| Placed { line: number, mark }));
+                        }
+                    }
                     let text = match record.get("message") {
                         Some(message) if message.is_object() => message_text(message.get("content")),
                         _ => String::new(),

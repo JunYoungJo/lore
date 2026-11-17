@@ -1,16 +1,14 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+//! A change to the notes, as a model writes it and as the program turns it into note text.
+//!
+//! Two things change notes: approved candidates (`integrate`) and a cleanup of a folder
+//! (`cleanup`). Both describe a note with [`Change`] and render it with [`render_note`]. The
+//! program owns the front matter and the Sources list; the model writes the title and the body.
+
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
 use crate::error::{Error, Result};
-use crate::transcript::{Origin, Turn};
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Evidence {
-    #[serde(rename = "ref")]
-    pub reference: String,
-    pub quote: String,
-}
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Edit {
@@ -39,14 +37,11 @@ pub struct Change {
     /// Other notes whose content this change takes in. Their source lines are added to this note.
     #[serde(default)]
     pub sources_from: Vec<SourceRef>,
-    #[serde(default)]
-    pub evidence: Vec<Evidence>,
 }
 
 /// A note whose content a change takes in, and which of its source lines go with that content.
-/// A recording names the note alone and takes every line. A cleanup, which is shown the lines,
-/// names the ones that support what it took, so that a note taken apart does not hand each
-/// piece the evidence of the others.
+/// A cleanup is shown the lines and names the ones that support what it took, so that a note
+/// taken apart does not hand each piece the evidence of the others.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SourceRef {
@@ -79,8 +74,6 @@ pub struct Removal {
     pub path: String,
     #[serde(default)]
     pub reason: String,
-    #[serde(default)]
-    pub evidence: Vec<Evidence>,
 }
 
 /// A note kept as it is under another path.
@@ -103,25 +96,16 @@ pub struct Proposal {
     pub needs_notes: Vec<String>,
 }
 
+/// What a cleanup's proposal may touch.
 pub struct Scope<'a> {
     pub project: &'a str,
-    /// The session turns that evidence must quote. `None` for a cleanup, whose changes rest on
-    /// the notes themselves.
-    pub turns: Option<&'a [Turn]>,
     pub existing: &'a BTreeSet<String>,
+    /// The notes whose text the model was given. Only these can be edited, removed or drawn from.
     pub editable: &'a BTreeSet<String>,
     /// Folders notes may be written to, as path prefixes such as "projects/demo/".
     pub writable: Vec<String>,
     /// Folders notes may be removed from.
     pub removable: Vec<String>,
-}
-
-impl<'a> Scope<'a> {
-    /// A recording writes and removes in the session's project and in the shared folder.
-    pub fn session(project: &'a str, turns: &'a [Turn], existing: &'a BTreeSet<String>, editable: &'a BTreeSet<String>) -> Self {
-        let folders = vec!["common/".to_string(), format!("projects/{project}/")];
-        Self { project, turns: Some(turns), existing, editable, writable: folders.clone(), removable: folders }
-    }
 }
 
 const KINDS: [&str; 3] = ["decision", "lesson", "issue"];
@@ -132,20 +116,18 @@ const RESERVED: [&str; 22] = [
     "lpt8", "lpt9",
 ];
 pub const SOURCES_HEADING: &str = "\n## Sources\n";
-// Notes written before the heading became English end with this one (Korean for "Sources").
-// It is still read, and a note is given the English heading the next time it is changed.
-const EARLIER_SOURCES_HEADING: &str = "\n## \u{c6d0}\u{bb38} \u{adfc}\u{ac70}\n";
 
+/// A note's text and its source list, when it has one.
 fn split_sources(text: &str) -> (&str, Option<&str>) {
-    let found = [SOURCES_HEADING, EARLIER_SOURCES_HEADING].into_iter().filter_map(|heading| text.find(heading).map(|at| (at, heading.len()))).min();
-    match found {
-        Some((at, length)) => (&text[..at], Some(&text[at + length..])),
+    match text.find(SOURCES_HEADING) {
+        Some(at) => (&text[..at], Some(&text[at + SOURCES_HEADING.len()..])),
         None => (text, None),
     }
 }
 
-/// A note as the recording model is shown it. The program owns the source list, and the model
-/// cannot edit it, so the list is left out rather than spent on the model's input.
+/// A note as the model that relates or integrates candidates is shown it. The program owns the
+/// source list, and the model cannot edit it, so the list is left out rather than spent on the
+/// model's input.
 pub fn without_sources(note: &str) -> String {
     let text = note.replace("\r\n", "\n");
     match split_sources(&text) {
@@ -154,13 +136,19 @@ pub fn without_sources(note: &str) -> String {
     }
 }
 
+/// A digest of a note as a model and the user are shown it, without the source list. Two
+/// notes with the same digest read the same.
+pub fn body_digest(note: &str) -> String {
+    crate::transcript::digest(without_sources(note).as_bytes())
+}
+
 /// The folder of a note path, as a prefix: "common/" or "projects/<name>/".
 fn folder_of(path: &str) -> Option<&str> {
     path.rfind('/').map(|at| &path[..=at])
 }
 
 /// A note path is a file directly inside one of `folders`.
-fn check_path(path: &str, folders: &[String]) -> Result<()> {
+pub(crate) fn check_path(path: &str, folders: &[String]) -> Result<()> {
     let fail = || Error::rejected(format!("Invalid memory path: {path}"));
     if path.contains('\\') {
         return Err(fail());
@@ -182,25 +170,9 @@ fn check_path(path: &str, folders: &[String]) -> Result<()> {
     Ok(())
 }
 
-/// Check each quotation against the turn it names, and return who said the quoted turns.
-fn quoted_origins(evidence: &[Evidence], available: &HashMap<&str, &Turn>) -> Result<BTreeSet<u8>> {
-    if evidence.is_empty() {
-        return Err(Error::rejected("Source evidence is required."));
-    }
-    let mut origins = BTreeSet::new();
-    for citation in evidence {
-        match available.get(citation.reference.as_str()) {
-            Some(turn) if !citation.quote.trim().is_empty() && turn.text.contains(&citation.quote) => {
-                origins.insert(turn.origin as u8);
-            }
-            _ => return Err(Error::rejected("The evidence location or quotation does not match the provided source.")),
-        }
-    }
-    Ok(origins)
-}
-
+/// Check a cleanup's proposal. A cleanup has no conversation to quote: its changes rest on the
+/// notes themselves, so a new note must say which notes it was made from.
 pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
-    let available: Option<HashMap<&str, &Turn>> = scope.turns.map(|turns| turns.iter().map(|turn| (turn.reference.as_str(), turn)).collect());
     let mut paths = BTreeSet::new();
     let mut claim = |path: &str| match paths.insert(path.to_ascii_lowercase()) {
         true => Ok(()),
@@ -219,12 +191,6 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
         if removal.reason.trim().is_empty() {
             return Err(Error::rejected(format!("Removing a note requires a reason: {}", removal.path)));
         }
-        if let Some(available) = &available {
-            quoted_origins(&removal.evidence, available)?;
-        }
-    }
-    if available.is_some() && !proposal.moves.is_empty() {
-        return Err(Error::rejected("Notes are moved only by a cleanup, not while recording a session."));
     }
     for moved in &proposal.moves {
         check_path(&moved.from, &scope.removable)?;
@@ -265,24 +231,14 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
         if !KINDS.contains(&change.kind.as_str()) || !AUTHORITIES.contains(&change.authority.as_str()) {
             return Err(Error::rejected("Invalid memory kind or evidence type."));
         }
-        match &available {
-            Some(available) => {
-                let origins = quoted_origins(&change.evidence, available)?;
-                if change.authority == "user_decision" && !origins.contains(&(Origin::User as u8)) {
-                    return Err(Error::rejected("A user decision requires a verified user statement."));
-                }
-            }
-            // A cleanup has no session to quote, so a new note must say which notes it was made from.
-            None if known(&change.path).is_none() && change.sources_from.is_empty() => {
-                return Err(Error::rejected(format!("A new note must list in sources_from the notes its content comes from: {}", change.path)));
-            }
-            None => {}
+        if known(&change.path).is_none() && change.sources_from.is_empty() {
+            return Err(Error::rejected(format!("A new note must list in sources_from the notes its content comes from: {}", change.path)));
         }
     }
     Ok(())
 }
 
-fn validate_edit(edit: &Edit, path: &str) -> Result<()> {
+pub(crate) fn validate_edit(edit: &Edit, path: &str) -> Result<()> {
     let blank = |value: &str| value.trim().is_empty();
     let complete = match edit.op.as_str() {
         "replace" => !blank(&edit.find),
@@ -358,6 +314,13 @@ fn updated_header(old: &str, scope: &str, kind: &str, authority: &str) -> String
         None => lines.push(format!("    authority: {}", quoted(authority))),
     }
     lines.join("\n")
+}
+
+/// What a note's front matter says the note rests on, when it says so.
+pub fn authority_of(note: &str) -> Option<String> {
+    let header = split_note(note).header?;
+    let value = header.lines().find_map(|line| line.strip_prefix("    authority:"))?;
+    Some(value.trim().trim_matches('"').to_string()).filter(|value| !value.is_empty())
 }
 
 fn heading_name(value: &str) -> String {
@@ -462,14 +425,14 @@ pub fn source_lines(note: &str) -> Vec<String> {
     split_note(note).sources
 }
 
-/// A note as a cleanup is shown it: the source list stays, as numbered quotations without their
-/// links, so that the model can say which lines go with the content it moves.
+/// A note as a cleanup is shown it: the source list stays, with its lines numbered, so that
+/// the model can say which lines go with the content it moves.
 pub fn with_numbered_sources(note: &str) -> String {
     let lines = source_lines(note);
     if lines.is_empty() {
         return without_sources(note);
     }
-    let quotes: Vec<String> = lines.iter().enumerate().map(|(index, line)| format!("{}. {}", index + 1, line.split_once(" — ").map_or(line.as_str(), |(_, quote)| quote))).collect();
+    let quotes: Vec<String> = lines.iter().enumerate().map(|(index, line)| format!("{}. {}", index + 1, line.strip_prefix("- ").unwrap_or(line))).collect();
     format!("{}{SOURCES_HEADING}{}\n", without_sources(note), quotes.join("\n"))
 }
 
@@ -491,26 +454,6 @@ pub fn carried_sources<'a>(change: &Change, text_of: impl Fn(&str) -> Option<&'a
     Ok(carried)
 }
 
-/// Links to conversation copies are relative to the note, so text that came from a note at
-/// another folder depth gets the number of `../` this note needs.
-pub fn fit_source_links(text: &str, note_path: &str) -> String {
-    let parents = "../".repeat(note_path.split('/').count().saturating_sub(1));
-    let target = format!("{}/", crate::copy::SOURCES_DIR);
-    let mut result = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(at) = rest.find("../") {
-        let (before, run) = rest.split_at(at);
-        let after = run.trim_start_matches("../");
-        let climbs = &run[..run.len() - after.len()];
-        let is_copy_link = (before.ends_with('<') || before.ends_with('(')) && after.starts_with(&target);
-        result.push_str(before);
-        result.push_str(if is_copy_link { &parents } else { climbs });
-        rest = after;
-    }
-    result.push_str(rest);
-    result
-}
-
 /// The folder a note belongs to, as its front matter names it.
 fn scope_of<'a>(path: &'a str, project: &'a str) -> &'a str {
     match path.split('/').collect::<Vec<_>>().as_slice() {
@@ -520,11 +463,11 @@ fn scope_of<'a>(path: &'a str, project: &'a str) -> &'a str {
     }
 }
 
-/// A note kept as it is under another path: only the project in its front matter and the depth
-/// of its links follow the new folder.
+/// A note kept as it is under another path: only the project in its front matter follows the
+/// new folder.
 pub fn moved_note(old: &str, to: &str) -> String {
     let text = old.replace("\r\n", "\n");
-    let renamed = match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n")) {
+    match text.strip_prefix("---\n").and_then(|rest| rest.split_once("\n---\n")) {
         Some((header, rest)) => {
             let lines: Vec<String> = header
                 .lines()
@@ -533,11 +476,14 @@ pub fn moved_note(old: &str, to: &str) -> String {
             format!("---\n{}\n---\n{rest}", lines.join("\n"))
         }
         None => text,
-    };
-    fit_source_links(&renamed, to)
+    }
 }
 
-pub fn render_note(change: &Change, project: &str, link: &dyn Fn(&Evidence) -> String, old: Option<&str>, carried: &[String]) -> Result<String> {
+/// The text of a note after `change`. `old` is the note as it stands, or `None` for a new note.
+/// `added` are the lines this change adds to the Sources list: the quotations of the approved
+/// candidates, or the lines a cleanup carries over from the notes it took in. A line the list
+/// already has is not repeated.
+pub fn render_note(change: &Change, project: &str, old: Option<&str>, added: &[String]) -> Result<String> {
     let scope = if change.path.starts_with("common/") { "common" } else { project };
     let (header, title, body, mut sources) = match old {
         Some(old) => {
@@ -556,15 +502,11 @@ pub fn render_note(change: &Change, project: &str, link: &dyn Fn(&Evidence) -> S
         None => (standard_header(scope, &change.kind, &change.authority), change.title.clone(), without_leading_title(&change.body.replace("\r\n", "\n"), None), Vec::new()),
     };
     let header = format!("---\n{header}\n---\n\n");
-    sources.extend(carried.iter().cloned());
-    for evidence in &change.evidence {
-        sources.push(format!("- [{}]({}) — {}", evidence.reference, link(evidence), evidence.quote.replace(['\r', '\n'], " ")));
-    }
-    let mut sources: Vec<String> = sources.iter().map(|line| fit_source_links(line, &change.path)).collect();
+    sources.extend(added.iter().cloned());
     let mut seen = BTreeSet::new();
     sources.retain(|line| seen.insert(line.clone()));
-    let body = body.trim();
-    let body = fit_source_links(split_sources(body).0.trim(), &change.path);
+    // A source list the model wrote into the body is dropped: the program writes the list.
+    let body = split_sources(body.trim()).0.trim();
     if body.is_empty() {
         return Err(Error::rejected(format!("The edited note body is empty: {}", change.path)));
     }
@@ -593,36 +535,26 @@ pub fn check_snapshot(current: &BTreeMap<String, String>, base: &BTreeMap<String
 mod tests {
     use super::*;
 
-    fn turns() -> Vec<Turn> {
-        vec![Turn {
-            reference: "L3".into(),
-            line: 3,
-            role: "user".into(),
-            origin: Origin::User,
-            timestamp: String::new(),
-            text: "경고는 빼고 로그만 남기십시오.".into(),
-        }]
-    }
+    const NOTE: &str = "projects/demo/bg-policy.md";
+    const OTHER: &str = "projects/demo/log-only.md";
+    /// A source line as approved candidates add it: the day, who said it and the words.
+    const ADDED: &str = "- 2026-11-17, user: \"경고는 빼고 로그만 남기십시오.\"";
 
+    /// A new note at `NOTE`, made from what `OTHER` says.
     fn proposal() -> Proposal {
         Proposal {
             summary: "경고 방침 변경".into(),
             changes: vec![Change {
-                path: "projects/demo/bg-policy.md".into(),
+                path: NOTE.into(),
                 title: "BG 불일치 처리".into(),
                 kind: "decision".into(),
                 authority: "user_decision".into(),
                 body: "## 현재 결정\nTP 로그만 남깁니다.".into(),
                 edits: vec![],
-                sources_from: vec![],
-                evidence: vec![quoted_turn()],
+                sources_from: vec![OTHER.into()],
             }],
             ..Proposal::default()
         }
-    }
-
-    fn quoted_turn() -> Evidence {
-        Evidence { reference: "L3".into(), quote: "경고는 빼고 로그만 남기십시오.".into() }
     }
 
     fn edit(op: &str, find: &str, section: &str, heading: &str, text: &str) -> Edit {
@@ -641,54 +573,49 @@ mod tests {
         edit("add_section", "", after, heading, text)
     }
 
+    /// Edits to the note at `NOTE`.
     fn editing(edits: Vec<Edit>) -> Change {
-        Change { title: String::new(), body: String::new(), edits, ..proposal().changes[0].clone() }
+        Change { title: String::new(), body: String::new(), edits, sources_from: vec![], ..proposal().changes[0].clone() }
     }
 
-    const OLD_NOTE: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"assistant_report\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업을 띄웁니다. 장비 화면은 그대로 둡니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n## 원문 근거\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n";
+    /// The note after `change`, with `ADDED` as the source this change brings.
+    fn render(change: &Change, old: Option<&str>) -> Result<String> {
+        render_note(change, "demo", old, &[ADDED.to_string()])
+    }
 
-    fn check(proposal: &Proposal, turns: &[Turn], existing: &[&str], editable: &[&str]) -> Result<()> {
+    const OLD_NOTE: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"assistant_report\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업을 띄웁니다. 장비 화면은 그대로 둡니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n## Sources\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n";
+
+    /// A cleanup that writes and removes in `projects/demo/` and in the shared folder, and was
+    /// given the text of the `editable` notes.
+    fn check(proposal: &Proposal, existing: &[&str], editable: &[&str]) -> Result<()> {
         let existing: BTreeSet<String> = existing.iter().map(|s| s.to_string()).collect();
         let editable: BTreeSet<String> = editable.iter().map(|s| s.to_string()).collect();
-        validate(proposal, &Scope::session("demo", turns, &existing, &editable))
+        let folders = vec!["common/".to_string(), "projects/demo/".to_string()];
+        validate(proposal, &Scope { project: "demo", existing: &existing, editable: &editable, writable: folders.clone(), removable: folders })
     }
-
-    const NOTE: &str = "projects/demo/bg-policy.md";
-    const OTHER: &str = "projects/demo/log-only.md";
 
     fn removing(path: &str) -> Proposal {
-        Proposal { changes: vec![], removals: vec![Removal { path: path.into(), reason: "경고 팝업을 없애 이 노트의 대상이 없습니다.".into(), evidence: vec![quoted_turn()] }], ..proposal() }
+        Proposal { changes: vec![], removals: vec![Removal { path: path.into(), reason: "경고 팝업을 없애 이 노트의 대상이 없습니다.".into() }], ..proposal() }
     }
 
-    /// A cleanup of `projects/demo/` that also takes in `projects/old/`.
+    /// A cleanup of `projects/demo/` that also takes in `projects/old/`, given every note.
     fn tidy(proposal: &Proposal, existing: &[&str]) -> Result<()> {
         let existing: BTreeSet<String> = existing.iter().map(|s| s.to_string()).collect();
-        let scope = Scope { project: "demo", turns: None, existing: &existing, editable: &existing, writable: vec!["projects/demo/".into()], removable: vec!["projects/demo/".into(), "projects/old/".into()] };
+        let scope = Scope { project: "demo", existing: &existing, editable: &existing, writable: vec!["projects/demo/".into()], removable: vec!["projects/demo/".into(), "projects/old/".into()] };
         validate(proposal, &scope)
     }
 
-    fn unquoted(mut proposal: Proposal) -> Proposal {
-        proposal.changes.iter_mut().for_each(|change| change.evidence.clear());
-        proposal.removals.iter_mut().for_each(|removal| removal.evidence.clear());
-        proposal
-    }
-
-    fn link(evidence: &Evidence) -> String {
-        format!("<D:/k/sources/claude/s.md:{}>", &evidence.reference[1..])
-    }
-
     #[test]
-    fn notes_end_with_an_english_sources_section_and_older_notes_are_converted_when_edited() {
-        let rendered = render_note(&proposal().changes[0], "demo", &link, None, &[]).unwrap();
-        assert!(rendered.ends_with("\n\n## Sources\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n"), "{rendered}");
-        let edited = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", &link, Some(OLD_NOTE), &[]).unwrap();
-        assert!(!edited.contains("원문 근거"), "{edited}");
-        assert!(edited.ends_with("보관 기간\n\n## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n"), "{edited}");
+    fn a_note_ends_with_the_sources_section_and_an_edit_adds_to_it() {
+        let rendered = render(&proposal().changes[0], None).unwrap();
+        assert!(rendered.ends_with(&format!("\n\n## Sources\n{ADDED}\n")), "{rendered}");
+        let edited = render(&editing(vec![append("남은 점", "보관 기간")]), Some(OLD_NOTE)).unwrap();
+        assert!(edited.ends_with(&format!("보관 기간\n\n## Sources\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n{ADDED}\n")), "{edited}");
     }
 
     #[test]
     fn replace_section_restates_one_section_and_leaves_the_rest() {
-        let restate = |section: &str, text: &str| render_note(&editing(vec![edit("replace_section", "", section, "", text)]), "demo", &link, Some(OLD_NOTE), &[]);
+        let restate = |section: &str, text: &str| render(&editing(vec![edit("replace_section", "", section, "", text)]), Some(OLD_NOTE));
         let rendered = restate("결정", "TP 로그만 남깁니다.\n").unwrap();
         assert!(rendered.contains("# BG 불일치 처리\n\n## 결정\n\nTP 로그만 남깁니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n## Sources"), "{rendered}");
         assert!(!rendered.contains("경고 팝업을 띄웁니다."));
@@ -697,24 +624,24 @@ mod tests {
         assert!(restate("없는 절", "x").unwrap_err().to_string().contains("was not found"));
         let mut blank = proposal();
         blank.changes[0] = editing(vec![edit("replace_section", "", "결정", "", " ")]);
-        assert!(check(&blank, &turns(), &["projects/demo/bg-policy.md"], &["projects/demo/bg-policy.md"]).is_err());
+        assert!(check(&blank, &[NOTE], &[NOTE]).is_err());
     }
 
     #[test]
     fn the_text_shown_to_the_model_leaves_out_the_source_list() {
-        assert_eq!(without_sources("# A\n\nBody.\n\n## Sources\n- [L1](<x>) — q\n"), "# A\n\nBody.\n");
+        assert_eq!(without_sources("# A\n\nBody.\n\n## Sources\n- 2026-10-02, user: \"q\"\n"), "# A\n\nBody.\n");
         let earlier = without_sources(OLD_NOTE);
         assert!(earlier.ends_with("로그 위치는 정하지 않았습니다.\n") && earlier.starts_with("---\nqmd:"), "{earlier}");
         assert_eq!(without_sources("# A\n\nNo sources yet.\n"), "# A\n\nNo sources yet.\n");
     }
 
     #[test]
-    fn supported_decision_renders_markdown_with_program_owned_sources() {
+    fn a_new_note_renders_markdown_with_program_owned_sources() {
         let proposal = proposal();
-        check(&proposal, &turns(), &[], &[]).unwrap();
-        let rendered = render_note(&proposal.changes[0], "demo", &link, None, &[]).unwrap();
+        check(&proposal, &[OTHER], &[OTHER]).unwrap();
+        let rendered = render(&proposal.changes[0], None).unwrap();
         assert!(rendered.contains("TP 로그만 남깁니다."));
-        assert!(rendered.contains("- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오."));
+        assert!(rendered.contains(ADDED));
         assert!(rendered.contains("authority: \"user_decision\""));
         assert!(rendered.starts_with("---\nqmd:\n  metadata:\n    project: \"demo\""));
     }
@@ -735,36 +662,20 @@ mod tests {
         ] {
             let mut candidate = proposal();
             candidate.changes[0].path = path.into();
-            assert!(check(&candidate, &turns(), &[], &[]).is_err(), "{path}");
+            assert!(check(&candidate, &[OTHER], &[OTHER]).is_err(), "{path}");
         }
         let mut common = proposal();
         common.changes[0].path = "common/review-practice.md".into();
-        check(&common, &turns(), &[], &[]).unwrap();
+        check(&common, &[OTHER], &[OTHER]).unwrap();
     }
 
     #[test]
-    fn unknown_or_fabricated_evidence_is_rejected() {
-        for evidence in [
-            vec![Evidence { reference: "L900".into(), quote: "경고는 빼고".into() }],
-            vec![Evidence { reference: "L3".into(), quote: "사용자가 경고를 원함".into() }],
-            vec![Evidence { reference: "L3".into(), quote: "  ".into() }],
-            vec![],
-        ] {
-            let mut candidate = proposal();
-            candidate.changes[0].evidence = evidence;
-            assert!(check(&candidate, &turns(), &[], &[]).is_err());
-        }
-    }
-
-    #[test]
-    fn agent_text_cannot_back_a_user_decision() {
-        for origin in [Origin::Assistant, Origin::Unverified, Origin::Context] {
-            let mut agent = turns();
-            agent[0].origin = origin;
-            assert!(check(&proposal(), &agent, &[], &[]).is_err());
-            let mut report = proposal();
-            report.changes[0].authority = "assistant_report".into();
-            check(&report, &agent, &[], &[]).unwrap();
+    fn a_kind_or_an_authority_the_notes_do_not_use_is_rejected() {
+        for (kind, authority) in [("opinion", "user_decision"), ("decision", "user_statement"), ("", "")] {
+            let mut odd = proposal();
+            odd.changes[0].kind = kind.into();
+            odd.changes[0].authority = authority.into();
+            assert!(check(&odd, &[OTHER], &[OTHER]).is_err(), "{kind} {authority}");
         }
     }
 
@@ -774,9 +685,9 @@ mod tests {
         let mut copy = twice.changes[0].clone();
         copy.path = "projects/demo/BG-policy.md".into();
         twice.changes.push(copy);
-        assert!(check(&twice, &turns(), &[], &[]).is_err());
-        let empty = Proposal { summary: "기록 대상 없음".into(), ..Proposal::default() };
-        check(&empty, &turns(), &[], &[]).unwrap();
+        assert!(check(&twice, &[OTHER], &[OTHER]).unwrap_err().to_string().contains("twice"));
+        let empty = Proposal { summary: "정리할 것이 없습니다.".into(), ..Proposal::default() };
+        check(&empty, &[], &[]).unwrap();
     }
 
     fn with_change(change: Change) -> Proposal {
@@ -785,34 +696,32 @@ mod tests {
 
     #[test]
     fn existing_note_can_change_only_when_its_body_was_provided() {
-        let path = "projects/demo/bg-policy.md";
         let edited = with_change(editing(vec![append("결정", "로그만 남깁니다.")]));
-        assert!(check(&edited, &turns(), &[path], &[]).is_err());
-        check(&edited, &turns(), &[path], &[path]).unwrap();
-        assert!(check(&edited, &turns(), &["projects/demo/BG-Policy.md"], &["projects/demo/BG-Policy.md"]).is_err());
+        assert!(check(&edited, &[NOTE], &[]).unwrap_err().to_string().contains("was not provided"));
+        check(&edited, &[NOTE], &[NOTE]).unwrap();
+        assert!(check(&edited, &["projects/demo/BG-Policy.md"], &["projects/demo/BG-Policy.md"]).unwrap_err().to_string().contains("letter case"));
     }
 
     #[test]
     fn existing_note_is_changed_by_edits_and_a_new_note_is_written_whole() {
-        let path = "projects/demo/bg-policy.md";
+        let both_notes = [NOTE, OTHER];
         let rewritten = proposal();
-        assert_eq!(check(&rewritten, &turns(), &[path], &[path]).unwrap_err().failure, crate::error::Failure::Rejected);
+        assert!(check(&rewritten, &both_notes, &both_notes).unwrap_err().to_string().contains("targeted edits"));
         let mut both = editing(vec![append("결정", "로그만 남깁니다.")]);
         both.body = "본문 전체".into();
-        assert!(check(&with_change(both), &turns(), &[path], &[path]).is_err());
-        assert!(check(&with_change(editing(vec![])), &turns(), &[path], &[path]).is_err());
+        assert!(check(&with_change(both), &[NOTE], &[NOTE]).is_err());
+        assert!(check(&with_change(editing(vec![])), &[NOTE], &[NOTE]).is_err());
 
         let mut new_with_edits = proposal().changes[0].clone();
         new_with_edits.edits = vec![append("결정", "로그만 남깁니다.")];
-        assert!(check(&with_change(new_with_edits), &turns(), &[], &[]).is_err());
+        assert!(check(&with_change(new_with_edits), &[OTHER], &[OTHER]).unwrap_err().to_string().contains("title and complete body"));
         let mut new_without_title = proposal().changes[0].clone();
         new_without_title.title = " ".into();
-        assert!(check(&with_change(new_without_title), &turns(), &[], &[]).is_err());
+        assert!(check(&with_change(new_without_title), &[OTHER], &[OTHER]).unwrap_err().to_string().contains("title and complete body"));
     }
 
     #[test]
     fn each_edit_names_what_its_kind_needs() {
-        let path = "projects/demo/bg-policy.md";
         for bad in [
             edit("rewrite", "경고", "", "", "로그"),
             replace(" ", "로그"),
@@ -821,10 +730,10 @@ mod tests {
             add_section("결정", "", "로그만 남깁니다."),
             add_section("결정", "변경 이유", ""),
         ] {
-            assert!(check(&with_change(editing(vec![bad.clone()])), &turns(), &[path], &[path]).is_err(), "{bad:?}");
+            assert!(check(&with_change(editing(vec![bad.clone()])), &[NOTE], &[NOTE]).unwrap_err().to_string().contains("Invalid edit instruction"), "{bad:?}");
         }
         for good in [replace("경고 팝업을 띄웁니다.", ""), add_section("", "변경 이유", "방해가 됩니다.")] {
-            check(&with_change(editing(vec![good])), &turns(), &[path], &[path]).unwrap();
+            check(&with_change(editing(vec![good])), &[NOTE], &[NOTE]).unwrap();
         }
     }
 
@@ -836,20 +745,20 @@ mod tests {
             add_section("결정", "변경 이유", "장비 쓰는 사람에게 방해가 됩니다."),
         ]);
         change.authority = "user_decision".into();
-        let rendered = render_note(&change, "demo", &link, Some(OLD_NOTE), &[]).unwrap();
-        let expected = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업 없이 TP 로그만 남깁니다. 장비 화면은 그대로 둡니다.\n\n## 변경 이유\n\n장비 쓰는 사람에게 방해가 됩니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n로그 보관 기간도 정하지 않았습니다.\n\n## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n";
+        let rendered = render(&change, Some(OLD_NOTE)).unwrap();
+        let expected = format!("---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치 처리\n\n## 결정\n\n경고 팝업 없이 TP 로그만 남깁니다. 장비 화면은 그대로 둡니다.\n\n## 변경 이유\n\n장비 쓰는 사람에게 방해가 됩니다.\n\n## 남은 점\n\n로그 위치는 정하지 않았습니다.\n\n로그 보관 기간도 정하지 않았습니다.\n\n## Sources\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n{ADDED}\n");
         assert_eq!(rendered, expected);
     }
 
     #[test]
     fn appended_list_items_continue_the_list() {
-        let old = "# 방침\n\n## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n\n## 원문 근거\n- [L1](<x>) — y\n";
-        let rendered = render_note(&editing(vec![append("남은 점", "- 보관 기간")]), "demo", &link, Some(old), &[]).unwrap();
+        let old = "# 방침\n\n## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n\n## Sources\n- 2026-10-02, user: \"y\"\n";
+        let rendered = render(&editing(vec![append("남은 점", "- 보관 기간")]), Some(old)).unwrap();
         assert!(rendered.contains("## 남은 점\n\n- 로그 위치\n  - 장비별 경로\n- 보관 기간\n\n## Sources"), "{rendered}");
-        let numbered = "# 방침\n\n## 순서\n\n1. 확인\n\n## 원문 근거\n- [L1](<x>) — y\n";
-        let rendered = render_note(&editing(vec![append("순서", "2. 반영")]), "demo", &link, Some(numbered), &[]).unwrap();
+        let numbered = "# 방침\n\n## 순서\n\n1. 확인\n\n## Sources\n- 2026-10-02, user: \"y\"\n";
+        let rendered = render(&editing(vec![append("순서", "2. 반영")]), Some(numbered)).unwrap();
         assert!(rendered.contains("1. 확인\n2. 반영\n\n## Sources"), "{rendered}");
-        let paragraph = render_note(&editing(vec![append("순서", "반영은 나중에 합니다.")]), "demo", &link, Some(numbered), &[]).unwrap();
+        let paragraph = render(&editing(vec![append("순서", "반영은 나중에 합니다.")]), Some(numbered)).unwrap();
         assert!(paragraph.contains("1. 확인\n\n반영은 나중에 합니다.\n\n## Sources"), "{paragraph}");
     }
 
@@ -857,7 +766,7 @@ mod tests {
     fn new_section_without_an_anchor_goes_last_and_a_new_title_replaces_the_old_one() {
         let mut change = editing(vec![add_section("", "후속 확인", "11/5에 다시 봅니다.")]);
         change.title = "BG 불일치 처리 방침".into();
-        let rendered = render_note(&change, "demo", &link, Some(OLD_NOTE), &[]).unwrap();
+        let rendered = render(&change, Some(OLD_NOTE)).unwrap();
         assert!(rendered.contains("# BG 불일치 처리 방침\n\n## 결정"), "{rendered}");
         assert!(rendered.contains("로그 위치는 정하지 않았습니다.\n\n## 후속 확인\n\n11/5에 다시 봅니다.\n\n## Sources"), "{rendered}");
     }
@@ -874,10 +783,10 @@ mod tests {
     #[test]
     fn edits_apply_in_order_against_the_text_so_far() {
         let chained = editing(vec![replace("경고 팝업을 띄웁니다.", "경고 팝업을 띄우지 않습니다."), replace("띄우지 않습니다.", "띄우지 않고 로그만 남깁니다.")]);
-        let rendered = render_note(&chained, "demo", &link, Some(OLD_NOTE), &[]).unwrap();
+        let rendered = render(&chained, Some(OLD_NOTE)).unwrap();
         assert!(rendered.contains("경고 팝업을 띄우지 않고 로그만 남깁니다. 장비 화면은"), "{rendered}");
         let stale = editing(vec![replace("경고 팝업을 띄웁니다.", "로그만 남깁니다."), replace("경고 팝업을 띄웁니다.", "다시")]);
-        assert!(render_note(&stale, "demo", &link, Some(OLD_NOTE), &[]).is_err());
+        assert!(render(&stale, Some(OLD_NOTE)).is_err());
     }
 
     #[test]
@@ -893,7 +802,7 @@ mod tests {
             (OLD_NOTE, add_section("결정", "남은 점", "중복 제목")),
             (OLD_NOTE, add_section("없는 절", "변경 이유", "로그")),
         ] {
-            let error = render_note(&editing(vec![bad.clone()]), "demo", &link, Some(old), &[]).unwrap_err();
+            let error = render(&editing(vec![bad.clone()]), Some(old)).unwrap_err();
             assert_eq!(error.failure, crate::error::Failure::Rejected, "{bad:?}");
         }
     }
@@ -901,23 +810,24 @@ mod tests {
     #[test]
     fn deleting_text_and_editing_a_crlf_note_keep_earlier_sources() {
         let old = OLD_NOTE.replace('\n', "\r\n");
-        let rendered = render_note(&editing(vec![replace(" 장비 화면은 그대로 둡니다.", "")]), "demo", &link, Some(&old), &[]).unwrap();
+        let rendered = render(&editing(vec![replace(" 장비 화면은 그대로 둡니다.", "")]), Some(&old)).unwrap();
         assert!(rendered.contains("## 결정\n\n경고 팝업을 띄웁니다.\n\n## 남은 점"), "{rendered}");
-        assert!(rendered.contains("- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L3]"));
-        let twice = render_note(&editing(vec![replace("경고 팝업을 띄웁니다.", "경고 팝업을 띄웁니다!")]), "demo", &link, Some(&rendered), &[]).unwrap();
-        assert_eq!(twice.matches("- [L3]").count(), 1);
+        assert!(rendered.contains(&format!("- 2026-10-02, user: \"팝업을 띄우십시오\"\n{ADDED}\n")), "{rendered}");
+        // The same source brought again, as when an interrupted write is repeated, is listed once.
+        let twice = render(&editing(vec![replace("경고 팝업을 띄웁니다.", "경고 팝업을 띄웁니다!")]), Some(&rendered)).unwrap();
+        assert_eq!(twice.matches(ADDED).count(), 1);
     }
 
     #[test]
     fn a_title_repeated_at_the_top_of_the_body_is_dropped() {
         let mut new_note = proposal().changes[0].clone();
         new_note.body = "# BG 불일치 처리\n\n## 현재 결정\nTP 로그만 남깁니다.".into();
-        let rendered = render_note(&new_note, "demo", &link, None, &[]).unwrap();
+        let rendered = render(&new_note, None).unwrap();
         assert_eq!(rendered.matches("# BG 불일치 처리\n").count(), 1, "{rendered}");
         assert!(rendered.contains("# BG 불일치 처리\n\n## 현재 결정\nTP 로그만 남깁니다.\n\n## Sources"), "{rendered}");
 
         let doubled = OLD_NOTE.replace("# BG 불일치 처리\n\n", "# BG 불일치 처리\n\n# BG 불일치 처리\n\n");
-        let edited = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", &link, Some(&doubled), &[]).unwrap();
+        let edited = render(&editing(vec![append("남은 점", "보관 기간")]), Some(&doubled)).unwrap();
         assert_eq!(edited.matches("# BG 불일치 처리\n").count(), 1, "{edited}");
         assert!(edited.contains("# BG 불일치 처리\n\n## 결정\n"), "{edited}");
     }
@@ -931,18 +841,18 @@ mod tests {
         let mut change = editing(vec![append("남은 점", "보관 기간")]);
         change.kind = "issue".into();
         change.authority = "mixed_evidence".into();
-        let rendered = render_note(&change, "demo", &link, Some(&october), &[]).unwrap();
+        let rendered = render(&change, Some(&october)).unwrap();
         assert!(
             rendered.starts_with("---\nqmd:\n  metadata:\n    project: \"demo\"\n    period: \"2026-10\"\n    kind: \"documentation_decision\"\n    status: \"historical\"\n    authority: \"mixed_evidence\"\n---\n\n# BG 불일치 처리\n"),
             "{rendered}"
         );
 
         let bare = "# 방침\n\n## 결정\n\n로그만 남깁니다.\n";
-        let rendered = render_note(&editing(vec![append("결정", "보관 기간")]), "demo", &link, Some(bare), &[]).unwrap();
+        let rendered = render(&editing(vec![append("결정", "보관 기간")]), Some(bare)).unwrap();
         assert!(rendered.starts_with("---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# 방침\n"), "{rendered}");
 
         let partial = "---\nqmd:\n  metadata:\n    project: \"demo\"\n---\n\n# 방침\n\n## 결정\n\n로그만 남깁니다.\n";
-        let rendered = render_note(&editing(vec![append("결정", "보관 기간")]), "demo", &link, Some(partial), &[]).unwrap();
+        let rendered = render(&editing(vec![append("결정", "보관 기간")]), Some(partial)).unwrap();
         assert!(rendered.starts_with("---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# 방침\n"), "{rendered}");
     }
 
@@ -950,66 +860,58 @@ mod tests {
     fn model_written_sources_section_is_replaced_by_the_program() {
         let mut change = proposal().changes[0].clone();
         change.body = "본문\n## Sources\n- 모델이 만든 근거".into();
-        let rendered = render_note(&change, "demo", &link, None, &[]).unwrap();
+        let rendered = render(&change, None).unwrap();
         assert!(!rendered.contains("모델이 만든 근거"));
-        assert!(rendered.contains("본문\n\n## Sources\n- [L3]"));
-        let appended = render_note(&editing(vec![append("남은 점", "보관 기간\n## 원문 근거\n- 모델이 만든 근거")]), "demo", &link, Some(OLD_NOTE), &[]).unwrap();
+        assert!(rendered.contains(&format!("본문\n\n## Sources\n{ADDED}\n")), "{rendered}");
+        let appended = render(&editing(vec![append("남은 점", "보관 기간\n## Sources\n- 모델이 만든 근거")]), Some(OLD_NOTE)).unwrap();
         assert!(!appended.contains("모델이 만든 근거"), "{appended}");
     }
 
-
     #[test]
-    fn a_note_is_removed_only_with_a_reason_a_quoted_turn_and_its_text_provided() {
-        check(&removing(NOTE), &turns(), &[NOTE], &[NOTE]).unwrap();
-        assert!(check(&removing(NOTE), &turns(), &[NOTE], &[]).unwrap_err().to_string().contains("was not provided"));
-        assert!(check(&removing(NOTE), &turns(), &[], &[]).unwrap_err().to_string().contains("does not exist"));
-        assert!(check(&removing("projects/other/bg-policy.md"), &turns(), &["projects/other/bg-policy.md"], &["projects/other/bg-policy.md"]).is_err());
+    fn a_note_is_removed_only_with_a_reason_and_its_text_provided() {
+        check(&removing(NOTE), &[NOTE], &[NOTE]).unwrap();
+        assert!(check(&removing(NOTE), &[NOTE], &[]).unwrap_err().to_string().contains("was not provided"));
+        assert!(check(&removing(NOTE), &[], &[]).unwrap_err().to_string().contains("does not exist"));
+        assert!(check(&removing("projects/other/bg-policy.md"), &["projects/other/bg-policy.md"], &["projects/other/bg-policy.md"]).is_err());
         let mut silent = removing(NOTE);
         silent.removals[0].reason = " ".into();
-        assert!(check(&silent, &turns(), &[NOTE], &[NOTE]).is_err());
-        assert!(check(&unquoted(removing(NOTE)), &turns(), &[NOTE], &[NOTE]).is_err());
-        let mut invented = removing(NOTE);
-        invented.removals[0].evidence[0].quote = "이 노트는 지우십시오.".into();
-        assert!(check(&invented, &turns(), &[NOTE], &[NOTE]).is_err());
+        assert!(check(&silent, &[NOTE], &[NOTE]).unwrap_err().to_string().contains("requires a reason"));
     }
 
     #[test]
     fn a_note_cannot_be_changed_and_removed_in_one_proposal() {
         let mut both = removing(NOTE);
         both.changes = vec![editing(vec![append("결정", "로그만 남깁니다.")])];
-        assert!(check(&both, &turns(), &[NOTE], &[NOTE]).unwrap_err().to_string().contains("twice"));
+        assert!(check(&both, &[NOTE], &[NOTE]).unwrap_err().to_string().contains("twice"));
         let mut merged = removing(OTHER);
         merged.changes = vec![Change { sources_from: vec![OTHER.into()], ..editing(vec![append("결정", "로그만 남깁니다.")]) }];
-        check(&merged, &turns(), &[NOTE, OTHER], &[NOTE, OTHER]).unwrap();
+        check(&merged, &[NOTE, OTHER], &[NOTE, OTHER]).unwrap();
     }
 
     #[test]
     fn sources_can_be_taken_only_from_another_note_whose_text_was_provided() {
         let taking = |from: &str| with_change(Change { sources_from: vec![from.into()], ..editing(vec![append("결정", "로그만 남깁니다.")]) });
-        check(&taking(OTHER), &turns(), &[NOTE, OTHER], &[NOTE, OTHER]).unwrap();
-        assert!(check(&taking(OTHER), &turns(), &[NOTE, OTHER], &[NOTE]).is_err());
-        assert!(check(&taking("projects/demo/missing.md"), &turns(), &[NOTE], &[NOTE]).is_err());
-        assert!(check(&taking(NOTE), &turns(), &[NOTE], &[NOTE]).is_err());
+        check(&taking(OTHER), &[NOTE, OTHER], &[NOTE, OTHER]).unwrap();
+        assert!(check(&taking(OTHER), &[NOTE, OTHER], &[NOTE]).is_err());
+        assert!(check(&taking("projects/demo/missing.md"), &[NOTE], &[NOTE]).is_err());
+        assert!(check(&taking(NOTE), &[NOTE], &[NOTE]).is_err());
     }
 
     #[test]
     fn a_note_takes_over_the_sources_of_the_notes_it_absorbed() {
-        let carried = source_lines("# 옛 노트\n\n본문\n\n## Sources\n- [L7](<../../sources/claude/t.md#L7>) — 옛 근거\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n");
+        let carried = source_lines("# 옛 노트\n\n본문\n\n## Sources\n- 2026-09-01, agent: \"옛 근거\"\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n");
         assert_eq!(carried.len(), 2);
-        let rendered = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", &link, Some(OLD_NOTE), &carried).unwrap();
-        assert!(
-            rendered.ends_with("## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n- [L7](<../../sources/claude/t.md#L7>) — 옛 근거\n- [L3](<D:/k/sources/claude/s.md:3>) — 경고는 빼고 로그만 남기십시오.\n"),
-            "{rendered}"
-        );
+        let rendered = render_note(&editing(vec![append("남은 점", "보관 기간")]), "demo", Some(OLD_NOTE), &carried).unwrap();
+        assert!(rendered.ends_with("## Sources\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n- 2026-09-01, agent: \"옛 근거\"\n"), "{rendered}");
         assert!(source_lines("# 근거 없는 노트\n\n본문\n").is_empty());
     }
 
     #[test]
     fn only_the_chosen_source_lines_follow_the_content_and_a_line_that_does_not_exist_is_rejected() {
-        let ticket = "# 이슈 노트\n\n본문\n\n## Sources\n- [L30](<../../sources/claude/i.md#L30>) — 끝난 것부터 말해\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n";
+        let ticket = "# 이슈 노트\n\n본문\n\n## Sources\n- 2026-11-01, user: \"끝난 것부터 말해\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n";
         let text_of = |path: &str| (path == OTHER).then_some(ticket);
         let taking = |lines: Vec<usize>| Change { sources_from: vec![SourceRef::Lines { path: OTHER.into(), lines }], ..editing(vec![append("남은 점", "4GB 미만 미확인")]) };
-        assert_eq!(carried_sources(&taking(vec![2]), text_of).unwrap(), vec!["- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다".to_string()]);
+        assert_eq!(carried_sources(&taking(vec![2]), text_of).unwrap(), vec!["- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"".to_string()]);
         assert_eq!(carried_sources(&taking(vec![]), text_of).unwrap().len(), 2);
         assert_eq!(carried_sources(&Change { sources_from: vec![OTHER.into()], ..taking(vec![]) }, text_of).unwrap().len(), 2);
         for missing in [vec![3], vec![0], vec![1, 9]] {
@@ -1017,9 +919,12 @@ mod tests {
             assert!(error.failure == crate::error::Failure::Rejected && error.to_string().contains("source line"), "{error}");
         }
 
-        // The model is shown the list as numbered quotations, so it can name the lines.
-        assert_eq!(with_numbered_sources(ticket), "# 이슈 노트\n\n본문\n\n## Sources\n1. 끝난 것부터 말해\n2. 4GB 미만에서는 실행하지 않았습니다\n");
+        // The model is shown the list numbered, each line with its day and speaker, so it can
+        // name the lines. A dash inside the words is part of them.
+        assert_eq!(with_numbered_sources(ticket), "# 이슈 노트\n\n본문\n\n## Sources\n1. 2026-11-01, user: \"끝난 것부터 말해\"\n2. 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n");
         assert_eq!(with_numbered_sources("# 근거 없는 노트\n\n본문\n"), "# 근거 없는 노트\n\n본문\n");
+        let dashed = "# 알림\n\n본문\n\n## Sources\n- 2026-11-17, user: \"알림 띄우지 마 — 방해된다\"\n";
+        assert_eq!(with_numbered_sources(dashed), "# 알림\n\n본문\n\n## Sources\n1. 2026-11-17, user: \"알림 띄우지 마 — 방해된다\"\n");
 
         // Both forms of an answer read: a path alone, and a path with line numbers.
         let read: Change = serde_json::from_str(r#"{"path": "projects/demo/a.md", "kind": "decision", "authority": "mixed_evidence", "sources_from": ["projects/demo/b.md", {"path": "projects/demo/c.md", "lines": [2]}]}"#).unwrap();
@@ -1027,31 +932,17 @@ mod tests {
     }
 
     #[test]
-    fn links_to_conversation_copies_fit_the_folder_depth_of_the_note() {
-        let text = "결정 ([근거](<../../sources/claude/t.md#L7>)), 다른 문서는 [여기](../other.md), 옛 링크 <D:/k/sources/claude/s.md:1>\n- [L2](<../sources/codex/u.md#L2>) — q";
-        assert_eq!(fit_source_links(text, "common/a.md"), "결정 ([근거](<../sources/claude/t.md#L7>)), 다른 문서는 [여기](../other.md), 옛 링크 <D:/k/sources/claude/s.md:1>\n- [L2](<../sources/codex/u.md#L2>) — q");
-        assert_eq!(fit_source_links(text, "projects/demo/a.md"), "결정 ([근거](<../../sources/claude/t.md#L7>)), 다른 문서는 [여기](../other.md), 옛 링크 <D:/k/sources/claude/s.md:1>\n- [L2](<../../sources/codex/u.md#L2>) — q");
-
-        let mut shared = editing(vec![append("남은 점", "보관 기간 ([근거](<../../sources/claude/t.md#L9>))")]);
-        shared.path = "common/bg-policy.md".into();
-        let carried = vec!["- [L7](<../../sources/claude/t.md#L7>) — 옛 근거".to_string()];
-        let rendered = render_note(&shared, "demo", &link, Some(OLD_NOTE), &carried).unwrap();
-        assert!(rendered.contains("보관 기간 ([근거](<../sources/claude/t.md#L9>))") && rendered.contains("- [L7](<../sources/claude/t.md#L7>) — 옛 근거"), "{rendered}");
-    }
-
-    #[test]
     fn a_cleanup_rests_on_the_notes_and_a_new_note_names_the_notes_it_came_from() {
-        let split = |sources_from: Vec<SourceRef>| unquoted(with_change(Change { path: "projects/demo/log-retention.md".into(), sources_from, ..proposal().changes[0].clone() }));
+        let split = |sources_from: Vec<SourceRef>| with_change(Change { path: "projects/demo/log-retention.md".into(), sources_from, ..proposal().changes[0].clone() });
         tidy(&split(vec![NOTE.into()]), &[NOTE]).unwrap();
         assert!(tidy(&split(vec![]), &[NOTE]).unwrap_err().to_string().contains("sources_from"));
-        tidy(&unquoted(with_change(editing(vec![append("결정", "로그만 남깁니다.")]))), &[NOTE]).unwrap();
-        tidy(&unquoted(removing(NOTE)), &[NOTE]).unwrap();
-        // The same proposal is not enough for a recording, which must quote the session.
-        assert!(check(&split(vec![NOTE.into()]), &turns(), &[NOTE], &[NOTE]).is_err());
+        tidy(&with_change(editing(vec![append("결정", "로그만 남깁니다.")])), &[NOTE]).unwrap();
+        tidy(&removing(NOTE), &[NOTE]).unwrap();
 
-        let rendered = render_note(&split(vec![NOTE.into()]).changes[0], "demo", &link, None, &source_lines(OLD_NOTE)).unwrap();
-        assert!(rendered.ends_with("TP 로그만 남깁니다.\n\n## Sources\n- [L1](<D:/k/sources/claude/s.md:1>) — 팝업을 띄우십시오\n"), "{rendered}");
-        let bare = render_note(&split(vec![NOTE.into()]).changes[0], "demo", &link, None, &[]).unwrap();
+        let rendered = render_note(&split(vec![NOTE.into()]).changes[0], "demo", None, &source_lines(OLD_NOTE)).unwrap();
+        assert!(rendered.ends_with("TP 로그만 남깁니다.\n\n## Sources\n- 2026-10-02, user: \"팝업을 띄우십시오\"\n"), "{rendered}");
+        // The notes it was made from had no sources, so neither has the new one.
+        let bare = render_note(&split(vec![NOTE.into()]).changes[0], "demo", None, &[]).unwrap();
         assert!(bare.ends_with("TP 로그만 남깁니다.\n") && !bare.contains("## Sources"), "{bare}");
     }
 
@@ -1059,15 +950,16 @@ mod tests {
     fn a_cleanup_writes_only_in_its_folder_and_removes_only_there_and_in_the_folders_it_takes_in() {
         let old = "projects/old/bg-policy.md";
         let common = "common/review-practice.md";
-        tidy(&unquoted(removing(old)), &[NOTE, old]).unwrap();
-        assert!(tidy(&unquoted(removing(common)), &[NOTE, common]).is_err());
-        assert!(tidy(&unquoted(removing("projects/else/a.md")), &["projects/else/a.md"]).is_err());
-        let writing = |path: &str| unquoted(with_change(Change { path: path.into(), sources_from: vec![NOTE.into()], ..proposal().changes[0].clone() }));
+        tidy(&removing(old), &[NOTE, old]).unwrap();
+        assert!(tidy(&removing(common), &[NOTE, common]).is_err());
+        assert!(tidy(&removing("projects/else/a.md"), &["projects/else/a.md"]).is_err());
+        let writing = |path: &str| with_change(Change { path: path.into(), sources_from: vec![NOTE.into()], ..proposal().changes[0].clone() });
+        tidy(&writing("projects/demo/new-topic.md"), &[NOTE]).unwrap();
         assert!(tidy(&writing("projects/old/new-topic.md"), &[NOTE]).is_err());
         assert!(tidy(&writing("common/new-topic.md"), &[NOTE]).is_err());
         let mut edit_old = editing(vec![append("결정", "로그만 남깁니다.")]);
         edit_old.path = old.into();
-        assert!(tidy(&unquoted(with_change(edit_old)), &[NOTE, old]).is_err());
+        assert!(tidy(&with_change(edit_old), &[NOTE, old]).is_err());
     }
 
     fn moving(from: &str, to: &str) -> Proposal {
@@ -1075,7 +967,7 @@ mod tests {
     }
 
     #[test]
-    fn a_note_moves_only_in_a_cleanup_and_only_to_a_free_path_in_its_folder() {
+    fn a_note_moves_only_to_a_free_path_in_the_folder_being_cleaned() {
         let old = "projects/old/bg-policy.md";
         tidy(&moving(old, "projects/demo/bg-mismatch.md"), &[NOTE, old]).unwrap();
         tidy(&moving(NOTE, "projects/demo/bg-mismatch.md"), &[NOTE]).unwrap();
@@ -1085,17 +977,17 @@ mod tests {
         assert!(tidy(&moving("projects/old/missing.md", "projects/demo/a.md"), &[NOTE]).is_err());
         assert!(tidy(&moving("common/a.md", "projects/demo/a.md"), &[NOTE, "common/a.md"]).is_err());
         let mut twice = moving(old, "projects/demo/bg-mismatch.md");
-        twice.removals = unquoted(removing(old)).removals;
-        assert!(tidy(&twice, &[NOTE, old]).is_err());
-        assert!(check(&moving(NOTE, "projects/demo/bg-mismatch.md"), &turns(), &[NOTE], &[NOTE]).unwrap_err().to_string().contains("cleanup"));
+        twice.removals = removing(old).removals;
+        assert!(tidy(&twice, &[NOTE, old]).unwrap_err().to_string().contains("twice"));
     }
 
     #[test]
     fn a_moved_note_keeps_its_text_and_takes_the_project_of_its_new_folder() {
         let moved = moved_note(OLD_NOTE, "projects/lore/bg-policy.md");
         assert_eq!(moved, OLD_NOTE.replace("    project: \"demo\"\n", "    project: \"lore\"\n"));
-        let portable = "---\nqmd:\n  metadata:\n    project: \"demo\"\n---\n\n# 방침\n\n본문 project: \"demo\"\n\n## Sources\n- [L7](<../../sources/claude/t.md#L7>) — 근거\n";
-        assert_eq!(moved_note(portable, "common/policy.md"), portable.replacen("\"demo\"", "\"common\"", 1).replace("../../sources", "../sources"));
+        // Only the front matter names the project: the same words in the body stay.
+        let shared = "---\nqmd:\n  metadata:\n    project: \"demo\"\n---\n\n# 방침\n\n본문 project: \"demo\"\n\n## Sources\n- 2026-10-02, user: \"근거\"\n";
+        assert_eq!(moved_note(shared, "common/policy.md"), shared.replacen("\"demo\"", "\"common\"", 1));
         assert_eq!(moved_note("# 머리말 없는 노트\n\n본문\n", "projects/lore/a.md"), "# 머리말 없는 노트\n\n본문\n");
     }
 

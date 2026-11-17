@@ -17,8 +17,6 @@ const ACTIVITY_KEPT: i64 = 500;
 #[serde(rename_all = "snake_case")]
 pub enum Status {
     Pending,
-    Applying,
-    IndexPending,
     Done,
     Failed,
     Skipped,
@@ -28,8 +26,6 @@ impl Status {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Pending => "pending",
-            Self::Applying => "applying",
-            Self::IndexPending => "index_pending",
             Self::Done => "done",
             Self::Failed => "failed",
             Self::Skipped => "skipped",
@@ -38,8 +34,6 @@ impl Status {
 
     fn parse(value: &str) -> Self {
         match value {
-            "applying" => Self::Applying,
-            "index_pending" => Self::IndexPending,
             "done" => Self::Done,
             "failed" => Self::Failed,
             "skipped" => Self::Skipped,
@@ -61,10 +55,14 @@ pub struct Job {
     pub session_id: Option<String>,
     pub attempts: i64,
     pub next_attempt_at: i64,
+    /// How many times a hook has asked for this session to be read. A step compares it when it
+    /// finishes, so a request that arrived while the step ran is not lost.
     #[serde(skip)]
-    pub manifest: Option<String>,
+    pub requests: i64,
     pub last_error: Option<String>,
     pub updated_at: i64,
+    /// The session ended since this job last finished, so the user is told what it offered.
+    pub ended: bool,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
@@ -99,10 +97,23 @@ pub struct FailureOutcome {
 }
 
 pub struct Queue {
-    connection: Connection,
+    pub(crate) connection: Connection,
 }
 
-const JOB_COLUMNS: &str = "id, provider, transcript, status, cursor_line, cursor_hash, project, session_id, attempts, next_attempt_at, manifest, last_error, updated_at";
+const JOB_COLUMNS: &str = "id, provider, transcript, status, cursor_line, cursor_hash, project, session_id, attempts, next_attempt_at, requests, last_error, updated_at, ended";
+
+/// Move a job's cursor to the end of the step that just finished. The job is done unless more
+/// of the session is left, or a hook asked for the session again while the step ran: what was
+/// added to the file in the meantime is then read by a further step. Returns whether it is done.
+pub(crate) fn advance(connection: &Connection, id: &str, end_line: usize, end_hash: &str, has_more: bool, seen_requests: i64, now: i64) -> rusqlite::Result<bool> {
+    connection.query_row(
+        "UPDATE jobs SET cursor_line = ?2, cursor_hash = ?3, status = CASE WHEN ?4 OR requests <> ?5 THEN 'pending' ELSE 'done' END,
+             attempts = 0, next_attempt_at = 0, last_error = NULL, ended = CASE WHEN ?4 OR requests <> ?5 THEN ended ELSE 0 END, updated_at = ?6
+         WHERE id = ?1 RETURNING status = 'done'",
+        params![id, end_line as i64, end_hash, has_more, seen_requests, now],
+        |row| row.get(0),
+    )
+}
 
 fn job_from_row(row: &Row) -> rusqlite::Result<Job> {
     let provider: String = row.get(1)?;
@@ -119,9 +130,10 @@ fn job_from_row(row: &Row) -> rusqlite::Result<Job> {
         session_id: row.get(7)?,
         attempts: row.get(8)?,
         next_attempt_at: row.get(9)?,
-        manifest: row.get(10)?,
+        requests: row.get(10)?,
         last_error: row.get(11)?,
         updated_at: row.get(12)?,
+        ended: row.get(13)?,
     })
 }
 
@@ -156,7 +168,8 @@ impl Queue {
                 session_id TEXT,
                 attempts INTEGER NOT NULL DEFAULT 0,
                 next_attempt_at INTEGER NOT NULL DEFAULT 0,
-                manifest TEXT,
+                requests INTEGER NOT NULL DEFAULT 0,
+                ended INTEGER NOT NULL DEFAULT 0,
                 last_error TEXT,
                 created_at INTEGER NOT NULL,
                 updated_at INTEGER NOT NULL
@@ -185,16 +198,18 @@ impl Queue {
                 modified INTEGER NOT NULL
             );",
         )?;
+        connection.execute_batch(crate::candidate::TABLES)?;
         Ok(Self { connection })
     }
 
-    pub fn enqueue(&self, provider: Provider, transcript: &Path, now: i64) -> Result<String> {
+    /// Put a session in the queue. `ended` says the session is over, as opposed to about to be compacted.
+    pub fn enqueue(&self, provider: Provider, transcript: &Path, ended: bool, now: i64) -> Result<String> {
         let path = std::path::absolute(canonical_path(transcript))?;
         let id = job_id(provider, &path);
         self.connection.execute(
-            "INSERT INTO jobs (id, provider, transcript, status, created_at, updated_at) VALUES (?1, ?2, ?3, 'pending', ?4, ?4)
-             ON CONFLICT(id) DO UPDATE SET status = CASE WHEN jobs.status = 'done' THEN 'pending' ELSE jobs.status END, updated_at = ?4",
-            params![id, provider.as_str(), path.to_string_lossy(), now],
+            "INSERT INTO jobs (id, provider, transcript, status, created_at, updated_at, ended, requests) VALUES (?1, ?2, ?3, 'pending', ?4, ?4, ?5, 1)
+             ON CONFLICT(id) DO UPDATE SET status = CASE WHEN jobs.status = 'done' THEN 'pending' ELSE jobs.status END, ended = MAX(jobs.ended, ?5), requests = jobs.requests + 1, updated_at = ?4",
+            params![id, provider.as_str(), path.to_string_lossy(), now, ended],
         )?;
         Ok(id)
     }
@@ -207,8 +222,8 @@ impl Queue {
     pub fn next_job(&self, now: i64) -> Result<Option<Job>> {
         let sql = format!(
             "SELECT {JOB_COLUMNS} FROM jobs
-             WHERE status IN ('pending', 'applying', 'index_pending') AND next_attempt_at <= ?1
-             ORDER BY CASE status WHEN 'pending' THEN 1 ELSE 0 END, next_attempt_at, rowid LIMIT 1"
+             WHERE status = 'pending' AND next_attempt_at <= ?1
+             ORDER BY next_attempt_at, rowid LIMIT 1"
         );
         Ok(self.connection.query_row(&sql, params![now], job_from_row).optional()?)
     }
@@ -235,32 +250,15 @@ impl Queue {
         Ok(())
     }
 
-    pub fn begin_apply(&self, id: &str, manifest: &str, now: i64) -> Result<()> {
-        self.connection.execute(
-            "UPDATE jobs SET status = 'applying', manifest = ?2, updated_at = ?3 WHERE id = ?1",
-            params![id, manifest, now],
-        )?;
-        Ok(())
-    }
-
-    pub fn mark_index_pending(&self, id: &str, now: i64) -> Result<()> {
-        self.connection.execute("UPDATE jobs SET status = 'index_pending', updated_at = ?2 WHERE id = ?1", params![id, now])?;
-        Ok(())
-    }
-
-    pub fn finish(&self, id: &str, end_line: usize, end_hash: &str, has_more: bool, now: i64) -> Result<()> {
-        let status = if has_more { Status::Pending } else { Status::Done };
-        self.connection.execute(
-            "UPDATE jobs SET cursor_line = ?2, cursor_hash = ?3, status = ?4, attempts = 0, next_attempt_at = 0, manifest = NULL, last_error = NULL, updated_at = ?5
-             WHERE id = ?1",
-            params![id, end_line as i64, end_hash, status.as_str(), now],
-        )?;
-        Ok(())
+    /// Finish a step that stored nothing. `seen_requests` is the job's `requests` as the step
+    /// found it. Returns whether the job is done; see [`advance`].
+    pub fn finish(&self, id: &str, end_line: usize, end_hash: &str, has_more: bool, seen_requests: i64, now: i64) -> Result<bool> {
+        Ok(advance(&self.connection, id, end_line, end_hash, has_more, seen_requests, now)?)
     }
 
     pub fn skip(&self, id: &str, reason: &str, now: i64) -> Result<()> {
         self.connection.execute(
-            "UPDATE jobs SET status = 'skipped', last_error = ?2, attempts = 0, next_attempt_at = 0, manifest = NULL, updated_at = ?3 WHERE id = ?1",
+            "UPDATE jobs SET status = 'skipped', last_error = ?2, attempts = 0, next_attempt_at = 0, ended = 0, updated_at = ?3 WHERE id = ?1",
             params![id, reason, now],
         )?;
         Ok(())
@@ -268,7 +266,7 @@ impl Queue {
 
     pub fn retry(&self, id: &str, now: i64) -> Result<bool> {
         let changed = self.connection.execute(
-            "UPDATE jobs SET status = 'pending', attempts = 0, next_attempt_at = 0, manifest = NULL, last_error = NULL, updated_at = ?2
+            "UPDATE jobs SET status = 'pending', attempts = 0, next_attempt_at = 0, last_error = NULL, updated_at = ?2
              WHERE id = ?1 AND status IN ('failed', 'skipped')",
             params![id, now],
         )?;
@@ -278,8 +276,8 @@ impl Queue {
     pub fn counts(&self, now: i64, recording: Option<&str>) -> Result<Counts> {
         Ok(self.connection.query_row(
             "SELECT
-                COALESCE(SUM(status IN ('pending', 'applying', 'index_pending') AND next_attempt_at <= ?1 AND id IS NOT ?2), 0),
-                COALESCE(SUM(status IN ('pending', 'applying', 'index_pending') AND next_attempt_at > ?1), 0),
+                COALESCE(SUM(status = 'pending' AND next_attempt_at <= ?1 AND id IS NOT ?2), 0),
+                COALESCE(SUM(status = 'pending' AND next_attempt_at > ?1), 0),
                 COALESCE(SUM(status = 'failed'), 0),
                 COALESCE(SUM(status = 'done'), 0),
                 COALESCE(SUM(status = 'skipped'), 0)
@@ -292,8 +290,8 @@ impl Queue {
     pub fn unfinished_jobs(&self) -> Result<Vec<Job>> {
         let sql = format!(
             "SELECT {JOB_COLUMNS} FROM jobs
-             WHERE status IN ('pending', 'applying', 'index_pending', 'failed')
-             ORDER BY CASE status WHEN 'pending' THEN 1 ELSE 0 END, next_attempt_at, rowid"
+             WHERE status IN ('pending', 'failed')
+             ORDER BY CASE status WHEN 'pending' THEN 0 ELSE 1 END, next_attempt_at, rowid"
         );
         let mut statement = self.connection.prepare(&sql)?;
         let rows = statement.query_map([], job_from_row)?;
@@ -406,7 +404,7 @@ mod tests {
     }
 
     fn add(queue: &Queue, dir: &tempfile::TempDir, name: &str) -> String {
-        queue.enqueue(Provider::Claude, &dir.path().join(name), 100).unwrap()
+        queue.enqueue(Provider::Claude, &dir.path().join(name), false, 100).unwrap()
     }
 
     #[test]
@@ -431,7 +429,7 @@ mod tests {
         let outcome = queue.record_failure(&first, Failure::Transient, "모델 시간 초과", 100).unwrap();
         assert_eq!(outcome, FailureOutcome { gave_up: false, attempts: 1, next_attempt_at: 160 });
         assert_eq!(queue.next_job(159).unwrap().unwrap().id, second);
-        queue.finish(&second, 3, "h", false, 159).unwrap();
+        queue.finish(&second, 3, "h", false, 1, 159).unwrap();
         assert!(queue.next_job(159).unwrap().is_none());
         assert_eq!(queue.next_job(160).unwrap().unwrap().id, first);
     }
@@ -455,22 +453,26 @@ mod tests {
     }
 
     #[test]
-    fn interrupted_apply_resumes_before_new_work() {
+    fn a_hook_that_arrives_while_a_step_runs_keeps_the_job_open() {
         let (dir, queue) = queue();
-        let waiting = add(&queue, &dir, "a.jsonl");
-        let applying = add(&queue, &dir, "b.jsonl");
-        queue.begin_apply(&applying, "{}", 100).unwrap();
-        assert_eq!(queue.next_job(100).unwrap().unwrap().id, applying);
-        queue.record_failure(&applying, Failure::Transient, "qmd 실패", 100).unwrap();
-        assert_eq!(queue.get(&applying).unwrap().unwrap().status, Status::Applying);
-        assert_eq!(queue.next_job(100).unwrap().unwrap().id, waiting);
+        let id = add(&queue, &dir, "a.jsonl");
+        let seen = queue.next_job(100).unwrap().unwrap().requests;
+        // The session ends while the step that a compaction started is still with the model.
+        queue.enqueue(Provider::Claude, &dir.path().join("a.jsonl"), true, 101).unwrap();
+        assert!(!queue.finish(&id, 7, "h7", false, seen, 102).unwrap());
+        let open = queue.get(&id).unwrap().unwrap();
+        assert_eq!((open.status, open.cursor_line, open.ended), (Status::Pending, 7, true));
+        // The next step sees the request and finds nothing more to read: now the job is done.
+        assert!(queue.finish(&id, 7, "h7", false, open.requests, 103).unwrap());
+        let done = queue.get(&id).unwrap().unwrap();
+        assert_eq!((done.status, done.ended), (Status::Done, false));
     }
 
     #[test]
     fn enqueue_reopens_finished_jobs_but_keeps_failed_and_skipped_until_retry() {
         let (dir, queue) = queue();
         let done = add(&queue, &dir, "done.jsonl");
-        queue.finish(&done, 5, "h", false, 100).unwrap();
+        queue.finish(&done, 5, "h", false, 1, 100).unwrap();
         add(&queue, &dir, "done.jsonl");
         let reopened = queue.get(&done).unwrap().unwrap();
         assert_eq!((reopened.status, reopened.cursor_line), (Status::Pending, 5));
@@ -488,7 +490,7 @@ mod tests {
     fn finish_keeps_the_job_open_when_more_lines_remain() {
         let (dir, queue) = queue();
         let id = add(&queue, &dir, "a.jsonl");
-        queue.finish(&id, 4, "h4", true, 100).unwrap();
+        queue.finish(&id, 4, "h4", true, 1, 100).unwrap();
         let job = queue.get(&id).unwrap().unwrap();
         assert_eq!((job.status, job.cursor_line, job.cursor_hash.as_str()), (Status::Pending, 4, "h4"));
     }
@@ -497,12 +499,12 @@ mod tests {
     fn compression_is_one_job_but_case_folding_is_windows_only() {
         let (dir, queue) = queue();
         let lower = dir.path().join("Session.jsonl");
-        let first = queue.enqueue(Provider::Codex, &lower, 100).unwrap();
+        let first = queue.enqueue(Provider::Codex, &lower, false, 100).unwrap();
         let upper = std::path::PathBuf::from(lower.to_string_lossy().to_uppercase().replace(".JSONL", ".jsonl"));
-        let upper_id = queue.enqueue(Provider::Codex, &upper, 100).unwrap();
+        let upper_id = queue.enqueue(Provider::Codex, &upper, false, 100).unwrap();
         assert_eq!(upper_id == first, cfg!(windows));
-        assert_eq!(queue.enqueue(Provider::Codex, &crate::transcript::compressed_path(&lower), 100).unwrap(), first);
-        assert_ne!(queue.enqueue(Provider::Claude, &lower, 100).unwrap(), first);
+        assert_eq!(queue.enqueue(Provider::Codex, &crate::transcript::compressed_path(&lower), false, 100).unwrap(), first);
+        assert_ne!(queue.enqueue(Provider::Claude, &lower, false, 100).unwrap(), first);
         assert_eq!(queue.counts(100, None).unwrap().ready, if cfg!(windows) { 2 } else { 3 });
     }
 
@@ -520,15 +522,13 @@ mod tests {
         let (dir, queue) = queue();
         let later = add(&queue, &dir, "later.jsonl");
         let first = add(&queue, &dir, "first.jsonl");
-        let applying = add(&queue, &dir, "applying.jsonl");
         let failed = add(&queue, &dir, "failed.jsonl");
         let done = add(&queue, &dir, "done.jsonl");
         queue.record_failure(&later, Failure::Transient, "시간 초과", 100).unwrap();
-        queue.begin_apply(&applying, "{}", 100).unwrap();
         queue.record_failure(&failed, Failure::Permanent, "원문 없음", 100).unwrap();
-        queue.finish(&done, 3, "h", false, 100).unwrap();
+        queue.finish(&done, 3, "h", false, 1, 100).unwrap();
         let listed: Vec<String> = queue.unfinished_jobs().unwrap().into_iter().map(|job| job.id).collect();
-        assert_eq!(listed, vec![applying, failed, first, later]);
+        assert_eq!(listed, vec![first, later, failed]);
     }
 
     #[test]

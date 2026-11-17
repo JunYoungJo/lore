@@ -89,8 +89,6 @@ pub struct Settings {
     pub fallback: bool,
     pub models: Models,
     pub efforts: Efforts,
-    #[serde(rename = "model", skip_serializing)]
-    pub single_model: Option<String>,
     pub model_timeout_secs: u64,
     pub qmd_timeout_secs: u64,
     pub claude_projects_dir: String,
@@ -98,13 +96,20 @@ pub struct Settings {
     pub idle_secs: u64,
     pub since: i64,
     pub paused: bool,
+    /// How much new conversation one step of a session reads.
     pub max_chars: usize,
-    pub notes_budget: usize,
     pub qmd_index: String,
     pub commands: Commands,
     pub sync_enabled: bool,
     /// Clean up a folder of notes without being asked once enough of its notes have changed.
     pub auto_cleanup: bool,
+    /// Approve a candidate as it stands once it has waited `auto_approve_days`. Off: it waits for the user.
+    pub auto_approve: bool,
+    pub auto_approve_days: u64,
+    /// When automatic approval was turned on; 0 while it is off. The days count from the later
+    /// of this and the time a candidate entered the list, so that turning the setting on never
+    /// approves at once what has already waited longer.
+    pub auto_approve_since: i64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -118,7 +123,6 @@ pub struct EditableSettings {
     pub model_timeout_secs: u64,
     pub qmd_timeout_secs: u64,
     pub max_chars: usize,
-    pub notes_budget: usize,
 }
 
 fn slash(path: PathBuf) -> String {
@@ -134,7 +138,6 @@ impl Default for Settings {
             fallback: false,
             models: Models::default(),
             efforts: Efforts::default(),
-            single_model: None,
             model_timeout_secs: 600,
             qmd_timeout_secs: 900,
             claude_projects_dir: slash(home.join(".claude").join("projects")),
@@ -142,17 +145,42 @@ impl Default for Settings {
             idle_secs: 600,
             since: 0,
             paused: false,
-            max_chars: 30_000,
-            notes_budget: 60_000,
+            max_chars: 200_000,
             qmd_index: "index".into(),
             commands: Commands::default(),
             sync_enabled: false,
             auto_cleanup: false,
+            auto_approve: false,
+            auto_approve_days: 3,
+            auto_approve_since: 0,
         }
     }
 }
 
 impl Settings {
+    /// Turn automatic approval on or off, or change its days. Its days start to count when it is
+    /// turned on.
+    pub fn set_auto_approve(&mut self, enabled: bool, days: u64, now: i64) {
+        let was = self.clone();
+        self.auto_approve = enabled;
+        self.auto_approve_days = days;
+        self.auto_approve_since = self.auto_approve_start(Some(&was), now);
+    }
+
+    /// When the days of automatic approval start to count. `was` is the setting before this
+    /// change, when that is known; a settings file edited by hand does not say when it was turned on.
+    fn auto_approve_start(&self, was: Option<&Settings>, now: i64) -> i64 {
+        if !self.auto_approve {
+            return 0;
+        }
+        match was {
+            Some(was) if !was.auto_approve => now,
+            Some(was) if self.auto_approve_since == 0 && was.auto_approve_since != 0 => was.auto_approve_since,
+            _ if self.auto_approve_since == 0 => now,
+            _ => self.auto_approve_since,
+        }
+    }
+
     pub fn knowledge_root(&self) -> PathBuf {
         PathBuf::from(&self.knowledge_root)
     }
@@ -181,8 +209,11 @@ impl Settings {
         if !self.knowledge_root().is_absolute() {
             return Err(Error::permanent("The memory folder must be an absolute path on this PC."));
         }
-        if self.max_chars < 1_000 || self.notes_budget < 1_000 {
+        if self.max_chars < 1_000 {
             return Err(Error::permanent("The input limit is too small."));
+        }
+        if !(1..=365).contains(&self.auto_approve_days) {
+            return Err(Error::permanent("Candidates are approved automatically after 1 to 365 days."));
         }
         if self.model_timeout_secs == 0 || self.qmd_timeout_secs == 0 {
             return Err(Error::permanent("Timeouts must be at least one second."));
@@ -222,15 +253,6 @@ impl Settings {
         if backend == "claude" { &self.commands.claude } else { &self.commands.codex }
     }
 
-    fn move_single_model(&mut self) {
-        let Some(model) = self.single_model.take() else { return };
-        let slot = if self.backend == "claude" { &mut self.models.claude } else { &mut self.models.codex };
-        if slot.is_none() {
-            *slot = Some(model);
-        }
-        self.models = std::mem::take(&mut self.models).trimmed();
-    }
-
     pub fn edited(&self, change: EditableSettings) -> Settings {
         Settings {
             knowledge_root: change.knowledge_root,
@@ -241,7 +263,6 @@ impl Settings {
             model_timeout_secs: change.model_timeout_secs,
             qmd_timeout_secs: change.qmd_timeout_secs,
             max_chars: change.max_chars,
-            notes_budget: change.notes_budget,
             ..self.clone()
         }
     }
@@ -301,12 +322,12 @@ pub fn save(path: &Path, settings: &Settings) -> Result<()> {
     atomic_write(path, format!("{}\n", serde_json::to_string_pretty(settings)?).as_bytes())
 }
 
-pub fn reloaded(text: &str, running: &Settings) -> Result<Settings> {
+pub fn reloaded(text: &str, running: &Settings, now: i64) -> Result<Settings> {
     let mut settings: Settings = serde_json::from_str(text.trim_start_matches('\u{feff}')).map_err(|error| Error::permanent(format!("Could not read the settings file: {error}")))?;
-    settings.move_single_model();
     if settings.since == 0 {
         settings.since = running.since;
     }
+    settings.auto_approve_since = settings.auto_approve_start(Some(running), now);
     settings.fill_missing_commands();
     Ok(settings)
 }
@@ -326,10 +347,10 @@ pub fn load_or_init(path: &Path, now: i64) -> Result<Settings> {
         Err(error) => return Err(error.into()),
     };
     let before = settings.clone();
-    settings.move_single_model();
     if settings.since == 0 {
         settings.since = now;
     }
+    settings.auto_approve_since = settings.auto_approve_start(None, now);
     settings.fill_missing_commands();
     if settings != before || !path.exists() {
         save(path, &settings)?;
@@ -340,7 +361,6 @@ pub fn load_or_init(path: &Path, now: i64) -> Result<Settings> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::Value;
 
     #[test]
     fn first_load_records_the_start_time_and_keeps_it() {
@@ -356,7 +376,8 @@ mod tests {
     fn missing_fields_take_defaults_and_unknown_backend_is_invalid() {
         let parsed: Settings = serde_json::from_str(r#"{"knowledgeRoot": "E:/notes", "backend": "claude"}"#).unwrap();
         assert_eq!(parsed.knowledge_root, "E:/notes");
-        assert_eq!(parsed.max_chars, 30_000);
+        assert_eq!((parsed.max_chars, parsed.auto_approve, parsed.auto_approve_days), (200_000, false, 3));
+        assert!(Settings { auto_approve_days: 0, ..Settings::default() }.validate().is_err());
         Settings { knowledge_root: home().join("notes").to_string_lossy().to_string(), ..parsed }.validate().unwrap();
         let wrong = Settings { backend: "gpt".into(), ..Settings::default() };
         assert!(wrong.validate().is_err());
@@ -384,7 +405,6 @@ mod tests {
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
             max_chars: 20_000,
-            notes_budget: 40_000,
         }
     }
 
@@ -400,7 +420,6 @@ mod tests {
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
             max_chars: 20_000,
-            notes_budget: 40_000,
             ..running()
         };
         assert_eq!(edited, expected);
@@ -426,27 +445,6 @@ mod tests {
         assert_eq!((both.model_of("codex"), both.effort_of("codex"), both.effort_of("claude")), (Some("gpt-x"), Some("low"), None));
         let older: Settings = serde_json::from_str(r#"{"backend": "claude"}"#).unwrap();
         assert!(!older.fallback);
-    }
-
-    #[test]
-    fn a_single_model_from_an_older_file_moves_to_the_cli_it_was_set_for() {
-        let commands = r#""commands": {"codex": ["c.exe"], "claude": ["k.exe"], "qmd": ["q.exe"]}"#;
-        let old = format!(r#"{{"backend": "claude", "model": "opus", "since": 3, {commands}}}"#);
-        let moved = reloaded(&old, &running()).unwrap();
-        assert_eq!(moved.models, Models { codex: None, claude: Some("opus".into()) });
-        let written = serde_json::to_value(&moved).unwrap();
-        assert!(written.get("model").is_none(), "{written}");
-        assert_eq!(written["models"]["claude"], "opus");
-
-        let both = format!(r#"{{"backend": "claude", "model": "haiku", "models": {{"claude": "opus"}}, {commands}}}"#);
-        assert_eq!(reloaded(&both, &running()).unwrap().models.claude.as_deref(), Some("opus"));
-
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("settings.json");
-        std::fs::write(&path, &old).unwrap();
-        assert_eq!(load_or_init(&path, 9).unwrap().models.claude.as_deref(), Some("opus"));
-        let saved: Value = serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
-        assert!(saved.get("model").is_none() && saved["models"]["claude"] == "opus", "{saved}");
     }
 
     #[test]
@@ -485,19 +483,19 @@ mod tests {
     #[test]
     fn file_edited_while_running_is_read_with_the_running_start_time_kept() {
         let text = "\u{feff}{\"knowledgeRoot\": \"E:/notes\", \"modelTimeoutSecs\": 1500, \"commands\": {\"codex\": [\"c.exe\"], \"claude\": [\"k.exe\"], \"qmd\": [\"q.exe\"]}}";
-        let edited = reloaded(text, &running()).unwrap();
+        let edited = reloaded(text, &running(), 900).unwrap();
         assert_eq!(edited.model_timeout_secs, 1_500);
         assert_eq!(edited.knowledge_root, "E:/notes");
         assert_eq!(edited.since, 77);
         assert_eq!(edited.commands.claude, vec!["k.exe".to_string()]);
         let own_start = reloaded_with_since(text);
         assert_eq!(own_start.since, 5);
-        assert!(reloaded("{not json", &running()).is_err());
+        assert!(reloaded("{not json", &running(), 900).is_err());
     }
 
     fn reloaded_with_since(text: &str) -> Settings {
         let text = text.replacen('{', "{\"since\": 5, ", 1);
-        reloaded(&text, &running()).unwrap()
+        reloaded(&text, &running(), 900).unwrap()
     }
 
     #[test]

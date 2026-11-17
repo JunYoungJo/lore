@@ -1,7 +1,7 @@
 use crate::state::AppState;
 use lore_core::error::{Error, Result};
 use lore_core::qmd::Qmd;
-use lore_core::queue::{Queue, Status};
+use lore_core::queue::Queue;
 use lore_core::recorder::Recorders;
 use lore_core::review::{self, DiffRow};
 use lore_core::run;
@@ -171,8 +171,8 @@ fn unavailable(state: &AppState) -> Result<Option<&'static str>> {
         return Ok(Some("Close the memory review window before syncing."));
     }
     let queue = Queue::open(&state.paths.database())?;
-    if !queue.jobs_with_status(&[Status::Applying], 1)?.is_empty() {
-        return Ok(Some("A recording was interrupted while writing notes. Retry that job, then sync."));
+    if queue.write_interrupted()? {
+        return Ok(Some("Approved candidates were being written into the notes when Lore stopped. Lore finishes that first, then syncs."));
     }
     Ok(None)
 }

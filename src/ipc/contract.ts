@@ -1,14 +1,109 @@
 export type Provider = "claude" | "codex";
 
-export type JobStatus = "pending" | "applying" | "index_pending" | "done" | "failed" | "skipped";
+/** A session is only read. Writing notes is the work of an apply batch (`ApplyBatch`). */
+export type JobStatus = "pending" | "done" | "failed" | "skipped";
 
-export type ActivityKind = "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started" | "cleaned" | "cleanup_failed" | "cleanup_undone";
+/** `offered`: a session offered candidates. `recorded`: approved candidates were written into notes. */
+export type ActivityKind = "offered" | "recorded" | "no_change" | "skipped" | "failed" | "retry_scheduled" | "started" | "cleaned" | "cleanup_failed" | "cleanup_undone";
 
 export interface Current {
   jobId: string;
   provider: Provider;
   project: string;
   startedAt: number;
+  /** Approved candidates are being written into the notes, as opposed to a session being read. */
+  applying: boolean;
+}
+
+export type CandidateKind = "decision" | "correction" | "lesson";
+
+/** Words of the conversation a candidate rests on. The program has checked them against the turn. */
+export interface Quote {
+  ref: string;
+  quote: string;
+  speaker: "user" | "agent";
+  /** When it was said, in the user's local time. Empty when the session file has no time. */
+  at: string;
+}
+
+/** How a candidate stands to the notes that exist. `quotes` are passages of `note`, word for word. */
+export interface Relation {
+  type: "new" | "same" | "differs" | "obsolete";
+  note: string;
+  title: string;
+  quotes: string[];
+}
+
+export type CandidateScope = "project" | "common";
+
+/** One statement a session offers to remember. It waits on this PC until the user decides. */
+export interface Candidate {
+  id: number;
+  jobId: string;
+  sessionId: string;
+  provider: Provider;
+  project: string;
+  language: string;
+  kind: CandidateKind;
+  text: string;
+  /** `marked`: the session flagged it while working. `found`: the model found it afterwards. */
+  source: "marked" | "found";
+  scope: CandidateScope;
+  evidence: Quote[];
+  relation: Relation;
+  state: "waiting" | "approved" | "applied" | "discarded" | "duplicate";
+  edited: boolean;
+  createdAt: number;
+  /** When it last entered the waiting list: when it was found, or when a batch that could not be written was given up. */
+  waitingSince: number;
+  applyId: number | null;
+}
+
+export interface NoteResult {
+  path: string;
+  action: "created" | "edited" | "removed";
+  /** The approved sentences this note took in. */
+  items: string[];
+}
+
+/** Approved candidates of one project, written into the notes together. */
+export interface ApplyBatch {
+  id: number;
+  project: string;
+  /** `index_pending`: the notes are written and only the search index is still to be refreshed. */
+  status: "pending" | "applying" | "index_pending" | "done" | "failed";
+  /** Approved by the waiting period, not by the user. */
+  auto: boolean;
+  attempts: number;
+  nextAttemptAt: number;
+  lastError: string | null;
+  result: { summary: string; notes: NoteResult[] } | null;
+  candidates: number;
+  updatedAt: number;
+}
+
+export interface CandidatesSnapshot {
+  waiting: Candidate[];
+  /** What was left out of those sessions because a note already says it. */
+  leftOut: Candidate[];
+  /** Batches whose notes are not written yet. */
+  applying: ApplyBatch[];
+  /** Batches that gave up. Nothing of them is in the notes. */
+  failed: ApplyBatch[];
+  /** The batches written most recently, newest first. */
+  applied: ApplyBatch[];
+  autoApprove: boolean;
+  autoApproveDays: number;
+  /** When automatic approval was turned on. Its days count from the later of this and `waitingSince`. */
+  autoApproveSince: number;
+  now: number;
+}
+
+/** The candidates that wait for the user. `oldestAt` is 0 when none waits. */
+export interface Waiting {
+  candidates: number;
+  sessions: number;
+  oldestAt: number;
 }
 
 /** One folder of a cleanup run. `absorb` names the folders merged into it. `startedAt` is null while it waits. */
@@ -140,13 +235,18 @@ export interface Settings {
   syncEnabled: boolean;
   /** Clean up a folder of notes without being asked once enough of its notes have changed. */
   autoCleanup: boolean;
+  /** Approve a candidate as it stands once it has waited `autoApproveDays`. Off: it waits for the user. */
+  autoApprove: boolean;
+  autoApproveDays: number;
+  /** When automatic approval was turned on; 0 while it is off. */
+  autoApproveSince: number;
+  /** How much new conversation one step of a session reads. */
   maxChars: number;
-  notesBudget: number;
   qmdIndex: string;
   commands: Commands;
 }
 
-export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "fallback" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget">;
+export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "fallback" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars">;
 
 export type HookState = "connected" | "other_path" | "missing";
 
@@ -227,6 +327,9 @@ export interface Snapshot {
   counts: Counts;
   recent: Activity[];
   attention: Job[];
+  candidates: Waiting;
+  /** Approved batches that could not be written into the notes. */
+  failedApplies: number;
   problem: string | null;
   settings: Settings;
   autostart: boolean;

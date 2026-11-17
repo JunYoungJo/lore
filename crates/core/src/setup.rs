@@ -10,7 +10,7 @@ use crate::error::{Error, Result};
 use crate::settings::{atomic_write, Paths, Settings};
 use crate::transcript::{digest, Provider};
 
-pub const RULES: &str = "<!-- lore-memory:start -->\n## Project memory (qmd)\n\n- Before project work, search relevant project decisions and lessons in qmd, including `common`. Use the project ID from `.lore.json` and explicitly set `collections`.\n- Read relevant document bodies. Check original sources when approval is unclear. Distinguish agent proposals from user decisions, respect their scope, and follow current instructions.\n- Reuse previously retrieved context when it remains relevant. Do not treat a failed lookup as evidence that no records exist.\n- Do not edit memory notes or add session summaries unless requested. Leave automatic recording to Lore.\n<!-- lore-memory:end -->";
+pub const RULES: &str = "<!-- lore-memory:start -->\n## Project memory (qmd)\n\n- Before project work, search relevant project decisions and lessons in qmd, including `common`. Use the project ID from `.lore.json` and explicitly set `collections`.\n- Read relevant document bodies. A note's Sources section lists what was said, by whom and when; read it when approval is unclear. Distinguish agent proposals from user decisions, respect their scope, and follow current instructions.\n- Reuse previously retrieved context when it remains relevant. Do not treat a failed lookup as evidence that no records exist.\n- Do not edit memory notes or add session summaries unless requested. Lore writes notes from what the user approves.\n<!-- lore-memory:end -->";
 pub const SKILL: &str = include_str!("lore-memory/SKILL.md");
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]

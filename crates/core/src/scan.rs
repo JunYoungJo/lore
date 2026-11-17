@@ -42,7 +42,8 @@ pub fn scan(queue: &Queue, settings: &Settings, now: i64) -> Result<usize> {
             if queue.seen(&key)? == Some((size, modified)) {
                 continue;
             }
-            queue.enqueue(provider, &path, now)?;
+            // A scan finds sessions that have been idle, so they count as ended.
+            queue.enqueue(provider, &path, true, now)?;
             queue.mark_seen(&key, size, modified)?;
             count += 1;
         }

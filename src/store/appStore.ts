@@ -7,8 +7,8 @@ export type View = "status" | "settings" | "queue";
 
 export type QueueGroup = "recording" | "ready" | "waiting" | "failed";
 
-export function editable({ knowledgeRoot, backend, fallback, models, efforts, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget }: Settings): EditableSettings {
-  return { knowledgeRoot, backend, fallback, models: { ...models }, efforts: { ...efforts }, modelTimeoutSecs, qmdTimeoutSecs, maxChars, notesBudget };
+export function editable({ knowledgeRoot, backend, fallback, models, efforts, modelTimeoutSecs, qmdTimeoutSecs, maxChars }: Settings): EditableSettings {
+  return { knowledgeRoot, backend, fallback, models: { ...models }, efforts: { ...efforts }, modelTimeoutSecs, qmdTimeoutSecs, maxChars };
 }
 
 const cleanValue = (value: string | null) => (value?.trim() ? value.trim() : null);
@@ -32,6 +32,7 @@ interface AppStore {
   discard: (id: string) => Promise<void>;
   clearActivity: () => Promise<void>;
   setAutoCleanup: (enabled: boolean) => Promise<void>;
+  setAutoApprove: (enabled: boolean, days: number) => Promise<void>;
   setAutostart: (enabled: boolean) => Promise<void>;
   setSyncEnabled: (enabled: boolean) => Promise<void>;
   syncNow: () => Promise<void>;
@@ -121,6 +122,7 @@ export const useAppStore = create<AppStore>((set, get) => {
     discard: (id) => attempt(() => api.discardJob(id)),
     clearActivity: () => attempt(() => api.clearActivity()),
     setAutoCleanup: (enabled) => attempt(() => api.setAutoCleanup(enabled)),
+    setAutoApprove: (enabled, days) => attempt(() => api.setAutoApprove(enabled, days)),
     setAutostart: (enabled) => attempt(() => api.setAutostart(enabled)),
     setSyncEnabled: (enabled) => attempt(() => api.setSyncEnabled(enabled)),
     syncNow: () => attempt(() => api.syncNow()),

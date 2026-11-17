@@ -3,6 +3,8 @@ use serde::Serialize;
 use crate::transcript::{Parsed, Turn};
 
 pub const TURN_LIMIT: usize = 12_000;
+/// How much of what came before the new turns is shown, so that they can be understood.
+pub const CONTEXT_CHARS: usize = 40_000;
 pub const OMISSION_MARK: &str = "[… omitted …]";
 
 #[derive(Debug, Clone, Serialize)]
@@ -49,7 +51,7 @@ pub fn make_batch(parsed: &Parsed, after_line: usize, max_chars: usize) -> Batch
     let mut context_size = 0;
     for turn in prior.iter().rev() {
         let length = char_len(&turn.text);
-        if context_size + length > max_chars {
+        if context_size + length > max_chars.min(CONTEXT_CHARS) {
             break;
         }
         context_size += length;

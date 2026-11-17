@@ -4,11 +4,11 @@
 
 On each PC, clone the same memory Git repository and set the app's memory repository path to that PC's checkout. The current branch must have a remote/upstream. For an existing repository, check with `git remote -v` and `git branch -vv`. The app does not create remotes or credentials. Authenticate first so fetch/push works from a terminal. Git 2.38 or later is required, and `user.name` and `user.email` must be set so commits can be created.
 
-What is shared is **every file in the memory repository**. That includes not only memory notes but also the unquoted parts of the `sources/` session copies. List files you do not want to share in `.gitignore`. The queue, settings, model run data and the qmd index stay in per-PC app data. For stable source project IDs and the qmd MCP connection, follow [Using Lore on multiple PCs](multiplatform.md).
+What is shared is **every file in the memory repository**. Lore writes only memory notes there; a note holds the sentences it quotes, with who said them and when. List files you do not want to share in `.gitignore`. The queue, settings, model run data and the qmd index stay in per-PC app data. For stable source project IDs and the qmd MCP connection, follow [Using Lore on multiple PCs](multiplatform.md).
 
 ## Sync finishes without user action
 
-When a recording finishes, the app commits the changed files right away. If **Auto-sync** is on in settings, it syncs in the order below right after all pending recordings finish and every 5 minutes. If it is off, the app only commits, and syncs in the same order when you click the sync button in the popover's bottom bar or **Sync now** in settings.
+When approved candidates are written into the notes, the app commits the changed files right away. Candidates themselves are not in the memory folder and are never synced. If **Auto-sync** is on in settings, it syncs in the order below right after all pending work finishes and every 5 minutes. If it is off, the app only commits, and syncs in the same order when you click the sync button in the popover's bottom bar or **Sync now** in settings.
 
 1. Commit any uncommitted changes.
 2. Fetch commits from other PCs.
@@ -17,7 +17,7 @@ When a recording finishes, the app commits the changed files right away. If **Au
 5. If notes from other PCs came in, update this PC's search index.
 6. Push the result. If another PC pushed first in the meantime, fetch that commit, merge again, then push. No force push is used.
 
-No step asks the user anything, and sync never stops recording. A sync left pending review by an earlier version is also handled in this order on the next sync. The review data from that time is kept in app data as `superseded-*.json`.
+No step asks the user anything, and sync never stops sessions from being read or approved candidates from being written.
 
 If one side deleted a note and the other edited it, the edited note is kept and added to the items to check. Renamed files are handled as a delete plus an add. Sync fails only when Git cannot produce a merge, such as histories with no common base; merge once with an external Git tool, then sync again.
 
@@ -43,7 +43,7 @@ If a note changed again after the comparison and an option's edit passage can no
 
 ## Relationship to the review window
 
-The review window is not a condition for sync. "Review N changed notes" in the popover is **the number of notes recorded on this PC since the last review**. Checking notes in the review window and clicking **Mark reviewed** removes them from the list. Notes are already committed and shared, so they sync whether or not you review them. Notes received from other PCs are not added to this PC's pending review. If another PC also changed a note that has unreviewed changes on this PC, that note stays pending review.
+The review window is not a condition for sync. "Review N changed notes" in the popover is **the number of notes an automatic approval or a cleanup changed on this PC since the last review**; notes you approved candidate by candidate count as reviewed. Checking notes in the review window and clicking **Mark reviewed** removes them from the list. Notes are already committed and shared, so they sync whether or not you review them. Notes received from other PCs are not added to this PC's pending review. If another PC also changed a note that has unreviewed changes on this PC, that note stays pending review.
 
 Review state is stored in the local ref `refs/lore/reviewed` in the memory repository and is not pushed.
 

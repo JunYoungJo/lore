@@ -10,6 +10,7 @@ import {
   FileX,
   GitCompare,
   Inbox,
+  ListChecks,
   LoaderCircle,
   Pause,
   Plug,
@@ -22,7 +23,7 @@ import { useRef, useState, type RefObject } from "react";
 
 import * as api from "@/ipc/api";
 import type { Activity, ActivityKind, Snapshot } from "@/ipc/contract";
-import { elapsed, fileName, goneNotes, minutesUntil, providerLabel, relativePhrase, relativeTime, summaryLine } from "@/format";
+import { elapsed, fileName, goneNotes, providerLabel, relativePhrase, relativeTime, summaryLine } from "@/format";
 import { unavailableModel } from "@/recordingModel";
 import { useAppStore, type QueueGroup } from "@/store/appStore";
 import { AnchoredCard } from "@/ui/AnchoredCard";
@@ -31,8 +32,9 @@ import { IconChip, type Tint } from "@/ui/IconChip";
 import { useNow } from "@/useNow";
 
 const KINDS: Partial<Record<ActivityKind, { glyph: LucideIcon; tint: Tint; label: string; tone: string }>> = {
+  offered: { glyph: ListChecks, tint: "blue", label: "Candidates", tone: "" },
   recorded: { glyph: FileCheck2, tint: "green", label: "Recorded", tone: "ok" },
-  no_change: { glyph: CircleDashed, tint: "neutral", label: "No new memory", tone: "" },
+  no_change: { glyph: CircleDashed, tint: "neutral", label: "Nothing to remember", tone: "" },
   retry_scheduled: { glyph: RotateCw, tint: "amber", label: "Retry scheduled", tone: "warn" },
   failed: { glyph: CircleAlert, tint: "red", label: "Failed", tone: "danger" },
   cleaned: { glyph: Eraser, tint: "green", label: "Nothing to clean up", tone: "" },
@@ -77,8 +79,8 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     tone = "working";
     glyph = LoaderCircle;
     tint = "blue";
-    title = `Recording ${current.project}`;
-    sub = `${providerLabel(current.provider)} session · ${model} · ${elapsed(current.startedAt, now)}`;
+    title = current.applying ? `Writing notes for ${current.project}` : `Reading the ${current.project} session`;
+    sub = current.applying ? `Approved candidates · ${model} · ${elapsed(current.startedAt, now)}` : `${providerLabel(current.provider)} session · ${model} · ${elapsed(current.startedAt, now)}`;
   } else if (cleaning) {
     tone = "working";
     glyph = LoaderCircle;
@@ -97,18 +99,18 @@ function NowCard({ snapshot, now }: { snapshot: Snapshot; now: number }) {
     glyph = GitCompare;
     tint = "amber";
     title = "Reviewing";
-    sub = "New recordings wait while the review window is open. Close it to resume.";
+    sub = "Sessions and approved candidates wait while the review window is open. Close it to resume.";
     action = { label: "Open review", run: () => void api.openReview() };
   } else if (settings.paused) {
     tone = "paused";
     glyph = Pause;
     tint = "amber";
     title = "Recording paused";
-    sub = "Sessions still enter the queue. Resume to record them in order.";
+    sub = "Sessions still enter the queue. Resume to read them in order.";
     action = { label: "Resume", run: () => void togglePause() };
   } else {
-    const last = snapshot.recent.find((activity) => activity.kind === "recorded" || activity.kind === "no_change");
-    sub = last ? `Last memory ${relativePhrase(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "Memory is recorded when a Claude or Codex session ends.";
+    const last = snapshot.recent.find((activity) => activity.kind === "offered" || activity.kind === "recorded" || activity.kind === "no_change");
+    sub = last ? `Last session read ${relativePhrase(last.at, now)} · ${last.project ?? providerLabel(last.provider)}` : "When a Claude or Codex session ends, Lore lists what it may be worth remembering.";
   }
 
   return (
@@ -146,6 +148,8 @@ interface Task {
 }
 
 function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) => void, syncNow: () => void, showSettings: () => void): Task[] {
+  // A session is only read, so it is either waiting, read or failed. A batch that was
+  // interrupted while writing is finished by itself and shown in the candidates window.
   const list: Task[] = [];
   const missing = snapshot.hooks.filter((hook) => hook.state !== "connected");
   if (missing.length > 0) {
@@ -154,9 +158,33 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       glyph: Plug,
       tint: "amber",
       title: `Connect ${missing.map((hook) => providerLabel(hook.provider)).join(" and ")} hooks`,
-      detail: "Sessions are captured when they end once hooks are connected.",
+      detail: "Sessions are read when they end once hooks are connected.",
       action: "Connect",
       run: () => void api.openIntegrations(),
+    });
+  }
+  const { candidates } = snapshot;
+  if (candidates.candidates > 0) {
+    const auto = snapshot.settings.autoApprove ? `approved automatically after ${plural(snapshot.settings.autoApproveDays, "day")}` : null;
+    list.push({
+      key: "candidates",
+      glyph: ListChecks,
+      tint: "blue",
+      title: `${plural(candidates.candidates, "candidate")} to review`,
+      detail: [`From ${plural(candidates.sessions, "session")}`, `oldest ${relativePhrase(candidates.oldestAt, now)}`, auto].filter(Boolean).join(" · "),
+      action: "Review",
+      run: () => void api.openCandidates(),
+    });
+  }
+  if (snapshot.failedApplies > 0) {
+    list.push({
+      key: "apply-failed",
+      glyph: CircleAlert,
+      tint: "red",
+      title: `${plural(snapshot.failedApplies, "approved batch", "approved batches")} not written`,
+      detail: "The notes are unchanged. Open the candidates to try again or to take the approval back.",
+      action: "Open",
+      run: () => void api.openCandidates(),
     });
   }
   if (snapshot.review) {
@@ -165,7 +193,7 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       glyph: FileDiff,
       tint: "blue",
       title: `Review ${plural(snapshot.review, "changed note")}`,
-      detail: "Recorded since your last review. They are saved and shared already; review when you want.",
+      detail: "Changed since your last review by an automatic approval or a cleanup. They are saved and shared already.",
       action: "Review",
       run: () => void api.openReview(),
     });
@@ -177,25 +205,10 @@ function tasks(snapshot: Snapshot, now: number, showQueue: (focus: QueueGroup) =
       key: "failed",
       glyph: CircleAlert,
       tint: "red",
-      title: `${plural(failed.length, "recording")} failed`,
+      title: `${plural(failed.length, "session")} could not be read`,
       detail: [first.project ?? providerLabel(first.provider), first.lastError].filter(Boolean).join(" · "),
       action: "View",
       run: () => showQueue("failed"),
-    });
-  }
-  const interrupted = snapshot.attention.filter((job) => job.status !== "failed");
-  if (interrupted.length > 0) {
-    const first = interrupted[0];
-    const state = first.status === "index_pending" ? "Index pending" : "Save interrupted";
-    const retry = first.nextAttemptAt > now ? `retry in about ${minutesUntil(first.nextAttemptAt, now)} min` : null;
-    list.push({
-      key: "interrupted",
-      glyph: RotateCw,
-      tint: "amber",
-      title: `${plural(interrupted.length, "recording")} interrupted`,
-      detail: [first.project ?? providerLabel(first.provider), state, retry].filter(Boolean).join(" · "),
-      action: "View",
-      run: () => showQueue("ready"),
     });
   }
   const model = unavailableModel(snapshot);
@@ -334,6 +347,7 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
   const name = activity.project ?? providerLabel(activity.provider);
   const hasNotes = activity.notes.length > 0;
+  const offered = activity.kind === "offered";
   const label = activity.kind === "recorded" ? `${plural(activity.notes.length, "note")} updated` : kind.label;
   const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? summaryLine(activity.summary);
   const kindTone = kind.tone;
@@ -349,6 +363,10 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
           <span className="badge">{providerLabel(activity.provider)}</span>
           {hasNotes ? (
             <button ref={notesButton} type="button" className={`row-kind ${kindTone} notes-btn`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
+              {label}
+            </button>
+          ) : offered ? (
+            <button type="button" className="row-kind notes-btn" title="Open the candidates" onClick={() => void api.openCandidates()}>
               {label}
             </button>
           ) : (
@@ -458,8 +476,8 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
             <div className="empty-icon">
               <Inbox size={20} strokeWidth={1.75} />
             </div>
-            <div className="empty-title">No sessions recorded yet</div>
-            <div>Completed recordings will appear here.</div>
+            <div className="empty-title">No sessions read yet</div>
+            <div>Candidates and the notes written from them will appear here.</div>
           </div>
         ) : (
           recent.map((row) => (isCleanup(row[0]) ? <CleanupRow key={row[0].id} folders={row} now={now} /> : <ActivityRow key={row[0].id} activity={row[0]} now={now} canReview={canReview} />))

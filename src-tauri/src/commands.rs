@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use lore_core::catalog::{self, Catalog};
+use lore_core::candidate::Waiting;
 use lore_core::hooks::{self, HookState, HookStatus};
-use lore_core::pipeline;
 use lore_core::queue::{Activity, Counts, Job, Queue, Status};
+use lore_core::session;
 use lore_core::recorder::{DEFAULT_CLAUDE_MODEL, DEFAULT_CODEX_EFFORT, DEFAULT_CODEX_MODEL};
 use lore_core::review;
 use lore_core::settings::{self, EditableSettings, Efforts, Models, Paths, Settings};
@@ -28,6 +29,10 @@ pub struct Snapshot {
     pub counts: Counts,
     pub recent: Vec<Activity>,
     pub attention: Vec<Job>,
+    /// The candidates that wait for the user.
+    pub candidates: Waiting,
+    /// Approved batches that could not be written into the notes.
+    pub failed_applies: usize,
     pub problem: Option<String>,
     pub settings: Settings,
     pub autostart: bool,
@@ -132,11 +137,10 @@ pub fn get_snapshot(app: AppHandle, state: State<'_, AppState>) -> Result<Snapsh
         // A cleanup run lists one entry per folder, and the window shows a run as one line.
         recent: queue.recent_activity(60).map_err(error)?,
         attention: queue
-            .jobs_with_status(&[Status::Failed, Status::Applying, Status::IndexPending], 20)
-            .map_err(error)?
-            .into_iter()
-            .filter(|job| job.status == Status::Failed || job.attempts > 0)
-            .collect(),
+            .jobs_with_status(&[Status::Failed], 20)
+            .map_err(error)?,
+        candidates: queue.waiting().map_err(error)?,
+        failed_applies: queue.failed_batches().map_err(error)?.len(),
         problem: state.problem(),
         autostart: app.autolaunch().is_enabled().unwrap_or(false),
         settings,
@@ -186,7 +190,7 @@ pub fn retry_job(app: AppHandle, state: State<'_, AppState>, id: String) -> Resu
 pub async fn get_queue(app: AppHandle) -> Result<Vec<Job>, String> {
     tauri::async_runtime::spawn_blocking(move || {
         let queue = Queue::open(&app.state::<AppState>().paths.database()).map_err(error)?;
-        Ok(queue.unfinished_jobs().map_err(error)?.into_iter().map(pipeline::identify).collect())
+        Ok(queue.unfinished_jobs().map_err(error)?.into_iter().map(session::identify).collect())
     })
     .await
     .map_err(error)?

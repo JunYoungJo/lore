@@ -134,7 +134,8 @@ pub fn show_paused(app: &AppHandle, paused: bool) {
 pub fn refresh_tooltip(app: &AppHandle) {
     let state = app.state::<AppState>();
     let text = if state.syncing() { "Lore · Syncing".into() } else { match (state.current(), state.reviewing(), state.settings().paused) {
-        (Some(current), _, _) => format!("Lore · Recording: {}", current.project),
+        (Some(current), _, _) if current.applying => format!("Lore · Writing notes: {}", current.project),
+        (Some(current), _, _) => format!("Lore · Reading a session: {}", current.project),
         (None, true, _) => "Lore · Recording paused for review".to_string(),
         (None, false, true) => "Lore · Paused".to_string(),
         (None, false, false) => "Lore · Idle".to_string(),

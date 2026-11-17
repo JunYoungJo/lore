@@ -30,10 +30,8 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   git(folder, "init", "--bare", "--initial-branch=main", "remote.git");
   git(folder, "clone", "remote.git", "local");
   const local = join(folder, "local"); config(local);
-  const base = "# Error notifications\n\n## Current policy\n\nThe error notification policy is undecided.\n\n## Unchanged behavior\n\nKeep the measurement behavior unchanged.\n\nKeep data retention unchanged in every mode.\n\nDo not add new error types.\n\nPreserve the other sections of this document.\n\n## Field operation\n\nThe field notification policy is undecided.\n\n## Sources\n- [Windows L1](<../../sources/claude/windows-session.md#L1>)\n- [Mac L1](<../../sources/codex/mac-session.md#L1>)\n";
+  const base = "# Error notifications\n\n## Current policy\n\nThe error notification policy is undecided.\n\n## Unchanged behavior\n\nKeep the measurement behavior unchanged.\n\nKeep data retention unchanged in every mode.\n\nDo not add new error types.\n\nPreserve the other sections of this document.\n\n## Field operation\n\nThe field notification policy is undecided.\n\n## Sources\n- 2026-11-10, user: \"Skip error popups and write to the log only. Do not interrupt the operator.\"\n- 2026-11-11, user: \"Operators must notice errors immediately. Show a popup when an error occurs.\"\n";
   write(local, note, base);
-  write(local, "sources/claude/windows-session.md", '# Windows example\n\n<a id="L1"></a>\n## L1 · User · 2026-11-10T01:00:00Z\n\nSkip error popups and write to the log only. Do not interrupt the operator.\n');
-  write(local, "sources/codex/mac-session.md", '# Mac example\n\n<a id="L1"></a>\n## L1 · User · 2026-11-10T02:00:00Z\n\nOperators must notice errors immediately. Show a popup when an error occurs.\n');
   commit(local); git(local, "push", "-u", "origin", "main");
   git(folder, "clone", "remote.git", "other"); const other = join(folder, "other"); config(other);
   write(local, note, base.replace("The error notification policy is undecided.", "Log errors without popups to avoid interrupting field operation.")); commit(local);
@@ -55,7 +53,7 @@ for (const kind of ["text-conflict", "semantic-conflict"]) {
   const resolved = command("now");
   const finalText = readFileSync(join(local, note), "utf8");
   git(other, "pull", "--ff-only");
-  const checks = { sharedBeforeComparison, bothHistories, noConflictMarkers: !/^(<<<<<<<|>>>>>>>)/m.test(mergedText), decisionsCleared: resolved.state.items.every((item) => item.kind !== "decision"), unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothEvidenceLinks: finalText.includes("windows-session.md#L1") && finalText.includes("mac-session.md#L1"), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
+  const checks = { sharedBeforeComparison, bothHistories, noConflictMarkers: !/^(<<<<<<<|>>>>>>>)/m.test(mergedText), decisionsCleared: resolved.state.items.every((item) => item.kind !== "decision"), unchangedParagraph: finalText.includes("Keep the measurement behavior unchanged."), bothSourceLines: finalText.includes('- 2026-11-10, user: "Skip error popups') && finalText.includes('- 2026-11-11, user: "Operators must notice errors immediately.'), otherPcMatches: finalText === readFileSync(join(other, note), "utf8") };
   reports.push({ kind, backend, listedAfterSync: synced.state.items, decisions, mergedText, finalText, checks, actualQmd: false });
   writeFileSync(join(output, "report.json"), JSON.stringify(reports, null, 2));
   process.stdout.write(`${Object.values(checks).every(Boolean) ? "passed" : "needs a look"} · ${decisions.length} item(s) found by the model\n`);

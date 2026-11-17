@@ -4,11 +4,12 @@ use std::time::Instant;
 
 use lore_core::error::Failure;
 use lore_core::qmd::Qmd;
-use lore_core::queue::{Job, Queue};
+use lore_core::queue::Queue;
 use lore_core::recorder::Recorders;
 use lore_core::run::Limit;
 use lore_core::settings::Settings;
-use lore_core::worker::{self, Outcome, Reporter, WorkerLock};
+use lore_core::transcript::Provider;
+use lore_core::worker::{self, Outcome, Reporter, Work, WorkerLock};
 
 const SYNC_EVERY: Duration = Duration::from_secs(300);
 use tauri::{AppHandle, Emitter, Manager};
@@ -61,29 +62,51 @@ struct AppReporter {
     app: AppHandle,
 }
 
+/// What the user is told when a session has ended and all of it is read.
+fn ended(project: &str, candidates: usize) -> (&'static str, String) {
+    ("Candidates to review", format!("{project}: {} from the session that just ended. Open Lore to review.", count(candidates, "candidate", "candidates")))
+}
+
+/// What the user is told when a piece of work is done. What a step of a session offered is
+/// announced when the session ends (see `ended`), and what the user approved a moment ago in the
+/// window is not announced at all. An index that will be refreshed later needs no one's attention.
+fn report(work: &Work, outcome: &Outcome) -> Option<(&'static str, String)> {
+    match outcome {
+        Outcome::Applied { project, notes, candidates, auto: true, .. } => {
+            Some(("Candidates approved automatically", format!("{project}: {} written into {}.", count(*candidates, "candidate", "candidates"), count(notes.len(), "note", "notes"))))
+        }
+        Outcome::Failed { project, message, gave_up, next_attempt_at } => {
+            let target = project.clone().unwrap_or_else(|| "Session".into());
+            let next = if *gave_up { "No more automatic retries.".to_string() } else { format!("Retrying in about {} min.", minutes_until(*next_attempt_at)) };
+            let title = if matches!(work, Work::Apply(_)) { "Approved candidates were not written" } else { "Reading a session failed" };
+            Some((title, format!("{target}: {message} {next}")))
+        }
+        _ => None,
+    }
+}
+
 impl Reporter for AppReporter {
-    fn started(&self, job: &Job, project: &str) {
+    fn started(&self, work: &Work, project: &str) {
         let state = self.app.state::<AppState>();
-        state.set_current(Some(Current { job_id: job.id.clone(), provider: job.provider, project: project.to_string(), started_at: worker::now() }));
-        notify(&self.app, "Recording started", &format!("Recording memory from the {project} session."));
+        let provider = match work {
+            Work::Session(job) => job.provider,
+            Work::Apply(_) => Provider::parse(&state.settings().backend).unwrap_or(Provider::Claude),
+        };
+        state.set_current(Some(Current { job_id: work.id(), provider, project: project.to_string(), started_at: worker::now(), applying: matches!(work, Work::Apply(_)) }));
         changed(&self.app);
     }
 
-    fn finished(&self, _job: &Job, outcome: &Outcome) {
+    fn finished(&self, work: &Work, outcome: &Outcome) {
         self.app.state::<AppState>().set_current(None);
-        match outcome {
-            Outcome::Recorded { project, notes, .. } => {
-                notify(&self.app, "Recording complete", &format!("{project}: updated {} memory notes. Click to view.", notes.len()));
-            }
-            Outcome::NoChange { project, .. } => notify(&self.app, "Recording complete", &format!("{project}: no new memory to record.")),
-            Outcome::Failed { project, message, gave_up, next_attempt_at } => {
-                let target = project.clone().unwrap_or_else(|| "Session".into());
-                let next = if *gave_up { "No more automatic retries.".to_string() } else { format!("Retrying in about {} min.", minutes_until(*next_attempt_at)) };
-                notify(&self.app, "Recording failed", &format!("{target}: {message} {next}"));
-            }
-            Outcome::Skipped { .. } | Outcome::CaughtUp => {}
+        if let Some((title, body)) = report(work, outcome) {
+            notify(&self.app, title, &body);
         }
         changed(&self.app);
+    }
+
+    fn session_ended(&self, project: &str, candidates: usize) {
+        let (title, body) = ended(project, candidates);
+        notify(&self.app, title, &body);
     }
 }
 
@@ -148,7 +171,11 @@ pub fn spawn(app: AppHandle) {
             // Re-check under the same gate used by sync and review commits.
             if state.setup_busy() || state.syncing() || state.reviewing() || state.settings().paused || state.settings().knowledge_root != settings.knowledge_root { drop(operation); continue; }
             // A cleanup run works here, one folder per turn, between recordings and under the same gate.
-            if let Some((run, target)) = state.begin_cleanup(worker::now()) {
+            // A batch that was interrupted while it wrote its notes is finished or taken back
+            // first (by the step below, when it is due): a cleanup must not rewrite notes that
+            // are half written.
+            let half_written = queue.write_interrupted().unwrap_or(true);
+            if let Some((run, target)) = (!half_written).then(|| state.begin_cleanup(worker::now())).flatten() {
                 if announced != Some(run) {
                     announced = Some(run);
                     let folders = state.cleanup().map_or(1, |run| run.items.len());
@@ -181,14 +208,19 @@ pub fn spawn(app: AppHandle) {
                 changed(&app);
                 continue;
             }
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| worker::step(&queue, &settings, &paths, &recorder, &qmd, &reporter)));
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                // Candidates that waited out the set number of days are approved first, so that this turn can write them.
+                worker::approve_overdue(&queue, &settings, worker::now())?;
+                worker::step(&queue, &settings, &paths, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts), &qmd, &reporter)
+            }));
             drop(operation);
             changed(&app);
             match result {
                 Ok(Ok(Some((_, outcome)))) => {
-                    let recorded = matches!(outcome, Outcome::Recorded { .. });
-                    unsent |= recorded;
-                    look_for_cleanup |= recorded;
+                    // Notes are in the folder in both cases; in the second only the index is late.
+                    let written = matches!(outcome, Outcome::Applied { .. } | Outcome::Unindexed { .. });
+                    unsent |= written;
+                    look_for_cleanup |= written;
                     state.set_problem(None);
                 }
                 Ok(Ok(None)) => {
@@ -220,7 +252,12 @@ pub fn spawn(app: AppHandle) {
                 }
                 Err(_) => {
                     state.set_current(None);
-                    if let Ok(Some(job)) = queue.next_job(worker::now()) {
+                    // What was being worked on is what comes up next: a batch before a session.
+                    if let Ok(Some(batch)) = queue.next_batch(worker::now()) {
+                        // Recorded the way the worker records a failure, so that a batch that
+                        // gives up here also takes back what it had begun to write.
+                        let _ = worker::batch_failed(&queue, &settings, &batch, lore_core::error::Error::transient("An internal recording error occurred."));
+                    } else if let Ok(Some(job)) = queue.next_job(worker::now()) {
                         let _ = queue.record_failure(&job.id, Failure::Transient, "An internal recording error occurred.", worker::now());
                     }
                     state.set_problem(Some("An internal recording error occurred. The job has been deferred so other jobs can continue.".into()));
@@ -249,5 +286,37 @@ mod tests {
         assert_eq!(cleanup_report("common", &several, None), ("Cleanup complete", "5 folders: 21 notes changed, 11 removed. 1 folder failed.".into()));
         let none = RunTotals { folders: 2, failed: 2, ..RunTotals::default() };
         assert_eq!(cleanup_report("common", &none, Some("x".into())).0, "Cleanup failed");
+    }
+
+    #[test]
+    fn the_user_is_told_of_candidates_only_when_a_session_has_ended_and_of_writes_only_when_they_did_not_approve_them() {
+        let job = lore_core::queue::Job {
+            id: "job".into(),
+            provider: Provider::Claude,
+            transcript: "t.jsonl".into(),
+            status: lore_core::queue::Status::Pending,
+            cursor_line: 0,
+            cursor_hash: String::new(),
+            project: None,
+            session_id: None,
+            attempts: 0,
+            next_attempt_at: 0,
+            requests: 1,
+            last_error: None,
+            updated_at: 0,
+            ended: true,
+        };
+        let session = Work::Session(job);
+        assert_eq!(ended("demo", 2), ("Candidates to review", "demo: 2 candidates from the session that just ended. Open Lore to review.".into()));
+        assert_eq!(ended("demo", 1).1, "demo: 1 candidate from the session that just ended. Open Lore to review.");
+        // A step that offered candidates says nothing by itself: the session may go on.
+        assert_eq!(report(&session, &Outcome::Offered { project: "demo".into(), candidates: 2, left_out: 1 }), None);
+        assert_eq!(report(&session, &Outcome::Nothing { project: "demo".into() }), None);
+        assert_eq!(report(&session, &Outcome::Unindexed { project: "demo".into(), message: "qmd failed".into(), next_attempt_at: 0 }), None);
+        let applied = |auto| Outcome::Applied { project: "demo".into(), notes: vec!["projects/demo/a.md".into()], summary: "s".into(), candidates: 3, auto };
+        assert_eq!(report(&session, &applied(false)), None);
+        assert_eq!(report(&session, &applied(true)).unwrap().1, "demo: 3 candidates written into 1 note.");
+        let failed = Outcome::Failed { project: None, message: "qmd was not found.".into(), gave_up: true, next_attempt_at: 0 };
+        assert_eq!(report(&session, &failed), Some(("Reading a session failed", "Session: qmd was not found. No more automatic retries.".into())));
     }
 }

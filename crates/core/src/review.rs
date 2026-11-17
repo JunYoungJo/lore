@@ -417,7 +417,7 @@ fn store_reviewed(root: &Path, start: &str, replace: &[(String, Option<(String, 
 }
 
 /// Mark the checked notes as reviewed. Unchecked notes keep waiting; files that
-/// are not notes, such as conversation copies, never wait.
+/// are not notes never wait.
 pub fn mark_reviewed(root: &Path, notes: &[String]) -> Result<usize> {
     let changes = working_changes(root)?.ok_or_else(|| Error::permanent("The memory folder is not a Git repository."))?;
     if let Some(stray) = notes.iter().find(|note| !changes.notes.iter().any(|change| &change.path == *note)) {
@@ -470,7 +470,7 @@ mod tests {
 
     #[test]
     fn status_separates_memory_notes_from_other_files() {
-        let output = " M projects/demo/a.md\0?? projects/demo/new.md\0 D common/old.md\0 M sources/claude/s.md\0 M README.md\0R  projects/demo/b.md\0projects/demo/a2.md\0?? .qmd/config/index.yml\0A  projects/demo/staged.md\0";
+        let output = " M projects/demo/a.md\0?? projects/demo/new.md\0 D common/old.md\0 M scripts/export.sh\0 M README.md\0R  projects/demo/b.md\0projects/demo/a2.md\0?? .qmd/config/index.yml\0A  projects/demo/staged.md\0";
         let changes = parse_status(output);
         let notes: Vec<(&str, ChangeKind)> = changes.notes.iter().map(|change| (change.path.as_str(), change.kind)).collect();
         assert_eq!(
@@ -484,7 +484,7 @@ mod tests {
             ]
         );
         let others: Vec<&str> = changes.others.iter().map(|change| change.path.as_str()).collect();
-        assert_eq!(others, vec![".qmd/config/index.yml", "README.md", "sources/claude/s.md"]);
+        assert_eq!(others, vec![".qmd/config/index.yml", "README.md", "scripts/export.sh"]);
         assert_eq!(parse_status(""), WorkingChanges::default());
     }
 

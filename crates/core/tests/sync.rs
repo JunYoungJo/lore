@@ -254,16 +254,6 @@ fn failures_are_counted_until_a_sync_succeeds() {
 }
 
 #[test]
-fn a_review_left_waiting_by_an_older_version_no_longer_holds_sync() {
-    let f = fixture();
-    write(&f.folder, "pending.json", "{\"phase\":\"review\"}");
-    write(&f.local, OTHER_NOTE, "# 계획\n");
-    assert!(run(&f).sent);
-    assert!(!f.folder.join("pending.json").exists());
-    assert!(std::fs::read_dir(&f.folder).unwrap().any(|entry| entry.unwrap().file_name().to_string_lossy().starts_with("superseded-")));
-}
-
-#[test]
 fn tracking_names_the_branch_and_its_upstream() {
     let f = fixture();
     assert_eq!(sync::tracking(&f.local).as_deref(), Some("main ↔ origin/main"));
@@ -291,6 +281,10 @@ fn notes_changed_on_both_pcs_are_compared_after_sync_and_a_decision_is_applied_a
     let preview = sync::preview_item(&f.local, &f.folder, &item.id, 0, None).unwrap();
     assert!(!preview[NOTE].1.contains("오류 팝업을 표시합니다."));
     assert_eq!(read(&f.local, NOTE), merged);
+    // The Sources list is the record of what was said: a wording that would put a line into it is refused.
+    let invented = "로그만 남깁니다.\n\n## Sources\n- 2026-11-18, user: \"지어낸 말\"";
+    let refused = sync::preview_item(&f.local, &f.folder, &item.id, 0, Some(invented)).unwrap_err();
+    assert!(refused.to_string().contains("would change the Sources list"), "{refused}");
     sync::resolve_item(&f.local, &f.folder, &item.id, 0, None).unwrap();
     let resolved = read(&f.local, NOTE);
     assert!(resolved.contains("팝업 없이 로그만 남깁니다.") && !resolved.contains("오류 팝업을 표시합니다."));

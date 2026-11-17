@@ -17,6 +17,8 @@ const api = vi.hoisted(() => ({
   clearActivity: vi.fn(),
   openCleanup: vi.fn(),
   setAutoCleanup: vi.fn(),
+  openCandidates: vi.fn(),
+  setAutoApprove: vi.fn(),
   openReview: vi.fn(),
   openSync: vi.fn(),
   openNote: vi.fn(),
@@ -56,6 +58,8 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     attention: [
       { id: "f1", provider: "codex", transcript: "C:/s.jsonl", status: "failed", cursorLine: 0, cursorHash: "", project: "demoengine", sessionId: null, attempts: 3, nextAttemptAt: 0, lastError: "The evidence location or quotation does not match the provided source.", updatedAt: 1 },
     ],
+    candidates: { candidates: 0, sessions: 0, oldestAt: 0 },
+    failedApplies: 0,
     problem: null,
     settings: {
       knowledgeRoot: "D:/doc/knowledge",
@@ -72,8 +76,10 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       paused: false,
       syncEnabled: true,
       autoCleanup: false,
+      autoApprove: false,
+      autoApproveDays: 3,
+      autoApproveSince: 0,
       maxChars: 30000,
-      notesBudget: 60000,
       qmdIndex: "index",
       commands: { codex: ["node", "codex.js"], claude: ["claude.exe"], qmd: ["node", "qmd"] },
     },
@@ -167,8 +173,8 @@ describe("status view", () => {
     api.getQueue.mockResolvedValue([]);
     render(<App />);
     const attention = await screen.findByRole("region", { name: "Needs attention" });
-    const titles = within(attention).getAllByText(/hooks$|changed notes$|failed$/).map((element) => element.textContent);
-    expect(titles).toEqual(["Connect Codex hooks", "Review 4 changed notes", "1 recording failed"]);
+    const titles = within(attention).getAllByText(/hooks$|changed notes$|could not be read$/).map((element) => element.textContent);
+    expect(titles).toEqual(["Connect Codex hooks", "Review 4 changed notes", "1 session could not be read"]);
     const detail = "demoengine · The evidence location or quotation does not match the provided source.";
     expect(within(attention).getByText(detail)).toHaveAttribute("title", detail);
 
@@ -178,6 +184,39 @@ describe("status view", () => {
     expect(api.openReview).toHaveBeenCalledTimes(1);
     await userEvent.click(within(attention).getByRole("button", { name: "View" }));
     expect(await screen.findByRole("region", { name: "Failed" })).toBeInTheDocument();
+  });
+
+  it("puts the waiting candidates first among what needs attention and opens their window", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 7, sessions: 2, oldestAt: now - 2 * 3600 }, review: 3 }));
+    render(<App />);
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    const titles = [...attention.querySelectorAll(".todo-title")].map((element) => element.textContent);
+    expect(titles).toEqual(["7 candidates to review", "Review 3 changed notes"]);
+    expect(attention).toHaveTextContent("From 2 sessions · oldest 2h ago");
+    expect(attention).not.toHaveTextContent("approved automatically");
+    await userEvent.click(within(attention).getAllByRole("button", { name: "Review" })[0]);
+    expect(api.openCandidates).toHaveBeenCalledTimes(1);
+    expect(api.openReview).not.toHaveBeenCalled();
+  });
+
+  it("says when waiting candidates are approved by themselves", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 1, sessions: 1, oldestAt: now - 3600 }, settings: { ...snapshot().settings, autoApprove: true, autoApproveDays: 5 } }));
+    render(<App />);
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    expect(attention).toHaveTextContent("1 candidate to review");
+    expect(attention).toHaveTextContent("approved automatically after 5 days");
+  });
+
+  it("reports approved candidates that could not be written and opens the candidates", async () => {
+    api.getSnapshot.mockResolvedValue(calm({ failedApplies: 1 }));
+    render(<App />);
+    const attention = await screen.findByRole("region", { name: "Needs attention" });
+    expect(attention).toHaveTextContent("1 approved batch not written");
+    expect(attention).toHaveTextContent("The notes are unchanged.");
+    await userEvent.click(within(attention).getByRole("button", { name: "Open" }));
+    expect(api.openCandidates).toHaveBeenCalledTimes(1);
   });
 
   it("hides Needs attention when nothing needs it", async () => {
@@ -208,19 +247,16 @@ describe("status view", () => {
     }
   });
 
-  it("reports interrupted recordings and memory not yet shared", async () => {
-    const interrupted: Job = { ...snapshot().attention[0], id: "i1", status: "index_pending", project: "sample-app", attempts: 1, lastError: null };
-    api.getSnapshot.mockResolvedValue(calm({ attention: [interrupted], sync: { phase: "failing", message: null, items: 0, comparing: false,lastSyncedAt: null } }));
+  it("reports memory not yet shared and syncs on request", async () => {
+    api.getSnapshot.mockResolvedValue(calm({ sync: { phase: "failing", message: null, items: 0, comparing: false,lastSyncedAt: null } }));
     api.getQueue.mockResolvedValue([]);
     render(<App />);
     const attention = await screen.findByRole("region", { name: "Needs attention" });
-    expect(attention).toHaveTextContent("1 recording interrupted");
-    expect(attention).toHaveTextContent("sample-app · Index pending");
     expect(attention).toHaveTextContent("Memory not shared yet");
+    // A session is only read: there is no interrupted write of a session to report.
+    expect(attention).not.toHaveTextContent("interrupted");
     await userEvent.click(within(attention).getByRole("button", { name: "Sync" }));
     expect(api.syncNow).toHaveBeenCalledTimes(1);
-    await userEvent.click(within(attention).getByRole("button", { name: "View" }));
-    expect(await screen.findByRole("region", { name: "Pending" })).toBeInTheDocument();
   });
 
   it("gives every recent row one line under its title and hides skipped sessions", async () => {
@@ -300,7 +336,7 @@ describe("status view", () => {
     render(<App />);
     const now = await screen.findByRole("region", { name: "Current activity" });
     expect(now).toHaveTextContent("Reviewing");
-    expect(now).toHaveTextContent("New recordings wait while the review window is open.");
+    expect(now).toHaveTextContent("Sessions and approved candidates wait while the review window is open.");
   });
 
   it("lists synced notes to check without holding recording, and opens the sync window", async () => {
@@ -314,12 +350,16 @@ describe("status view", () => {
     expect(api.openSync).toHaveBeenCalledTimes(1);
   });
 
-  it("shows the session being recorded", async () => {
-    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "a", provider: "claude", project: "sample-app", startedAt: 1_800_000_000 } }));
-    render(<App />);
+  it("shows the session being read, and says so differently when approved candidates are being written", async () => {
+    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "a", provider: "claude", project: "sample-app", startedAt: 1_800_000_000, applying: false } }));
+    const view = render(<App />);
     const now = await screen.findByRole("region", { name: "Current activity" });
-    expect(now).toHaveTextContent("Recording sample-app");
+    expect(now).toHaveTextContent("Reading the sample-app session");
     expect(now).toHaveTextContent("Claude session · Codex");
+    view.unmount();
+    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "apply-3", provider: "codex", project: "sample-app", startedAt: 1_800_000_000, applying: true } }));
+    render(<App />);
+    expect(await screen.findByRole("region", { name: "Current activity" })).toHaveTextContent("Writing notes for sample-app");
   });
 
   it("shows the folder being cleaned up and how far the run is, and opens the cleanup window", async () => {
@@ -453,7 +493,7 @@ describe("status view", () => {
   it("keeps elapsed and relative times moving while the popover stays open", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date(1_800_000_130 * 1000));
-    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "a", provider: "claude", project: "sample-app", startedAt: 1_800_000_000 } }));
+    api.getSnapshot.mockResolvedValue(snapshot({ state: "working", current: { jobId: "a", provider: "claude", project: "sample-app", startedAt: 1_800_000_000, applying: false } }));
     render(<App />);
     await act(async () => {
       await Promise.resolve();
@@ -492,7 +532,7 @@ describe("status view", () => {
   it("shows an empty state and offers no clearing before anything is recorded", async () => {
     api.getSnapshot.mockResolvedValue(snapshot({ recent: [] }));
     render(<App />);
-    expect(await screen.findByText("No sessions recorded yet")).toBeInTheDocument();
+    expect(await screen.findByText("No sessions read yet")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Clear history" })).not.toBeInTheDocument();
   });
 
@@ -602,7 +642,7 @@ describe("queue view", () => {
     job({ id: "retry", project: "demoengine", sessionId: "retry-session", attempts: 2, nextAttemptAt: 4_000_000_000, lastError: "Model timeout" }),
     job({ id: "f1", provider: "codex", status: "failed", project: "sample-viewer", sessionId: "failed-session", attempts: 3, lastError: "Transcript file not found" }),
   ];
-  const recording = { state: "working" as const, current: { jobId: "rec", provider: "claude" as const, project: "sample-app", startedAt: 1_800_000_000 } };
+  const recording = { state: "working" as const, current: { jobId: "rec", provider: "claude" as const, project: "sample-app", startedAt: 1_800_000_000, applying: false } };
 
   it("shows each session's project, session id and state in its group", async () => {
     api.getSnapshot.mockResolvedValue(snapshot(recording));
@@ -769,7 +809,6 @@ describe("settings view", () => {
       modelTimeoutSecs: 600,
       qmdTimeoutSecs: 900,
       maxChars: 30000,
-      notesBudget: 60000,
     });
     expect(await screen.findByText("Saved")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Model"), "x");
@@ -865,8 +904,8 @@ describe("settings view", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show" }));
     expect(screen.getByLabelText("Recording timeout")).toHaveValue(600);
     expect(screen.getByLabelText("qmd timeout")).toHaveValue(900);
-    expect(screen.getByLabelText("New conversation per recording")).toHaveValue(30000);
-    expect(screen.getByLabelText("Existing notes per recording")).toHaveValue(60000);
+    expect(screen.getByLabelText("Conversation read per step")).toHaveValue(30000);
+    expect(screen.queryByLabelText("Existing notes per recording")).not.toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("Recording timeout"));
     await userEvent.type(screen.getByLabelText("Recording timeout"), "1200{Enter}");
     expect(api.saveSettings).toHaveBeenCalledWith({
@@ -878,7 +917,6 @@ describe("settings view", () => {
       modelTimeoutSecs: 1200,
       qmdTimeoutSecs: 900,
       maxChars: 30000,
-      notesBudget: 60000,
     });
   });
 
@@ -931,6 +969,35 @@ describe("settings view", () => {
     expect(toggle).not.toBeChecked();
     await userEvent.click(toggle);
     expect(api.setAutoCleanup).toHaveBeenCalledWith(true);
+  });
+
+  it("leaves candidates waiting by default and opens their window from settings", async () => {
+    await openSettings(snapshot({ candidates: { candidates: 4, sessions: 1, oldestAt: 1_800_000_000 } }));
+    const group = screen.getByRole("region", { name: "Candidates" });
+    expect(group).toHaveTextContent("4 candidates wait for your review.");
+    expect(group).toHaveTextContent("Off: a candidate waits until you approve or discard it.");
+    expect(within(group).getByRole("switch", { name: "Approve automatically" })).not.toBeChecked();
+    expect(within(group).queryByLabelText("Approve after")).not.toBeInTheDocument();
+    await userEvent.click(within(group).getByRole("button", { name: "Open candidates" }));
+    expect(api.openCandidates).toHaveBeenCalledTimes(1);
+  });
+
+  it("turns automatic approval on with the days it waits, and saves a changed number of days", async () => {
+    await openSettings();
+    await userEvent.click(screen.getByRole("switch", { name: "Approve automatically" }));
+    expect(api.setAutoApprove).toHaveBeenCalledWith(true, 3);
+  });
+
+  it("refuses a waiting period that is not a whole number of days", async () => {
+    await openSettings(snapshot({ settings: { ...snapshot().settings, autoApprove: true, autoApproveDays: 3 } }));
+    const days = screen.getByLabelText("Approve after");
+    expect(days).toHaveValue(3);
+    await userEvent.clear(days);
+    await userEvent.type(days, "0{Enter}");
+    expect(api.setAutoApprove).not.toHaveBeenCalled();
+    await userEvent.clear(days);
+    await userEvent.type(days, "7{Enter}");
+    expect(api.setAutoApprove).toHaveBeenCalledWith(true, 7);
   });
 
   it("names in settings the folder being cleaned up", async () => {
@@ -998,7 +1065,7 @@ describe("app updates", () => {
   });
 
   it.each([
-    { current: { jobId: "recording", provider: "codex" as const, project: "demo-app", startedAt: NOW } },
+    { current: { jobId: "recording", provider: "codex" as const, project: "demo-app", startedAt: NOW, applying: false } },
     { syncing: true },
     { reviewing: true },
   ])("prevents install while existing work is active: %j", async (work) => {

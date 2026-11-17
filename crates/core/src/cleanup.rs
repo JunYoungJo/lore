@@ -10,7 +10,7 @@ use serde_json::{json, Value};
 
 use crate::error::{Error, Failure, Result};
 use crate::notes::{self, CatalogEntry};
-use crate::pipeline::write_notes;
+use crate::notes::write_notes;
 use crate::project::is_valid_name;
 use crate::proposal::{carried_sources, change_log, check_snapshot, moved_note, render_note, validate, with_numbered_sources, Proposal, Scope};
 use crate::recorder::edits_schema;
@@ -339,7 +339,7 @@ fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<Stri
         return Err(Error::rejected(format!("A note can be moved only into the folder being cleaned: {}", moved.to)));
     }
     let writable = std::iter::once(own).chain(target.shared()).collect();
-    let scope = Scope { project: &target.folder, turns: None, existing: &existing, editable: shown, writable, removable: target.folders() };
+    let scope = Scope { project: &target.folder, existing: &existing, editable: shown, writable, removable: target.folders() };
     validate(proposal, &scope)?;
     let mut changes = Changes { summary: proposal.summary.replace(['\r', '\n'], " ").trim().to_string(), base: notes.clone(), rendered: BTreeMap::new(), removed: BTreeSet::new(), log: change_log(proposal) };
     for moved in &proposal.moves {
@@ -347,10 +347,9 @@ fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<Stri
         changes.removed.insert(moved.from.clone());
     }
     for change in &proposal.changes {
+        // A cleanup quotes no session: the only sources it adds are the ones the notes it took in had.
         let carried = carried_sources(change, |path| notes.get(path).map(String::as_str))?;
-        // A cleanup quotes no session, so it adds no source of its own.
-        let change = crate::proposal::Change { evidence: Vec::new(), ..change.clone() };
-        let rendered = render_note(&change, &target.folder, &|_| String::new(), notes.get(&change.path).map(String::as_str), &carried)?;
+        let rendered = render_note(change, &target.folder, notes.get(&change.path).map(String::as_str), &carried)?;
         changes.rendered.insert(change.path.clone(), rendered);
     }
     changes.removed.extend(proposal.removals.iter().map(|removal| removal.path.clone()));
@@ -505,9 +504,9 @@ mod tests {
     use std::cell::RefCell;
     use std::fs;
 
-    const BG: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치는 로그만 남긴다\n\n## 결정\n\n경고 없이 TP 로그만 남깁니다.\n\n## Sources\n- [L4](<../../sources/claude/a.md#L4>) — 로그만 남기십시오\n";
-    const POPUP: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"assistant_report\"\n---\n\n# 경고 팝업 문구\n\n팝업 문구는 짧게 씁니다.\n\n## Sources\n- [L9](<../../sources/codex/b.md#L9>) — 문구는 짧게\n";
-    const OLD: &str = "---\nqmd:\n  metadata:\n    project: \"old\"\n    kind: \"lesson\"\n    authority: \"mixed_evidence\"\n---\n\n# 큐 잠금\n\n큐는 한 번에 하나만 처리합니다.\n\n## Sources\n- [L2](<../../sources/claude/c.md#L2>) — 하나씩 처리\n";
+    const BG: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"user_decision\"\n---\n\n# BG 불일치는 로그만 남긴다\n\n## 결정\n\n경고 없이 TP 로그만 남깁니다.\n\n## Sources\n- 2026-10-03, user: \"로그만 남기십시오\"\n";
+    const POPUP: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"decision\"\n    authority: \"assistant_report\"\n---\n\n# 경고 팝업 문구\n\n팝업 문구는 짧게 씁니다.\n\n## Sources\n- 2026-10-04, user: \"문구는 짧게\"\n";
+    const OLD: &str = "---\nqmd:\n  metadata:\n    project: \"old\"\n    kind: \"lesson\"\n    authority: \"mixed_evidence\"\n---\n\n# 큐 잠금\n\n큐는 한 번에 하나만 처리합니다.\n\n## Sources\n- 2026-10-06, agent: \"하나씩 처리\"\n";
 
     struct Fixture {
         dir: tempfile::TempDir,
@@ -553,7 +552,7 @@ mod tests {
     }
 
     fn remove(path: &str) -> Removal {
-        Removal { path: path.into(), reason: "다른 노트에 모두 들어 있습니다.".into(), evidence: vec![] }
+        Removal { path: path.into(), reason: "다른 노트에 모두 들어 있습니다.".into() }
     }
 
     /// The data a prompt carries between its tags. The prompt file is checked out with CRLF line
@@ -593,7 +592,7 @@ mod tests {
 
     #[test]
     fn the_folders_that_can_be_cleaned_are_listed_with_their_note_counts() {
-        let fixture = Fixture::new(&[("common/a.md", "# A"), ("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/old/queue.md", OLD), ("projects/demo/notes.txt", "x"), ("sources/claude/a.md", "copy")]);
+        let fixture = Fixture::new(&[("common/a.md", "# A"), ("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/old/queue.md", OLD), ("projects/demo/notes.txt", "x"), ("drafts/idea.md", "draft")]);
         fs::create_dir_all(fixture.root().join("projects/empty")).unwrap();
         let listed = folders(fixture.root(), &BTreeMap::new()).unwrap();
         let counts: Vec<(&str, usize)> = listed.iter().map(|folder| (folder.name.as_str(), folder.notes)).collect();
@@ -636,7 +635,7 @@ mod tests {
         assert_eq!(fixture.read("projects/demo/popup.md"), None);
         let merged = fixture.read("projects/demo/bg.md").unwrap();
         assert!(merged.contains("경고 없이 TP 로그만 남깁니다.\n\n팝업 문구는 짧게 씁니다.\n"), "{merged}");
-        assert!(merged.ends_with("## Sources\n- [L4](<../../sources/claude/a.md#L4>) — 로그만 남기십시오\n- [L9](<../../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{merged}");
+        assert!(merged.ends_with("## Sources\n- 2026-10-03, user: \"로그만 남기십시오\"\n- 2026-10-04, user: \"문구는 짧게\"\n"), "{merged}");
         assert!(merged.contains("authority: \"mixed_evidence\""));
 
         // The model saw this folder's notes and the shared ones, without their source lists.
@@ -644,14 +643,14 @@ mod tests {
         assert_eq!((&asked["folder"], &asked["shared_folder"]), (&json!("projects/demo/"), &json!("common/")));
         assert_eq!(asked["today"], "2026-11-12");
         assert_eq!(asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["common/a.md", "projects/demo/bg.md", "projects/demo/popup.md"]);
-        // Each note's source list is shown as numbered quotations, without the links.
+        // Each note's source list is shown with its lines numbered.
         let shown = asked["notes"]["projects/demo/bg.md"].as_str().unwrap();
-        assert!(shown.ends_with("경고 없이 TP 로그만 남깁니다.\n\n## Sources\n1. 로그만 남기십시오\n"), "{shown}");
+        assert!(shown.ends_with("경고 없이 TP 로그만 남깁니다.\n\n## Sources\n1. 2026-10-03, user: \"로그만 남기십시오\"\n"), "{shown}");
     }
 
     #[test]
     fn a_note_taken_apart_gives_each_piece_only_the_source_lines_named_for_it() {
-        let ticket = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"issue\"\n    authority: \"mixed_evidence\"\n---\n\n# ISSUE-88\n\n지적과 미해결이 섞인 노트\n\n## Sources\n- [L30](<../../sources/claude/i.md#L30>) — 끝난 것부터 말해\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n";
+        let ticket = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"issue\"\n    authority: \"mixed_evidence\"\n---\n\n# ISSUE-88\n\n지적과 미해결이 섞인 노트\n\n## Sources\n- 2026-11-01, user: \"끝난 것부터 말해\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n";
         let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
         let lines = |numbers: Vec<usize>| vec![SourceRef::Lines { path: "projects/demo/issue-88.md".into(), lines: numbers }];
         let proposal = Proposal {
@@ -666,9 +665,9 @@ mod tests {
         let model = Model::answering(vec![proposal]);
         tidy(&fixture, &demo(), 100_000, true, &model).unwrap();
         let shared = fixture.read("common/answer-status-first.md").unwrap();
-        assert!(shared.ends_with("## Sources\n- [L30](<../sources/claude/i.md#L30>) — 끝난 것부터 말해\n"), "{shared}");
+        assert!(shared.ends_with("## Sources\n- 2026-11-01, user: \"끝난 것부터 말해\"\n"), "{shared}");
         let topic = fixture.read("projects/demo/bg.md").unwrap();
-        assert!(topic.ends_with("## Sources\n- [L4](<../../sources/claude/a.md#L4>) — 로그만 남기십시오\n- [L41](<../../sources/claude/i.md#L41>) — 4GB 미만에서는 실행하지 않았습니다\n"), "{topic}");
+        assert!(topic.ends_with("## Sources\n- 2026-10-03, user: \"로그만 남기십시오\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n"), "{topic}");
 
         let wrong = Proposal { summary: "s".into(), changes: vec![Change { sources_from: lines(vec![3]), ..append("projects/demo/bg.md", "결정", "추가", &[]) }], ..Proposal::default() };
         let refused = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
@@ -677,7 +676,7 @@ mod tests {
         assert!(model.asked(1)["previous_failure"].as_str().unwrap().contains("no source line 3"));
     }
 
-    const RULE: &str = "---\nqmd:\n  metadata:\n    project: \"common\"\n    kind: \"lesson\"\n    authority: \"user_decision\"\n---\n\n# 보고 방식\n\n## 규칙\n\n확인한 것만 보고합니다.\n\n## Sources\n- [L1](<../sources/claude/r.md#L1>) — 확인한 것만\n";
+    const RULE: &str = "---\nqmd:\n  metadata:\n    project: \"common\"\n    kind: \"lesson\"\n    authority: \"user_decision\"\n---\n\n# 보고 방식\n\n## 규칙\n\n확인한 것만 보고합니다.\n\n## Sources\n- 2026-10-05, user: \"확인한 것만\"\n";
 
     fn shared_note(path: &str, sources_from: &[&str]) -> Change {
         Change {
@@ -705,13 +704,13 @@ mod tests {
         assert_eq!(outcome.written, vec!["common/answer-status-first.md".to_string(), "common/reporting.md".to_string()]);
         assert_eq!(outcome.removed, vec!["projects/demo/popup.md".to_string()]);
 
-        // A note in the shared folder names that folder and reaches the conversation copies from its own depth.
+        // A note in the shared folder names that folder and takes over the source lines named for it.
         let created = fixture.read("common/answer-status-first.md").unwrap();
         assert!(created.starts_with("---\nqmd:\n  metadata:\n    project: \"common\"\n"), "{created}");
-        assert!(created.ends_with("## Sources\n- [L9](<../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{created}");
+        assert!(created.ends_with("## Sources\n- 2026-10-04, user: \"문구는 짧게\"\n"), "{created}");
         let edited = fixture.read("common/reporting.md").unwrap();
         assert!(edited.contains("확인한 것만 보고합니다.\n\n문구는 짧게 씁니다.\n"), "{edited}");
-        assert!(edited.ends_with("## Sources\n- [L1](<../sources/claude/r.md#L1>) — 확인한 것만\n- [L9](<../sources/codex/b.md#L9>) — 문구는 짧게\n"), "{edited}");
+        assert!(edited.ends_with("## Sources\n- 2026-10-05, user: \"확인한 것만\"\n- 2026-10-04, user: \"문구는 짧게\"\n"), "{edited}");
     }
 
     #[test]

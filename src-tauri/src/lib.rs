@@ -4,6 +4,7 @@ use tauri_plugin_notification::NotificationExt;
 use tauri::Manager;
 
 mod background;
+mod candidates;
 mod cleanup;
 mod commands;
 mod review;
@@ -63,6 +64,14 @@ pub fn run() {
             commands::retry_job,
             commands::discard_job,
             commands::clear_activity,
+            candidates::open_candidates,
+            candidates::get_candidates,
+            candidates::edit_candidate,
+            candidates::approve_candidates,
+            candidates::discard_candidates,
+            candidates::retry_apply,
+            candidates::release_apply,
+            candidates::set_auto_approve,
             cleanup::open_cleanup,
             cleanup::get_cleanup,
             cleanup::start_cleanup,

@@ -28,7 +28,8 @@ pub struct HookStatus {
     pub error: Option<String>,
 }
 
-pub const EVENTS: [&str; 2] = ["SessionEnd", "PreCompact"];
+/// `SessionEnd` and `PreCompact` put a session in the queue. `UserPromptSubmit` tells the session how to mark.
+pub const EVENTS: [&str; 3] = ["SessionEnd", "PreCompact", "UserPromptSubmit"];
 
 pub fn config_path(provider: Provider) -> PathBuf {
     match provider {
@@ -261,22 +262,26 @@ mod tests {
     }
 
     #[test]
-    fn both_tools_are_hooked_on_session_end_and_before_compaction() {
+    fn both_tools_are_hooked_on_session_end_before_compaction_and_on_each_prompt() {
         for provider in [Provider::Claude, Provider::Codex] {
             let value: Value = serde_json::from_str(&add_hooks(None, provider, &wanted(provider)).unwrap()).unwrap();
-            assert_eq!(event_commands(&value, "SessionEnd"), vec![wanted(provider)]);
-            assert_eq!(event_commands(&value, "PreCompact"), vec![wanted(provider)]);
+            for event in ["SessionEnd", "PreCompact", "UserPromptSubmit"] {
+                assert_eq!(event_commands(&value, event), vec![wanted(provider)], "{event}");
+            }
         }
     }
 
+    // A connection made by a version without marks has no prompt hook; reconnecting adds it and keeps the rest.
     #[test]
-    fn a_codex_connection_with_only_session_end_is_completed_by_reconnecting() {
-        let old = format!(r#"{{"hooks": {{"SessionEnd": [{{"hooks": [{{"type": "command", "command": "{}", "timeout": 10}}]}}]}}}}"#, wanted(Provider::Codex));
+    fn a_connection_made_before_an_event_was_added_is_completed_by_reconnecting() {
+        let entry = format!(r#"[{{"hooks": [{{"type": "command", "command": "{}", "timeout": 10}}]}}]"#, wanted(Provider::Codex));
+        let old = format!(r#"{{"hooks": {{"SessionEnd": {entry}, "PreCompact": {entry}}}}}"#);
         assert_eq!(inspect(Some(&old), Provider::Codex, &wanted(Provider::Codex)).unwrap().0, HookState::Missing);
         let updated = add_hooks(Some(&old), Provider::Codex, &wanted(Provider::Codex)).unwrap();
         let value: Value = serde_json::from_str(&updated).unwrap();
-        assert_eq!(event_commands(&value, "SessionEnd"), vec![wanted(Provider::Codex)]);
-        assert_eq!(event_commands(&value, "PreCompact"), vec![wanted(Provider::Codex)]);
+        for event in EVENTS {
+            assert_eq!(event_commands(&value, event), vec![wanted(Provider::Codex)], "{event}");
+        }
         assert_eq!(inspect(Some(&updated), Provider::Codex, &wanted(Provider::Codex)).unwrap().0, HookState::Connected);
     }
 
@@ -305,10 +310,10 @@ mod tests {
         let original = r#"{"model": "opus", "hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "orca-agent-hook.exe claude", "timeout": 10}]}], "Stop": []}}"#;
         let connected = add_hooks(Some(original), Provider::Claude, &wanted(Provider::Claude)).unwrap();
         let (removed_text, removed) = remove_hooks(Some(&connected), Provider::Claude).unwrap();
-        assert_eq!(removed, 2);
+        assert_eq!(removed, EVENTS.len());
         let value: Value = serde_json::from_str(&removed_text).unwrap();
         assert_eq!(event_commands(&value, "SessionEnd"), vec!["orca-agent-hook.exe claude".to_string()]);
-        assert!(value["hooks"].get("PreCompact").is_none());
+        assert!(value["hooks"].get("PreCompact").is_none() && value["hooks"].get("UserPromptSubmit").is_none());
         assert!(value["hooks"]["Stop"].as_array().unwrap().is_empty());
         assert_eq!(value["model"], "opus");
         let expected: Value = serde_json::from_str(original).unwrap();
@@ -320,7 +325,7 @@ mod tests {
     fn removal_leaves_the_other_tool_and_old_paths_are_removed_too() {
         let both = add_hooks(Some(&add_hooks(None, Provider::Codex, &wanted(Provider::Codex)).unwrap()), Provider::Claude, &wanted(Provider::Claude)).unwrap();
         let (text, removed) = remove_hooks(Some(&both), Provider::Codex).unwrap();
-        assert_eq!(removed, 2);
+        assert_eq!(removed, EVENTS.len());
         assert_eq!(inspect(Some(&text), Provider::Claude, &wanted(Provider::Claude)).unwrap().0, HookState::Connected);
         let stale = r#"{"hooks": {"SessionEnd": [{"hooks": [{"type": "command", "command": "D:/old/lore-cli.exe hook codex"}]}]}}"#;
         assert_eq!(remove_hooks(Some(stale), Provider::Codex).unwrap().1, 1);
@@ -333,7 +338,7 @@ mod tests {
         assert_eq!(unregister_at(&config, Provider::Codex, 1).unwrap(), 0);
         register_at(&config, Provider::Codex, Path::new(CLI), 2).unwrap();
         let connected = std::fs::read_to_string(&config).unwrap();
-        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), 2);
+        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), EVENTS.len());
         assert_eq!(std::fs::read_to_string(dir.path().join("hooks.json.lore-backup-3")).unwrap(), connected);
         assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Missing);
         assert_eq!(unregister_at(&config, Provider::Codex, 4).unwrap(), 0);

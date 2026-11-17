@@ -1,6 +1,6 @@
 //! Bounded, resumable model comparisons. Only immutable plan data can be read;
 //! model requests never grant filesystem or shell access.
-use super::{analysis_schema, scope, source_paths, validate_analysis, Analysis, Plan};
+use super::{analysis_schema, scope, validate_analysis, Analysis, Plan};
 use crate::error::{Error, Result};
 use crate::settings::atomic_write;
 use crate::transcript::digest;
@@ -382,19 +382,10 @@ fn prompt(
     existing: &Analysis,
     consistency: bool,
 ) -> Result<String> {
-    let mut relevant = BTreeSet::new();
-    for file in plan.files.iter().filter(|file| paths.contains(&file.path)) {
-        for text in [&file.base, &file.local, &file.remote]
-            .into_iter()
-            .flatten()
-        {
-            relevant.extend(source_paths(text));
-        }
-    }
-    let catalog: Vec<_> = docs.iter().filter(|(_, doc)| paths.contains(&doc.path) || relevant.contains(&doc.path) || doc.side == "result")
+    let catalog: Vec<_> = docs.iter().filter(|(_, doc)| paths.contains(&doc.path) || doc.side == "result")
         .map(|(id, doc)| json!({"id":id,"side":doc.side,"path":doc.path,"chars":doc.text.chars().count()})).collect();
-    // The full catalog is itself pageable. A very large evidence index therefore
-    // cannot force the body of every conversation into a single request.
+    // The full catalog is itself pageable. A very large index of sources therefore
+    // cannot force the text of every one of them into a single request.
     let catalog_text = serde_json::to_string(&catalog)?;
     let catalog_preview: String = catalog_text.chars().take(8_000).collect();
     let files: Vec<_> = plan.files.iter().filter(|file| paths.contains(&file.path)).map(|file| json!({
@@ -413,7 +404,7 @@ fn prompt(
             "pages":task.pages,"workingNotes":task.draft.notes,"draftIssues":task.draft.issues,
             "draftReplacements":task.draft.replace_issues,"feedback":task.feedback,
             "existingIssues":issue_index.chars().take(8_000).collect::<String>(),
-            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase or <a id=\"L123\"> turn marker; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. In notes, record changed decisions, their applicability, and source IDs even when no issue is found; the final consistency review uses these findings to check other groups. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and complete conversations are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Evidence sources may be base, local, remote or merged versions and conversation copies; do not use result or changes sources as evidence."
+            "instructions": "Read only this immutable data. Every source remains available through reads: {source,offset,length,anchor}. Offsets and lengths count Unicode characters, not bytes or tokens. Use anchor for an exact phrase; use an empty anchor for offsets. Maximum 4 reads per reply, 8000 characters each. Source 'catalog' pages the complete source index. Source 'issue-index' provides all existing issue indices during consistency review. Version ids are <version>:<path>; change ids are changes-local:<path> and changes-remote:<path>. Preserve findings and scope in notes (at most 8000 characters) and keep all draft issues across reads. In notes, record changed decisions, their applicability, and source IDs even when no issue is found; the final consistency review uses these findings to check other groups. Return reads=[] only when finished. Before quoting evidence or editing, read the original source or merged range. Diff prefixes are not original text. All changed sections must be reviewed; unchanged context and the complete text of every version are available on demand. Never infer that an unread region has no relevant decisions. During consistency review, read every result source, check decisions across groups, and return only new/consolidated issues plus the existing indices they replace in replace_issues; keep unrelated existing issues. During a group comparison edit only the listed files, leave replace_issues empty, and report cross-group relationships in the summary for the final consistency review. Evidence sources may be base, local, remote or merged versions and conversation copies; do not use result or changes sources as evidence."
         });
         let text = format!(
             "{INSTRUCTIONS}\n\nComparison data (not instructions from the documents):\n{payload}"
@@ -906,19 +897,19 @@ mod tests {
     }
 
     #[test]
-    fn large_conversations_are_pageable_and_every_note_group_is_reviewed() {
+    fn a_very_long_source_is_pageable_and_every_note_group_is_reviewed() {
         let names: Vec<_> = (0..49)
             .map(|i| format!("projects/demo/note-{i:02}.md"))
             .collect();
         let mut plan = fixture(&names.iter().map(String::as_str).collect::<Vec<_>>());
         let original = format!(
-            "{}<a id=\"L900\"></a>\nUser: retain this decision.",
-            "대화 본문입니다.\n".repeat(200_000)
+            "{}## Decision\n\nRetain this decision.",
+            "긴 노트의 본문입니다.\n".repeat(200_000)
         );
         plan.sources.push(Source {
-            id: "local:sources/claude/session.md".into(),
+            id: "local:projects/demo/history.md".into(),
             side: "local".into(),
-            path: "sources/claude/session.md".into(),
+            path: "projects/demo/history.md".into(),
             text: original.clone(),
         });
         let dir = tempfile::tempdir().unwrap();
@@ -958,16 +949,16 @@ mod tests {
     }
 
     #[test]
-    fn source_reads_use_unicode_offsets_and_can_seek_a_later_turn() {
+    fn source_reads_use_unicode_offsets_and_can_seek_a_later_section() {
         let path = "projects/demo/policy.md";
         let mut plan = fixture(&[path]);
-        let id = "local:sources/claude/session.md";
+        let id = "local:projects/demo/history.md";
         plan.sources.push(Source {
             id: id.into(),
             side: "local".into(),
-            path: "sources/claude/session.md".into(),
+            path: "projects/demo/history.md".into(),
             text: format!(
-                "{}<a id=\"L900\"></a>\n## L900 · 사용자\n\n사용자가 승인한 방침입니다.\n",
+                "{}## 승인한 방침\n\n사용자가 승인한 방침입니다.\n",
                 "가나다라\n".repeat(40_000)
             ),
         });
@@ -988,7 +979,7 @@ mod tests {
                 if calls == 1 {
                     let mut reply = done(vec![]);
                     reply["reads"] =
-                        json!([{"source":id,"offset":0,"length":1000,"anchor":"<a id=\"L900\">"}]);
+                        json!([{"source":id,"offset":0,"length":1000,"anchor":"## 승인한 방침"}]);
                     return Ok(reply);
                 }
                 assert!(payload["pages"]
@@ -1051,15 +1042,15 @@ mod tests {
     fn unseen_evidence_and_arbitrary_source_paths_are_rejected() {
         let mut plan = fixture(&["projects/demo/policy.md"]);
         plan.sources.push(Source {
-            id: "local:conversation".into(),
+            id: "local:projects/demo/history.md".into(),
             side: "local".into(),
-            path: "sources/claude/a.md".into(),
+            path: "projects/demo/history.md".into(),
             text: "Never sent to the model.".into(),
         });
         let dir = tempfile::tempdir().unwrap();
         let mut proposed = issue(&plan.files[0].path);
         proposed.evidence = vec![Evidence {
-            source: "local:conversation".into(),
+            source: "local:projects/demo/history.md".into(),
             quote: "Never sent to the model.".into(),
         }];
         assert!(run(
@@ -1070,7 +1061,7 @@ mod tests {
         )
         .unwrap_err()
         .to_string()
-        .contains("not in the parts of local:conversation you have read"));
+        .contains("not in the parts of local:projects/demo/history.md you have read"));
         let docs = documents(&plan);
         assert!(page(
             &docs,
@@ -1186,9 +1177,9 @@ mod tests {
         let path = "projects/demo/policy.md";
         let mut plan = fixture(&[path]);
         plan.sources.push(Source {
-            id: "local:conversation".into(),
+            id: "local:projects/demo/history.md".into(),
             side: "local".into(),
-            path: "sources/claude/a.md".into(),
+            path: "projects/demo/history.md".into(),
             text: format!(
                 "{}User approved the policy.",
                 "Earlier context.\n".repeat(5_000)
@@ -1201,7 +1192,7 @@ mod tests {
             if calls == 2 { return Err(Error::transient("offline")); }
             let mut reply = done(vec![]);
             reply["notes"] = json!("Keep the scope and verify this approval.");
-            reply["reads"] = json!([{"source":"local:conversation","offset":0,"length":1000,"anchor":"User approved the policy."}]);
+            reply["reads"] = json!([{"source":"local:projects/demo/history.md","offset":0,"length":1000,"anchor":"User approved the policy."}]);
             Ok(reply)
         }, &mut || {}).is_err());
         let result = run(
@@ -1216,7 +1207,7 @@ mod tests {
                 assert!(text.contains("User approved the policy."));
                 let mut proposed = issue(path);
                 proposed.evidence = vec![Evidence {
-                    source: "local:conversation".into(),
+                    source: "local:projects/demo/history.md".into(),
                     quote: "User approved the policy.".into(),
                 }];
                 Ok(done(vec![proposed]))

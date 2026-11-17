@@ -18,13 +18,12 @@ const CLI_NAME: Record<Backend, string> = { claude: "Claude", codex: "Codex" };
 const CLI_COMMAND: Record<Backend, string> = { claude: "claude --print", codex: "codex exec" };
 const CONNECTION: Record<ConnectionState, string> = { connected: "Connected", partial: "Needs repair", missing: "Not connected" };
 
-type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars" | "notesBudget";
+type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars";
 
 const LIMITS: { key: LimitKey; id: string; label: string; unit: string }[] = [
   { key: "modelTimeoutSecs", id: "model-timeout", label: "Recording timeout", unit: "sec" },
   { key: "qmdTimeoutSecs", id: "qmd-timeout", label: "qmd timeout", unit: "sec" },
-  { key: "maxChars", id: "max-chars", label: "New conversation per recording", unit: "chars" },
-  { key: "notesBudget", id: "notes-budget", label: "Existing notes per recording", unit: "chars" },
+  { key: "maxChars", id: "max-chars", label: "Conversation read per step", unit: "chars" },
 ];
 
 interface CommitInputProps {
@@ -219,6 +218,42 @@ function Recording({ snapshot }: { snapshot: Snapshot }) {
   );
 }
 
+/** The way into the candidates window, and whether candidates are approved without the user. */
+function Candidates({ snapshot }: { snapshot: Snapshot }) {
+  const setAutoApprove = useAppStore((store) => store.setAutoApprove);
+  const { autoApprove, autoApproveDays } = snapshot.settings;
+  const waiting = snapshot.candidates.candidates;
+  const status = waiting > 0 ? `${waiting} ${waiting === 1 ? "candidate waits" : "candidates wait"} for your review.` : "What a session offers to remember waits here until you approve it.";
+  const saveDays = async (text: string) => {
+    const days = Number(text);
+    if (!Number.isInteger(days) || days < 1 || days > 365) return false;
+    await setAutoApprove(true, days);
+    return true;
+  };
+
+  return (
+    <>
+      <div className="set-row">
+        <div className="set-main">
+          <div className="set-title">Review candidates</div>
+          <div className="set-sub">{status}</div>
+        </div>
+        <button type="button" className="pill ghost" onClick={() => void api.openCandidates()}>
+          Open candidates
+        </button>
+      </div>
+      <div className="set-row">
+        <div className="set-main">
+          <div className="set-title">Approve automatically</div>
+          <div className="set-sub">{autoApprove ? "A candidate you have not reviewed is approved as it stands after the days below, counted from when it was listed or from when this was turned on." : "Off: a candidate waits until you approve or discard it."}</div>
+        </div>
+        <Toggle label="Approve automatically" checked={autoApprove} onChange={(enabled) => void setAutoApprove(enabled, autoApproveDays)} />
+      </div>
+      {autoApprove && <CommitField id="auto-approve-days" label="Approve after" unit="days" numeric value={String(autoApproveDays)} onCommit={saveDays} />}
+    </>
+  );
+}
+
 /** The way into the cleanup window, and whether cleanups start by themselves. The work itself is done in that window. */
 function Cleanup({ snapshot }: { snapshot: Snapshot }) {
   const setAutoCleanup = useAppStore((store) => store.setAutoCleanup);
@@ -271,6 +306,11 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
       <AppUpdates snapshot={snapshot} />
       <div className="eyebrow">Recording</div>
       <Recording snapshot={snapshot} />
+
+      <div className="eyebrow">Candidates</div>
+      <section className="group" aria-label="Candidates">
+        <Candidates snapshot={snapshot} />
+      </section>
 
       <div className="eyebrow">Memory &amp; sync</div>
       <section className="group" aria-label="Memory and sync">

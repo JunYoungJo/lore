@@ -15,6 +15,8 @@ pub struct Current {
     pub provider: Provider,
     pub project: String,
     pub started_at: i64,
+    /// Approved candidates are being written into the notes, as opposed to a session being read.
+    pub applying: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]

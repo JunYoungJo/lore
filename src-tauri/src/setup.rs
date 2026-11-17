@@ -208,7 +208,7 @@ pub async fn setup_repository(app: AppHandle, path: String, create: bool) -> Res
             let git = platform::which("git").ok_or("Install Git first.")?;
             run::run(&[git.to_string_lossy().into(), "init".into(), "--".into(), root.to_string_lossy().into()], &root, &[], None, &|| std::time::Duration::from_secs(30)).map_err(err)?;
         }
-        for folder in ["common", "projects", "sources"] { std::fs::create_dir_all(root.join(folder)).map_err(err)?; }
+        for folder in ["common", "projects"] { std::fs::create_dir_all(root.join(folder)).map_err(err)?; }
         let mut settings = state.settings();
         if settings.knowledge_root() != root {
             let mut progress = setup::progress(&state.paths).map_err(err)?;

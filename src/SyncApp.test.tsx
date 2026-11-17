@@ -21,8 +21,9 @@ const views: Record<string, SyncItemView> = {
   d1: {
     item: decision,
     files: [file],
-    sources: [{ id: "local:sources/claude/a.md", side: "local", path: "sources/claude/a.md", text: "사용자: 팝업은 빼고 로그만 남겨." }, { id: "remote:sources/codex/b.md", side: "remote", path: "sources/codex/b.md", text: "사용자: 오류 팝업을 표시해." }],
-    issue: { title: "오류 알림 방침", explanation: "양쪽 문서에서 반대되는 방침을 기록했습니다.", evidence: [{ source: "local:sources/claude/a.md", quote: "팝업은 빼고 로그만 남겨." }, { source: "remote:sources/codex/b.md", quote: "오류 팝업을 표시해." }], options: [
+    // Each PC's version of the note carries the words it was written from in its Sources lines.
+    sources: [{ id: `local:${note}`, side: "local", path: note, text: "로그만\n\n## Sources\n- 2026-11-10, user: \"팝업은 빼고 로그만 남겨.\"" }, { id: `remote:${note}`, side: "remote", path: note, text: "팝업\n\n## Sources\n- 2026-11-10, user: \"오류 팝업을 표시해.\"" }],
+    issue: { title: "오류 알림 방침", explanation: "양쪽 문서에서 반대되는 방침을 기록했습니다.", evidence: [{ source: `local:${note}`, quote: "팝업은 빼고 로그만 남겨." }, { source: `remote:${note}`, quote: "오류 팝업을 표시해." }], options: [
       { label: "로그 전용", description: "팝업 없이 로그만 남깁니다.", edits: [{ path: note, find: "팝업", text: "" }] },
       { label: "팝업 사용", description: "오류 팝업을 표시합니다.", edits: [{ path: note, find: "로그만", text: "" }] },
     ] },
@@ -127,8 +128,8 @@ describe("items to check", () => {
     await userEvent.click(await screen.findByRole("button", { name: /오류 알림 방침/ }));
     const pane = await screen.findByRole("region", { name: "오류 알림 방침" });
     expect(within(pane).getByText("팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
-    await userEvent.click(within(pane).getAllByText("View source conversation", { selector: "summary" })[0]);
-    expect(screen.getByText("사용자: 팝업은 빼고 로그만 남겨.")).toBeInTheDocument();
+    await userEvent.click(within(pane).getAllByText("View source document", { selector: "summary" })[0]);
+    expect(screen.getByText(/2026-11-10, user: "팝업은 빼고 로그만 남겨\."/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     await userEvent.click(screen.getByRole("radio", { name: /로그 전용/ }));
     expect(await within(pane).findByText("최종: 로그만")).toBeInTheDocument();

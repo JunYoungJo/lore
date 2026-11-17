@@ -49,13 +49,15 @@ const setup = {
   collections: ['common', 'project-demo-app', 'project-log-viewer'], repository: true, tracking: 'main ↔ origin/main',
 };
 const notePath = 'projects/demo-app/sign-in.md';
-const local = '# First-release sign-in\n\nUse email sign-in for the first release.\n\n## Sources\n- [Local decision](../../sources/claude/example.md#L1)\n- [Other PC](../../sources/codex/example.md#L1)\n';
+const local = '# First-release sign-in\n\nUse email sign-in for the first release.\n\n## Sources\n- 2026-11-10, user: "Let’s start with email sign-in to keep the first release simple."\n';
+const remote = '# First-release sign-in\n\nUse passkeys for the first release.\n\n## Sources\n- 2026-11-11, user: "Use passkeys for sign-in."\n';
 const final = local.replace('Use email sign-in for the first release.', 'Use email sign-in for the first release. Revisit passkeys after launch.');
 const rows = (before, after) => { const b = before.trimEnd().split('\n'), a = after.trimEnd().split('\n'); return a.map((line, i) => i < b.length ? ({ kind: b[i] === line ? 'same' : 'changed', leftNo: i + 1, rightNo: i + 1, left: [{ kind: b[i] === line ? 'same' : 'removed', text: b[i] }], right: [{ kind: b[i] === line ? 'same' : 'added', text: line }] }) : ({ kind: 'added', leftNo: null, left: null, rightNo: i + 1, right: [{ kind: 'added', text: line }] })); };
 const logPath = 'projects/log-viewer/retention.md';
-const logLocal = '# Log retention\n\nKeep logs for 30 days.\n\n## Sources\n- [Retention request](../../sources/claude/example.md#L4)\n';
-const logMerged = `${logLocal}- [Export follow-up](../../sources/codex/example.md#L9)\n`;
-const signInFile = { path: notePath, base: '# First-release sign-in\n\nSign-in method is undecided.\n', local, remote: local.replace('email sign-in', 'passkeys'), merged: local, rows: rows(local, local) };
+const logLocal = '# Log retention\n\nKeep logs for 30 days.\n\n## Sources\n- 2026-11-08, user: "Keep the logs for 30 days."\n';
+const logAdded = '- 2026-11-09, user: "Also keep the exported logs for 30 days."\n';
+const logMerged = `${logLocal}${logAdded}`;
+const signInFile = { path: notePath, base: '# First-release sign-in\n\nSign-in method is undecided.\n', local, remote, merged: local, rows: rows(local, local) };
 // Both items are already merged and shared; the window only lists them to look at later.
 const items = [
   { id: 'decision-1', kind: 'decision', plan: 'illustrative', path: notePath, title: 'First-release sign-in', detail: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys.', createdAt: now - 600, issue: 0 },
@@ -63,12 +65,12 @@ const items = [
 ];
 const itemViews = {
   'decision-1': { item: items[0], files: [signInFile],
-    sources: [{ id: 'local:example', side: 'local', path: 'sources/claude/example.md', text: 'User: Let’s start with email sign-in to keep the first release simple.' }, { id: 'remote:example', side: 'remote', path: 'sources/codex/example.md', text: 'User: Use passkeys for sign-in.\nAssistant: We should confirm whether this changes the first release.' }],
-    issue: { title: 'First-release sign-in', explanation: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys. Choose which plan the note should state.', evidence: [{ source: 'local:example', quote: 'Let’s start with email sign-in to keep the first release simple.' }, { source: 'remote:example', quote: 'Use passkeys for sign-in.' }], options: [
+    sources: [{ id: `local:${notePath}`, side: 'local', path: notePath, text: local }, { id: `remote:${notePath}`, side: 'remote', path: notePath, text: remote }],
+    issue: { title: 'First-release sign-in', explanation: 'One note keeps email sign-in for a simpler first release; the other asks for passkeys. Choose which plan the note should state.', evidence: [{ source: `local:${notePath}`, quote: 'Let’s start with email sign-in to keep the first release simple.' }, { source: `remote:${notePath}`, quote: 'Use passkeys for sign-in.' }], options: [
       { label: 'Email first, revisit passkeys', description: 'Keep the initial release focused and retain the later request as a follow-up.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use email sign-in for the first release. Revisit passkeys after launch.' }] },
-      { label: 'Use passkeys in the first release', description: 'Update the current plan while retaining both source conversations.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use passkeys for the first release.' }] },
+      { label: 'Use passkeys in the first release', description: 'Update the current plan and keep the earlier one as history.', edits: [{ path: notePath, find: 'Use email sign-in for the first release.', text: 'Use passkeys for the first release.' }] },
     ] } },
-  'merged-1': { item: items[1], files: [{ path: logPath, base: '# Log retention\n\nKeep logs for 30 days.\n', local: logLocal, remote: logMerged.replace('- [Retention request](../../sources/claude/example.md#L4)\n', ''), merged: logMerged, rows: rows(logLocal, logMerged) }], issue: null, sources: [] },
+  'merged-1': { item: items[1], files: [{ path: logPath, base: '# Log retention\n\nKeep logs for 30 days.\n', local: logLocal, remote: logMerged.replace('- 2026-11-08, user: "Keep the logs for 30 days."\n', ''), merged: logMerged, rows: rows(logLocal, logMerged) }], issue: null, sources: [] },
 };
 const preview = { [notePath]: rows(local, final) };
 const sync = { root, enabled: true, busy: false, summary: { phase: 'idle', message: null, items: items.length, comparing: false, lastSyncedAt: now - 120 }, tracking: 'main ↔ origin/main', model: 'Codex', review: 0, items, comparison: null, comparisonError: null, indexPending: false };

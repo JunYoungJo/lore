@@ -30,8 +30,6 @@ function stateLabel(job: Job, group: QueueGroup, current: Current | null, now: n
     case "failed":
       return { text: "Failed", tone: "danger" };
     case "ready":
-      if (job.status === "applying") return { text: "Save interrupted", tone: "warn" };
-      if (job.status === "index_pending") return { text: "Index pending", tone: "warn" };
       return { text: job.cursorLine > 0 ? "Resume recording" : "Pending", tone: "" };
   }
 }

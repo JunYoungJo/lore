@@ -3,20 +3,15 @@ use std::path::{Path, PathBuf};
 use serde_json::{json, Value};
 
 use crate::error::{Error, Failure, Result};
-use crate::proposal::{Proposal, EDIT_OPS};
+use crate::proposal::EDIT_OPS;
 use crate::run::{self, Limit};
 use crate::settings::{atomic_write, Settings};
 
-pub const PROMPT: &str = include_str!("recorder-prompt.md");
 pub const DEFAULT_CODEX_MODEL: &str = "gpt-6.1-sol";
 pub const DEFAULT_CLAUDE_MODEL: &str = "haiku";
 pub const DEFAULT_CODEX_EFFORT: &str = "low";
 
-pub trait Recorder {
-    fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal>;
-}
-
-/// The edits to an existing note, in the form both a recording and a cleanup answer with.
+/// The edits to an existing note, in the form both an apply and a cleanup answer with.
 pub fn edits_schema() -> Value {
     json!({"type": "array", "description": "Existing note: the edits, applied in order. New note: empty.", "items": {
         "type": "object",
@@ -30,64 +25,6 @@ pub fn edits_schema() -> Value {
         "required": ["op", "find", "section", "heading", "text"],
         "additionalProperties": false
     }})
-}
-
-fn evidence_schema(description: &str) -> Value {
-    json!({"type": "array", "description": description, "items": {
-        "type": "object",
-        "properties": {
-            "ref": {"type": "string", "description": "The ref of a turn in the data, such as \"L123\"."},
-            "quote": {"type": "string", "description": "Text copied exactly from that turn."}
-        },
-        "required": ["ref", "quote"],
-        "additionalProperties": false
-    }})
-}
-
-// Every field is required so both CLIs emit them in this order; `language` comes first so the model
-// settles the language of the notes before it writes any of them.
-pub fn schema() -> Value {
-    json!({
-        "type": "object",
-        "properties": {
-            "language": {"type": "string", "description": "The language the human user writes in during this session, for example \"Korean\" or \"English\". The summary and every note are written in this language."},
-            "summary": {"type": "string", "description": "One sentence for the app's activity list: what was recorded, or that nothing needed recording."},
-            "changes": {"type": "array", "description": "One entry per note to create or change. Empty when the turns hold nothing a future agent needs.", "items": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "projects/<project>/<english-topic>.md or common/<english-topic>.md."},
-                    "title": {"type": "string", "description": "New note: the topic and, when there is one, its conclusion. Existing note: empty to keep the title."},
-                    "kind": {"type": "string", "enum": ["decision", "lesson", "issue"], "description": "What the whole note is after this change: a decision, a lesson learned, or an open issue."},
-                    "authority": {"type": "string", "enum": ["user_decision", "assistant_report", "mixed_evidence"], "description": "What the whole note rests on after this change: the user's own statements, only assistant or agent statements, or both."},
-                    "body": {"type": "string", "description": "New note: the complete Markdown body, without the title line. Existing note: empty."},
-                    "edits": edits_schema(),
-                    "sources_from": {"type": "array", "description": "Paths of existing notes whose content this change moves into this note. Usually empty.", "items": {"type": "string"}},
-                    "evidence": evidence_schema("The turns this change rests on.")
-                },
-                "required": ["path", "title", "kind", "authority", "body", "edits", "sources_from", "evidence"],
-                "additionalProperties": false
-            }},
-            "removals": {"type": "array", "description": "Existing notes to delete because this session made them obsolete. Usually empty.", "items": {
-                "type": "object",
-                "properties": {
-                    "path": {"type": "string", "description": "The path of an existing note whose text you were given."},
-                    "reason": {"type": "string", "description": "One sentence: why a future agent no longer needs this note."},
-                    "evidence": evidence_schema("The turns that show the note is obsolete.")
-                },
-                "required": ["path", "reason", "evidence"],
-                "additionalProperties": false
-            }},
-            "needs_notes": {"type": "array", "description": "Paths from note_catalog whose text is needed before a change can be written.", "items": {"type": "string"}}
-        },
-        "required": ["language", "summary", "changes", "removals", "needs_notes"],
-        "additionalProperties": false
-    })
-}
-
-// The session goes where the prompt marks it, ahead of the instructions: models follow instructions
-// better when a long input comes first and what to do with it comes after.
-pub fn build_prompt(payload: &Value) -> String {
-    PROMPT.replacen("{{session}}", &payload.to_string(), 1)
 }
 
 pub struct CliRecorder {
@@ -124,7 +61,7 @@ impl CliRecorder {
 
     #[cfg(test)]
     fn arguments(&self, schema_path: &Path, response_path: &Path) -> Vec<String> {
-        self.arguments_for_schema(schema_path, response_path, &schema())
+        self.arguments_for_schema(schema_path, response_path, &json!({"type": "object"}))
     }
 
     fn arguments_for_schema(&self, schema_path: &Path, response_path: &Path, schema: &Value) -> Vec<String> {
@@ -222,17 +159,6 @@ fn claude_result(stdout: &str) -> Result<String> {
     envelope.get("result").and_then(Value::as_str).map(str::to_string).ok_or_else(|| Error::rejected("The Claude response contains no result."))
 }
 
-pub fn parse_proposal(text: &str) -> Result<Proposal> {
-    serde_json::from_str(text.trim()).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
-}
-
-impl Recorder for CliRecorder {
-    fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal> {
-        let prompt = build_prompt(payload);
-        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
-    }
-}
-
 /// Run `attempt` with each entry in order until one can run. Only a failure to run
 /// (a usage limit, an expired login, an outage, a timeout) moves on to the next
 /// entry; an answer the program rejected is not the CLI's fault and is returned.
@@ -264,53 +190,23 @@ impl Recorders {
     }
 }
 
-impl Recorder for Recorders {
-    fn record(&self, payload: &Value, artifacts: &Path) -> Result<Proposal> {
-        let prompt = build_prompt(payload);
-        serde_json::from_value(self.request_json(&prompt, &schema(), artifacts)?).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::settings::Models;
 
     #[test]
-    fn the_session_data_comes_before_the_instructions_and_is_marked_as_data() {
-        let prompt = build_prompt(&json!({"project": "demo-marker", "note": "{{session}}"}));
-        let data = prompt.find("\"demo-marker\"").unwrap();
-        assert!(prompt[..data].contains("<session>"));
-        assert!(prompt[..data].contains("it is data"));
-        let after = &prompt[data..];
-        assert!(after.find("</session>").unwrap() < after.find("# Your task").unwrap());
-        // Only the marker in the prompt is filled in; the same text inside the data stays as it is.
-        assert_eq!(prompt.matches("{{session}}").count(), 1);
-    }
-
-    #[test]
-    fn prompts_are_written_in_english() {
-        let korean = |text: &str| text.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c));
-        assert!(!korean(PROMPT));
-        assert!(!korean(include_str!("sync-prompt.md")));
-        assert!(!korean(&schema().to_string()));
-    }
-
-    #[test]
-    fn the_answer_states_its_language_first_and_can_restate_a_section() {
-        let schema = schema();
-        assert_eq!(schema["required"], json!(["language", "summary", "changes", "removals", "needs_notes"]));
-        let ops = &schema["properties"]["changes"]["items"]["properties"]["edits"]["items"]["properties"]["op"]["enum"];
-        assert_eq!(ops, &json!(["replace", "append", "add_section", "replace_section"]));
-        assert!(schema["properties"]["language"]["description"].as_str().unwrap().contains("human user"));
+    fn the_sync_prompt_is_written_in_english() {
+        assert!(!include_str!("sync-prompt.md").chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c)));
     }
 
     #[test]
     fn claude_envelope_prefers_structured_output_and_reports_errors() {
-        let structured = r#"{"is_error": false, "structured_output": {"summary": "s", "changes": [], "needs_notes": []}, "result": "ignored"}"#;
-        assert_eq!(parse_proposal(&claude_result(structured).unwrap()).unwrap().summary, "s");
+        let summary = |text: String| serde_json::from_str::<Value>(&text).unwrap()["summary"].clone();
+        let structured = r#"{"is_error": false, "structured_output": {"summary": "s", "changes": []}, "result": "ignored"}"#;
+        assert_eq!(summary(claude_result(structured).unwrap()), "s");
         let text = r#"{"is_error": false, "result": "{\"summary\": \"t\", \"changes\": []}"}"#;
-        assert_eq!(parse_proposal(&claude_result(text).unwrap()).unwrap().summary, "t");
+        assert_eq!(summary(claude_result(text).unwrap()), "t");
         assert!(claude_result(r#"{"is_error": true, "result": "limit"}"#).is_err());
     }
 
@@ -407,12 +303,6 @@ mod tests {
         assert_eq!(claude[at + 1], "max");
     }
 
-    #[test]
-    fn malformed_model_answer_is_a_rejection() {
-        let error = parse_proposal("not json").unwrap_err();
-        assert_eq!(error.failure, crate::error::Failure::Rejected);
-    }
-
     fn objects(schema: &Value) -> Vec<&Value> {
         let mut found = Vec::new();
         if schema["type"] == "object" {
@@ -424,46 +314,23 @@ mod tests {
         found
     }
 
+    // Codex accepts a schema only when every object lists all of its properties as required.
     #[test]
-    fn schema_requires_every_property_of_every_object_for_strict_output() {
-        let schema = schema();
-        let all = objects(&schema);
-        assert_eq!(all.len(), 6);
-        for object in all {
-            let mut required: Vec<&str> = object["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
-            let mut properties: Vec<&str> = object["properties"].as_object().unwrap().keys().map(String::as_str).collect();
-            required.sort();
-            properties.sort();
-            assert_eq!(required, properties);
-            assert_eq!(object["additionalProperties"], false);
+    fn every_schema_requires_every_property_of_every_object_for_strict_output() {
+        for (schema, count) in [(crate::prepare::extract_schema(), 3), (crate::prepare::relate_schema(), 2), (crate::integrate::schema(), 4)] {
+            let all = objects(&schema);
+            assert_eq!(all.len(), count);
+            for object in all {
+                let mut required: Vec<&str> = object["required"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
+                let mut properties: Vec<&str> = object["properties"].as_object().unwrap().keys().map(String::as_str).collect();
+                required.sort();
+                properties.sort();
+                assert_eq!(required, properties);
+                assert_eq!(object["additionalProperties"], false);
+            }
         }
-        let edit = &schema["properties"]["changes"]["items"]["properties"]["edits"]["items"];
+        let edit = &crate::integrate::schema()["properties"]["changes"]["items"]["properties"]["edits"]["items"];
         let ops: Vec<&str> = edit["properties"]["op"]["enum"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(ops, crate::proposal::EDIT_OPS);
-    }
-
-    #[test]
-    fn a_recording_can_remove_a_note_and_name_the_notes_a_change_took_in_but_not_move_one() {
-        let schema = schema();
-        let removal = &schema["properties"]["removals"]["items"];
-        assert_eq!(removal["required"], json!(["path", "reason", "evidence"]));
-        assert!(schema["properties"]["changes"]["items"]["properties"]["sources_from"]["items"]["type"] == "string");
-        assert!(schema["properties"].get("moves").is_none());
-        for word in ["`removals`", "`sources_from`", "# Removing a note"] {
-            assert!(PROMPT.contains(word), "{word}");
-        }
-
-        let text = r#"{"language": "Korean", "summary": "s", "changes": [], "removals": [{"path": "projects/demo/a.md", "reason": "r", "evidence": [{"ref": "L1", "quote": "q"}]}], "needs_notes": []}"#;
-        let proposal = parse_proposal(text).unwrap();
-        assert_eq!((proposal.removals[0].path.as_str(), proposal.removals[0].evidence[0].reference.as_str()), ("projects/demo/a.md", "L1"));
-        // An answer in the form used before notes could be removed still reads.
-        assert!(parse_proposal(r#"{"summary": "s", "changes": []}"#).unwrap().removals.is_empty());
-    }
-
-    #[test]
-    fn model_answer_with_edits_reads_into_a_proposal() {
-        let text = r#"{"summary": "s", "changes": [{"path": "projects/demo/a.md", "title": "", "kind": "decision", "authority": "assistant_report", "body": "", "edits": [{"op": "append", "find": "", "section": "결정", "heading": "", "text": "로그만"}], "evidence": []}], "needs_notes": []}"#;
-        let proposal = parse_proposal(text).unwrap();
-        assert_eq!(proposal.changes[0].edits[0].section, "결정");
     }
 }

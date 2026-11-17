@@ -11,6 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::error::{Error, Failure, Result};
+use crate::proposal::source_lines;
 use crate::queue::{backoff_seconds, MAX_TRANSIENT_ATTEMPTS};
 use crate::review::{self, is_note};
 use crate::run;
@@ -290,16 +291,6 @@ fn valid_oid(value: &str) -> bool {
     matches!(value.len(), 40 | 64) && value.bytes().all(|c| c.is_ascii_hexdigit())
 }
 
-/// A review an older version left waiting must not hold anything now. Its
-/// inputs are kept; both tips are still in Git and are merged like any others.
-fn set_aside_legacy(folder: &Path) -> Result<()> {
-    let pending = folder.join("pending.json");
-    if pending.exists() {
-        std::fs::rename(&pending, folder.join(format!("superseded-{}.json", chrono::Utc::now().timestamp_micros())))?;
-    }
-    Ok(())
-}
-
 /// Commit, fetch, merge and push. Never asks: a clean merge is applied as is,
 /// and where both PCs changed the same lines both are kept and the note is
 /// listed. `index` refreshes search after notes arrive from another PC.
@@ -328,7 +319,6 @@ fn exchange(root: &Path, folder: &Path, mut index: impl FnMut() -> Result<()>) -
     if !review::is_repository(root) {
         return Err(Error::permanent("The memory folder is not a Git repository."));
     }
-    set_aside_legacy(folder)?;
     if review::in_progress(root)? {
         return Err(Error::permanent("Finish the Git merge or rebase in the memory folder first."));
     }
@@ -498,7 +488,6 @@ fn merge(root: &Path, folder: &Path, local: &str, remote: &str) -> Result<(Strin
             }
         }
     }
-    collect_evidence(root, &mut plan, &base_files, &local_files, &remote_files);
     save_plan(folder, &plan)?;
     let now = chrono::Utc::now().timestamp();
     let items: Vec<Item> = plan
@@ -539,41 +528,6 @@ fn union(root: &Path, folder: &Path, ours: &str, base: &str, theirs: &str) -> Re
     })();
     let _ = std::fs::remove_dir_all(&work);
     merged
-}
-
-fn source_paths(text: &str) -> BTreeSet<String> {
-    let mut result = BTreeSet::new();
-    for part in text.split("sources/").skip(1) {
-        let Some(end) = part.find(".md") else {
-            continue;
-        };
-        let suffix = &part[..end];
-        let items: Vec<_> = suffix.split('/').collect();
-        if let [provider, session] = items.as_slice() {
-            if matches!(*provider, "claude" | "codex") && !session.is_empty() && session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                result.insert(format!("sources/{suffix}.md"));
-            }
-        }
-    }
-    result
-}
-fn collect_evidence(root: &Path, plan: &mut Plan, base_files: &BTreeSet<String>, local_files: &BTreeSet<String>, remote_files: &BTreeSet<String>) {
-    let mut requests = BTreeSet::new();
-    for source in &plan.sources {
-        for path in source_paths(&source.text) {
-            requests.insert((source.side.clone(), path));
-        }
-    }
-    for (side, path) in requests {
-        let (revision, files) = match side.as_str() {
-            "base" => (&plan.base, base_files),
-            "local" => (&plan.local, local_files),
-            _ => (&plan.remote, remote_files),
-        };
-        if let Some(text) = blob(root, revision, &path, files) {
-            plan.sources.push(Source { id: format!("{side}:{path}"), side, path, text });
-        }
-    }
 }
 
 fn plan_path(folder: &Path, id: &str) -> PathBuf {
@@ -692,8 +646,8 @@ fn short(text: &str) -> String {
     if cut.len() < text.len() { format!("{cut}…") } else { cut }
 }
 
-/// The text a quotation may come from: a provided version or conversation, or
-/// the merged note itself.
+/// The text a quotation may come from: a provided version of a note, or the merged
+/// note itself.
 fn evidence_text<'a>(plan: &'a Plan, source: &str) -> Option<&'a str> {
     if let Some(path) = source.strip_prefix("merged:") {
         return plan.files.iter().find(|file| file.path == path).and_then(|file| file.merged.as_deref());
@@ -747,18 +701,6 @@ fn apply_edit(files: &mut BTreeMap<String, String>, edit: &Edit) -> Result<()> {
     Ok(())
 }
 
-fn evidence_links(text: &str) -> BTreeSet<String> {
-    let mut links = BTreeSet::new();
-    for part in text.split("](").skip(1) {
-        if let Some(end) = part.find(')') {
-            let link = &part[..end];
-            if link.contains("sources/") {
-                links.insert(link.to_string());
-            }
-        }
-    }
-    links
-}
 
 fn find_item(folder: &Path, id: &str) -> Result<Item> {
     state(folder).items.into_iter().find(|item| item.id == id).ok_or_else(|| Error::permanent("This item is no longer listed."))
@@ -818,10 +760,10 @@ pub fn preview_item(root: &Path, folder: &Path, id: &str, option: usize, custom:
         }
         apply_edit(&mut after, &edit).map_err(|_| Error::permanent(format!("{} changed after the comparison, so this option no longer fits. Edit the note directly, then dismiss the item.", edit.path)))?;
     }
-    // Source links are the record of where a statement came from: never drop or invent one.
+    // The Sources list is the record of what was said: an option never adds, changes or drops a line of it.
     for (path, text) in &after {
-        if evidence_links(text) != evidence_links(&before[path]) {
-            return Err(Error::rejected(format!("The option would add or remove a source link: {path}")));
+        if source_lines(text) != source_lines(&before[path]) {
+            return Err(Error::rejected(format!("The option would change the Sources list: {path}")));
         }
     }
     Ok(before.into_iter().map(|(path, current)| { let next = after[&path].clone(); (path, (current, next)) }).collect())

@@ -7,7 +7,7 @@
 **Keep the decisions. Remember the reasons.**
 
 A desktop app for keeping decisions, reasons, and lessons from Claude Code and Codex.<br />
-Follow the sources, review the changes, and carry the same Markdown memory between tools and PCs.
+Approve what is worth keeping, follow the sources, and carry the same Markdown memory between tools and PCs.
 
 [Downloads](https://github.com/JunYoungJo/lore/releases) · [Get started](#getting-started) · [Sync across PCs](#sync-across-pcs) · [Documentation](#documentation) · [한국어](README.ko.md)
 
@@ -30,21 +30,23 @@ Follow the sources, review the changes, and carry the same Markdown memory betwe
 
 Lore is built for developers who work across coding tools, long-running projects, or multiple PCs. It preserves that context as topic-based notes, with the supporting conversations and Git history alongside them.
 
-- **Decisions with their context** — Recording instructions distinguish user decisions from agent proposals and reports, retain their scope, and preserve earlier reasons when a decision changes. These distinctions depend on the recording model; the source remains available to check.
-- **Memory you can inspect** — Follow a note back to the conversation, compare changes side by side, and choose which notes to commit. Recording is automatic; reviewing local changes controls the Git commit, not whether a note is initially written.
+- **You decide what is remembered** — A session and a model propose candidates: decisions you made, corrections to how the agent works, and lessons the work established. Lore lists them, each with the words it rests on. Only what you approve reaches the notes.
+- **Memory you can inspect** — A note carries the quotations it was built from, with who said them and when. A candidate that changes or ends an existing note shows that note's own passages before you approve it.
 - **Continuity across tools and PCs** — Claude Code and Codex can search the same notes through qmd MCP. Git carries the notes and their evidence between PCs; diverged histories have a separate comparison, decision, and final-preview workflow.
 
 ## Features
 
-- **Capture as you work** — Claude Code and Codex hooks enqueue conversations at session end and before compaction. The tray app processes them in the background, resuming from the last recorded position.
-- **Notes organized by topic** — A configured coding model updates project and shared knowledge instead of creating a report for every session.
-- **Checkable sources** — Relative links point to saved conversation copies and stable turn anchors, so evidence can travel with the notes.
-- **Local Markdown, searchable context** — Notes live in a folder you choose. [qmd](https://github.com/tobi/qmd) indexes them for search and retrieval through its MCP server.
-- **Review before committing** — Compare local changes side by side and choose which notes to commit. Conversation recording itself writes notes automatically; this review controls the Git commit.
+- **Capture as you work** — A prompt hook tells Claude Code and Codex sessions how to mark what is worth remembering while they work. Hooks at session end and before compaction queue the conversation, and the tray app reads it in the background, resuming from where it stopped.
+- **Candidates, not diffs** — The Candidates window lists one statement per row, grouped by session. Tick, reword, approve or discard. A candidate a note already covers is left out and only counted.
+- **Notes organized by topic** — The recording model writes what you approved into project and shared notes: new notes, targeted edits, and the removal of a note you were shown. The program rejects any change that does not rest on an approved candidate.
+- **Wait or approve automatically** — A candidate you have not looked at waits. Optionally it is approved as it stands after a number of days you set.
+- **Checkable sources** — Each note lists the quotations it was built from. They are in the note itself, so the evidence travels with it.
+- **Local Markdown, searchable context** — Notes live in a folder you choose. [qmd](https://github.com/tobi/qmd) indexes them for search and retrieval through its MCP server. Candidates stay in the app's database on the PC that produced them.
+- **Review of what you did not decide** — Notes changed by an automatic approval or by a cleanup are listed side by side with what they said before.
 - **Git sharing with conflict review** — Move through changed notes, evidence-backed choices, and a side-by-side final result. Compare related changes even when Git reports no line conflict, then confirm before applying and sharing.
-- **Recoverable background work** — View pending and failed jobs, retry them, or skip a failed recording segment. A failed sync is retried in the background without holding recording.
-- **A tray view of the work** — See the current recording, waiting sessions, and recent notes. **Needs attention** collects connection problems, notes to review, failed recordings, and unshared memory; the footer shows sync status and a sync action. Open updated notes from an activity row.
-- **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure recording limits.
+- **Recoverable background work** — View pending and failed sessions, retry them, or skip a failed segment. An approved batch that could not be written can be tried again or put back in the list. A failed sync is retried in the background without holding other work.
+- **A tray view of the work** — See what is being read or written, waiting sessions, and recent notes. **Needs attention** collects connection problems, candidates to review, notes to review, failures, and unshared memory; the footer shows sync status and a sync action. Open updated notes from an activity row.
+- **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure processing limits.
 - **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
 - **Guided setup** — Check dependencies, run prepared commands in an embedded terminal, and connect AI clients. Setup readiness and successful recording/recall are shown separately; ongoing management has its own window.
 - **Signed app updates** — Check at startup, from the tray menu, or under **Settings → App updates**. Inspect the release notes and choose **Install & restart**. Recording, sync, review, and setup work must finish before installation.
@@ -75,15 +77,18 @@ The first-run introduction. Ongoing repair and removal have a separate integrati
 ## How it works
 
 ```text
+While a session runs, it marks decisions, corrections and lessons
 Claude Code / Codex session ends or reaches compaction
   → Hook adds the transcript to a local queue
-  → Model proposes changes to project and shared notes
-  → Lore validates paths, quotations, source links, and edit locations
-  → Notes and conversation copies are saved; qmd refreshes its index
+  → Model lists candidates with quotations and relates them to existing notes
+  → Lore checks every quotation against the conversation and the notes
+  → You approve, reword or discard candidates in the Candidates window
+  → Model writes the approved candidates into notes; Lore checks each change
+    rests on one, then saves, commits and refreshes the qmd index
   → A later session can find relevant context through qmd MCP
 ```
 
-The model decides what is worth recording. Program checks catch malformed output and invalid edits; they do not prove that a memory is correct. Future agents also need qmd MCP and instructions to consult project memory—recording alone does not make every session use it.
+A model proposes and you decide. Program checks catch quotations that are not in the conversation, changes that rest on nothing you approved, and invalid edits; they do not prove that a memory is correct. Future agents also need qmd MCP and instructions to consult project memory—notes alone do not make every session use them.
 
 ## Getting started
 
@@ -126,7 +131,7 @@ The build includes `lore-cli` as a sidecar. The app executable is `lore` (`lore.
 4. In preparation, inspect **What will change?** and select **Connect & prepare memory**. Lore prepares search and connects the selected clients through qmd MCP, memory guidance, a search skill, and session hooks. Existing user instructions and unrelated settings are preserved.
 5. Restart your AI client. In Codex, review and trust Lore's hooks through `/hooks`; check the `qmd` server in `/mcp`. Lore does not grant trust on your behalf.
 6. New indexes use Qwen3-Embedding-0.6B for multilingual search. Existing model choices are preserved; **Manage Lore → Search index** can switch to embeddinggemma-300M and back, rebuilding the index on that PC. The guide shows when preparation is complete.
-7. Start using Lore. For your first memory, make a decision in a normal Git-project session and recall it through qmd in a new session. This exercise can happen after setup; configuration readiness is not presented as proof of successful recording and recall.
+7. Start using Lore. For your first memory, make a decision in a normal Git-project session, end the session, approve the candidate Lore lists, and recall it through qmd in a new session. This exercise can happen after setup; configuration readiness is not presented as proof of successful recording and recall.
 
 Use **Set up later** to save your place. Open **Settings → Connections → Manage connections** for the separate **Manage Lore** window. It shows each client's MCP, guidance, search skill, and hooks with their current state; memory-folder, index, and tool controls are separate pages. See [Setup and integrations](docs/setup.md) for ownership, platform details, and limitations.
 
@@ -136,7 +141,7 @@ For manual setup, the bundled `lore-cli doctor` reports this PC's command and in
 
 Hooks can enqueue work while the app is closed. The app processes that queue when it starts again. Sessions whose hooks never ran are not automatically scanned; `lore-cli scan` is available for manual recovery.
 
-To bring existing memory documents from another PC, follow the [portability guide](docs/multiplatform.md#importing-existing-windows-memory) before recording on another PC.
+To use the same memory on another PC, follow [Using the memory on another PC](docs/multiplatform.md#using-the-memory-on-another-pc).
 
 ## Sync across PCs
 
@@ -144,12 +149,12 @@ Clone the same **memory repository** on each PC and set each app's memory folder
 
 Turn on **Settings → Memory & sync → Auto-sync**. From then on sync needs no action from you:
 
-1. When a recording finishes, Lore commits the notes it wrote.
+1. When approved candidates are written, Lore commits the notes it changed.
 2. It fetches the other PCs' commits and merges them. Notes changed on different PCs, or in different places of the same note, are simply combined.
 3. Where both PCs changed the same lines, Lore keeps the lines from both and lists the note under **to check**.
 4. It refreshes this PC's search index and pushes, without force. If another PC pushed first, it merges again and retries.
 
-Recording never waits for sync. A failed sync is retried on the next cycle and reported only after it fails three times in a row. **Auto-sync is off by default**; with it off, notes are still committed after each recording and shared when you choose **Sync now**.
+Only notes are shared: candidates stay on the PC whose session produced them, and are approved there. Reading sessions and writing notes never wait for sync. A failed sync is retried on the next cycle and reported only after it fails three times in a row. **Auto-sync is off by default**; with it off, notes are still committed each time they are written and shared when you choose **Sync now**.
 
 After a sync, Lore asks the recording model to compare only the notes that both PCs changed. Disagreements it finds are added to the same list, with the quoted sources and a few wordings to choose from. Notes are already merged and shared at that point, so you can look at the list whenever you want, or not at all.
 
@@ -162,20 +167,19 @@ After a sync, Lore asks the recording model to compare only the notes that both 
 
 </details>
 
-Reviewing notes is separate and optional: **Review** in **Needs attention** shows what was recorded on this PC since your last review. See the [sync guide](docs/sync-review.md) for failures, retries, and the CLI. The model can miss contradictions; check its evidence and proposed wording.
+Reviewing notes is separate and optional: **Review** in **Needs attention** shows the notes an automatic approval or a cleanup changed on this PC since your last review. See the [sync guide](docs/sync-review.md) for failures, retries, and the CLI. The model can miss contradictions; check its evidence and proposed wording.
 
 ## Data and privacy
 
 ```text
 lore-memory/
 ├── common/                  # Shared notes
-├── projects/<project-id>/   # Project notes
-└── sources/<provider>/      # Conversation copies referenced by notes
+└── projects/<project-id>/   # Project notes
 ```
 
-The queue, settings, model execution records, and qmd indexes stay in per-PC app data. They are separate from the memory folder. New evidence links are relative to the note and use source-turn anchors.
+The queue, the candidates, settings, model execution records, and qmd indexes stay in per-PC app data. They are separate from the memory folder and are not synced. A note lists the quotations it was built from in its `Sources` section; no copy of a conversation is written into the memory folder.
 
-Git sharing sends **all committed files in the memory repository**. Conversation copies can contain more than the quoted sentences. Choose the repository's visibility and contents accordingly. Lore's model processing is not fully offline: the configured coding CLI receives the conversations and context used for each request.
+Git sharing sends **all committed files in the memory repository**. A note holds the sentences it quotes, with who said them and when. Choose the repository's visibility and contents accordingly. Lore's model processing is not fully offline: the configured coding CLI receives the conversations and context used for each request.
 
 ## Platform status
 
@@ -218,7 +222,7 @@ The evaluations substitute an indexing fixture for qmd. They test model output a
 
 - [한국어 소개와 시작하기](README.ko.md)
 - [Detailed usage and CLI reference](docs/usage.md)
-- [Multiple PCs, platform paths, and migration](docs/multiplatform.md)
+- [Multiple PCs and platform paths](docs/multiplatform.md)
 - [Synchronization and notes to check](docs/sync-review.md)
 - [Desktop releases and app updates](docs/releasing.md)
 

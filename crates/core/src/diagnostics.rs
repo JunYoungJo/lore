@@ -17,7 +17,7 @@ pub fn command_available(command: &[String]) -> bool {
 pub fn inspect(paths: &Paths, cli: &Path) -> Value {
     let mut problems = Vec::new();
     let mut settings = match std::fs::read_to_string(paths.settings()) {
-        Ok(text) => settings::reloaded(&text, &Settings::default()).unwrap_or_else(|error| {
+        Ok(text) => settings::reloaded(&text, &Settings::default(), crate::worker::now()).unwrap_or_else(|error| {
             problems.push(error.to_string());
             Settings::default()
         }),

@@ -119,7 +119,7 @@ function ClientPage({ data, client, status, checks, busy, run, prepare, notify }
     ? client.hooks.error
     : client.hooks.state === "other_path" && client.hooks.found
       ? <>They run <code>{program(client.hooks.found)}</code>, another copy of Lore. This copy runs from <code>{folderOf(data.diagnostics.hookCli)}</code>. Repair points the hooks here.</>
-      : <><code>{client.hooks.config}</code> · SessionEnd, PreCompact</>;
+      : <><code>{client.hooks.config}</code> · SessionEnd, PreCompact, UserPromptSubmit</>;
   const hookState = client.hooks.error ? "Can’t read" : client.hooks.state === "connected" ? "Ready" : client.hooks.state === "other_path" ? "Another copy" : "Will add";
   const auth = checks?.auth[client.provider];
   const connect = () => run("connect", async () => {
@@ -193,9 +193,9 @@ function ClientPage({ data, client, status, checks, busy, run, prepare, notify }
             <div className="int-review-item">
               <h3>Session hooks<span className="int-badge">{hookState}</span></h3>
               <code className="int-path">{client.hooks.config}</code>
-              <p>SessionEnd and PreCompact run:</p>
+              <p>SessionEnd, PreCompact and UserPromptSubmit run:</p>
               <pre>{client.hooks.command}</pre>
-              <p>Other hooks are kept. The hook settings file is backed up before changes.</p>
+              <p>The first two queue the session. The third tells the session, with each prompt, how to mark a decision, a correction or a lesson; it reads and stores nothing. Other hooks are kept. The hook settings file is backed up before changes.</p>
             </div>
           </div>
         )}

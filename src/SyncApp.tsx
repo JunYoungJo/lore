@@ -75,7 +75,7 @@ function DecisionView({ view, choice, preview, previewError, disabled, onChange 
               <blockquote>{evidence.quote}</blockquote>
               {source && (
                 <details>
-                  <summary>{source.path.startsWith("sources/") ? "View source conversation" : "View source document"}</summary>
+                  <summary>View source document</summary>
                   <pre className="sync-document">{source.text}</pre>
                 </details>
               )}

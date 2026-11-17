@@ -6,7 +6,7 @@ Lore opens an introduction on a fresh installation. Existing installations can o
 
 1. **Meet Lore:** an interactive, clearly labeled example shows a project decision becoming a source-linked note and being recalled later. This illustration does not record a real conversation or claim that search has been tested.
 2. **Your tools:** select Codex and/or Claude Code. Installed CLIs are suggested; no client settings change from selecting a tool.
-3. **Your memory:** use the native folder picker, create a new Git repository in an empty folder, or prepare a Git clone. The saved folder contains `common/`, `projects/`, and `sources/`. This does not create a GitHub repository or change the app-wide default path.
+3. **Your memory:** use the native folder picker, create a new Git repository in an empty folder, or prepare a Git clone. The saved folder contains `common/` and `projects/`. This does not create a GitHub repository or change the app-wide default path.
 4. **Get connected:** check runtime compatibility and CLI sign-in, then show only the next missing prerequisite or sign-in. The terminal appears when an installation or sign-in is requested. After prerequisites are ready, the user can inspect **What will change?** and select **Connect & prepare memory**. Lore builds the index, applies the selected client connections, and saves setup completion after checking their configuration.
 5. **Start remembering:** explain client restart, Codex hook trust, and the first recording/recall exercise. **Start using Lore** is available without waiting for an external coding session. The screen explicitly says the first recording and AI recall have not been verified.
 
@@ -67,6 +67,6 @@ If an unowned qmd entry or skill conflicts, or an owned resource was edited outs
 - Node must be 22 or newer. Preparation runs a version check and reads the selected CLI login statuses. These probes never invoke a recording model; the returned UI state contains readiness, not credentials.
 - The first embedding-model download is about 640 MB and indexing can take several minutes. Errors remain visible and the step is retryable. Index commands use the saved qmd timeout; adjust it in Settings if needed.
 - Git authentication remains with Git and its credential helpers. Cloning does not configure an upstream for an unrelated folder, enable automatic sync, or set commit author identity.
-- The suggested first-memory exercise uses a real recording account and its allowance. Perform it in a normal project session, not the setup terminal. It is not required to finish setup; no synthetic memory is written automatically.
+- The suggested first-memory exercise uses a real recording account and its allowance. Perform it in a normal project session, not the setup terminal: make a decision, end the session, and approve the candidate Lore lists. It is not required to finish setup; no synthetic memory is written automatically.
 
 References: [qmd](https://github.com/tobi/qmd), [Codex skills](https://learn.chatgpt.com/docs/build-skills), [Claude Code MCP](https://code.claude.com/docs/en/mcp), [portable-pty](https://docs.rs/portable-pty/0.9.0/portable_pty/), [xterm.js](https://xtermjs.org/docs/).
