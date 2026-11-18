@@ -20,6 +20,8 @@
   --accent-ink: #ffffff;
   --ok: #1e9e6a;
   --ok-soft: #e5f4ec;
+  --lesson: #7c4dbd;
+  --lesson-soft: #f1ebfa;
   --warn: #c0851a;
   --warn-soft: #faf0dc;
   --danger: #c8463d;
@@ -46,6 +48,8 @@
   --accent-ink: #08111f;
   --ok: #35c28a;
   --ok-soft: #102a20;
+  --lesson: #a58cf0;
+  --lesson-soft: #231b38;
   --warn: #e0a23b;
   --warn-soft: #2c2410;
   --danger: #f07068;

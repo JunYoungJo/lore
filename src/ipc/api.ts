@@ -11,7 +11,10 @@ export const setPaused = (paused: boolean): Promise<void> => invoke("set_paused"
 export const retryJob = (id: string): Promise<boolean> => invoke("retry_job", { id });
 export const discardJob = (id: string): Promise<boolean> => invoke("discard_job", { id });
 export const clearActivity = (): Promise<number> => invoke("clear_activity");
-export const openCandidates = (): Promise<void> => invoke("open_candidates");
+/** Open the candidates window; with a batch, on the Written tab showing that batch. */
+export const openCandidates = (batch?: number): Promise<void> => invoke("open_candidates", { batch: batch ?? null });
+export const takeCandidatesFocus = (): Promise<number | null> => invoke("take_candidates_focus");
+export const onCandidatesFocus = (handler: () => void): Promise<UnlistenFn> => listen("candidates-focus", handler);
 export const getCandidates = (): Promise<CandidatesSnapshot> => invoke("get_candidates");
 /** Change the sentence, the scope or both of a candidate that still waits. Null leaves that part as it is. */
 export const editCandidate = (id: number, text: string | null, scope: CandidateScope | null): Promise<boolean> => invoke("edit_candidate", { id, text, scope });
@@ -19,6 +22,7 @@ export const approveCandidates = (ids: number[]): Promise<number> => invoke("app
 export const discardCandidates = (ids: number[]): Promise<number> => invoke("discard_candidates", { ids });
 export const retryApply = (id: number): Promise<boolean> => invoke("retry_apply", { id });
 export const releaseApply = (id: number): Promise<boolean> => invoke("release_apply", { id });
+export const clearWritten = (): Promise<number> => invoke("clear_written");
 export const setAutoApprove = (enabled: boolean, days: number): Promise<void> => invoke("set_auto_approve", { enabled, days });
 export const openCleanup = (): Promise<void> => invoke("open_cleanup");
 export const getCleanup = (): Promise<import("./contract").CleanupSnapshot> => invoke("get_cleanup");

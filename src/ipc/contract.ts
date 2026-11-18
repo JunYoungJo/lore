@@ -104,6 +104,8 @@ export interface Waiting {
   candidates: number;
   sessions: number;
   oldestAt: number;
+  /** How many still wait from each session job. */
+  byJob: Record<string, number>;
 }
 
 /** One folder of a cleanup run. `absorb` names the folders merged into it. `startedAt` is null while it waits. */

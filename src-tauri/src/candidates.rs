@@ -8,8 +8,8 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder
 use crate::state::AppState;
 
 pub const WINDOW: &str = "candidates";
-/// How many applied batches the window keeps in view.
-const RESULTS_SHOWN: usize = 5;
+/// Written batches are kept for 30 days; this only bounds a list that a burst of batches made long.
+const RESULTS_SHOWN: usize = 500;
 
 /// What the candidates window shows: what waits for the user, and what became of what they approved.
 #[derive(Serialize)]
@@ -44,13 +44,24 @@ fn queue(state: &AppState) -> Result<Queue, String> {
     Queue::open(&state.paths.database()).map_err(error)
 }
 
+/// Tells an open candidates window to take the batch it was opened for.
+const FOCUS_EVENT: &str = "candidates-focus";
+
 // Must be async: building a webview from a synchronous command deadlocks on Windows (see `open_review`).
+/// Open the window; with `batch`, on the Written tab with that batch shown. A window that is
+/// built takes the batch when it loads; one already open is told to take it.
 #[tauri::command]
-pub async fn open_candidates(app: AppHandle) -> Result<(), String> {
+pub async fn open_candidates(app: AppHandle, batch: Option<i64>) -> Result<(), String> {
+    if let Some(id) = batch {
+        app.state::<AppState>().focus_batch(id);
+    }
     if let Some(window) = app.get_webview_window(WINDOW) {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        if batch.is_some() {
+            let _ = window.emit(FOCUS_EVENT, ());
+        }
         return Ok(());
     }
     let window = WebviewWindowBuilder::new(&app, WINDOW, WebviewUrl::App("index.html".into()))
@@ -67,6 +78,7 @@ pub async fn open_candidates(app: AppHandle) -> Result<(), String> {
 #[tauri::command]
 pub fn get_candidates(state: State<'_, AppState>) -> Result<Snapshot, String> {
     let queue = queue(&state)?;
+    queue.prune_written(worker::now()).map_err(error)?;
     let settings = state.settings();
     Ok(Snapshot {
         waiting: queue.waiting_candidates().map_err(error)?,
@@ -122,6 +134,20 @@ pub fn release_apply(app: AppHandle, state: State<'_, AppState>, id: i64) -> Res
     let released = queue(&state)?.release_batch(id, worker::now()).map_err(error)?;
     changed(&app);
     Ok(released)
+}
+
+/// The batch the window was last opened for, once.
+#[tauri::command]
+pub fn take_candidates_focus(state: State<'_, AppState>) -> Option<i64> {
+    state.take_focus()
+}
+
+/// Forget the written batches now. Batches being written or that failed stay.
+#[tauri::command]
+pub fn clear_written(app: AppHandle, state: State<'_, AppState>) -> Result<usize, String> {
+    let cleared = queue(&state)?.clear_written().map_err(error)?;
+    changed(&app);
+    Ok(cleared)
 }
 
 #[tauri::command]

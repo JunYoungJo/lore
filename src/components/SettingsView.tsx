@@ -223,7 +223,7 @@ function Candidates({ snapshot }: { snapshot: Snapshot }) {
   const setAutoApprove = useAppStore((store) => store.setAutoApprove);
   const { autoApprove, autoApproveDays } = snapshot.settings;
   const waiting = snapshot.candidates.candidates;
-  const status = waiting > 0 ? `${waiting} ${waiting === 1 ? "candidate waits" : "candidates wait"} for your review.` : "What a session offers to remember waits here until you approve it.";
+  const status = waiting > 0 ? `${waiting} ${waiting === 1 ? "candidate waits" : "candidates wait"} for your review.` : "What a session offers waits here for your approval. The Written tab shows what went into your notes.";
   const saveDays = async (text: string) => {
     const days = Number(text);
     if (!Number.isInteger(days) || days < 1 || days > 365) return false;
@@ -235,11 +235,11 @@ function Candidates({ snapshot }: { snapshot: Snapshot }) {
     <>
       <div className="set-row">
         <div className="set-main">
-          <div className="set-title">Review candidates</div>
+          <div className="set-title">Candidates and what was written</div>
           <div className="set-sub">{status}</div>
         </div>
         <button type="button" className="pill ghost" onClick={() => void api.openCandidates()}>
-          Open candidates
+          Open
         </button>
       </div>
       <div className="set-row">

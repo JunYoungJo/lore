@@ -211,7 +211,8 @@ pub fn spawn(app: AppHandle) {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 // Candidates that waited out the set number of days are approved first, so that this turn can write them.
                 worker::approve_overdue(&queue, &settings, worker::now())?;
-                worker::step(&queue, &settings, &paths, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts), &qmd, &reporter)
+                let memory = settings.knowledge_root();
+                worker::step(&queue, &settings, &paths, &mut |prompt, schema, artifacts| recorder.request_json_reading(prompt, schema, artifacts, &memory), &qmd, &reporter)
             }));
             drop(operation);
             changed(&app);

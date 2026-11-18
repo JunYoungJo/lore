@@ -13,7 +13,9 @@ use crate::error::{Error, Failure, Result};
 use crate::queue::{backoff_seconds, FailureOutcome, Queue, MAX_REJECTED_ATTEMPTS, MAX_TRANSIENT_ATTEMPTS};
 use crate::transcript::Provider;
 
-/// How long a candidate the user has dealt with stays in the database.
+const PRUNE_WRITTEN: &str = "DELETE FROM applies WHERE status = 'done' AND updated_at < ?1";
+
+/// How long a candidate the user has dealt with, and a batch that was written, stay in the database.
 const KEPT_SECS: i64 = 30 * 24 * 3600;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
@@ -297,6 +299,8 @@ pub struct Waiting {
     pub sessions: usize,
     /// When the oldest waiting candidate was found. Zero when none waits.
     pub oldest_at: i64,
+    /// How many still wait from each session job, so a past "offered" entry can say whether any is left.
+    pub by_job: BTreeMap<String, usize>,
 }
 
 const CANDIDATE_COLUMNS: &str = "id, job_id, session_id, provider, project, language, kind, text, source, scope, evidence, relation, state, edited, created_at, apply_id, waiting_since";
@@ -438,6 +442,7 @@ impl Queue {
             }
         }
         transaction.execute("DELETE FROM candidates WHERE state IN ('applied', 'discarded', 'duplicate') AND created_at < ?1", params![now - KEPT_SECS])?;
+        transaction.execute(PRUNE_WRITTEN, params![now - KEPT_SECS])?;
         let done = crate::queue::advance(&transaction, origin.job_id, end_line, end_hash, has_more, seen_requests, now)?;
         transaction.commit()?;
         Ok(done)
@@ -472,11 +477,15 @@ impl Queue {
     }
 
     pub fn waiting(&self) -> Result<Waiting> {
-        Ok(self.connection.query_row(
+        let mut waiting = self.connection.query_row(
             "SELECT COUNT(*), COUNT(DISTINCT job_id), COALESCE(MIN(created_at), 0) FROM candidates WHERE state = 'waiting'",
             [],
-            |row| Ok(Waiting { candidates: row.get::<_, i64>(0)?.max(0) as usize, sessions: row.get::<_, i64>(1)?.max(0) as usize, oldest_at: row.get(2)? }),
-        )?)
+            |row| Ok(Waiting { candidates: row.get::<_, i64>(0)?.max(0) as usize, sessions: row.get::<_, i64>(1)?.max(0) as usize, oldest_at: row.get(2)?, by_job: BTreeMap::new() }),
+        )?;
+        let mut statement = self.connection.prepare("SELECT job_id, COUNT(*) FROM candidates WHERE state = 'waiting' GROUP BY job_id")?;
+        let rows = statement.query_map([], |row| Ok((row.get::<_, String>(0)?, row.get::<_, i64>(1)?.max(0) as usize)))?;
+        waiting.by_job = rows.collect::<rusqlite::Result<_>>()?;
+        Ok(waiting)
     }
 
     /// Change the sentence or the scope of a candidate that still waits. Returns whether it did.
@@ -647,6 +656,17 @@ impl Queue {
     pub fn applied_batches(&self, limit: usize) -> Result<Vec<Batch>> {
         self.batches_where("status IN ('index_pending', 'done') AND result IS NOT NULL", limit)
     }
+
+    /// Forget written batches older than the candidates kept with them. The notes and their
+    /// commits keep what was written; a batch still being written or that failed waits for the user.
+    pub fn prune_written(&self, now: i64) -> Result<usize> {
+        Ok(self.connection.execute(PRUNE_WRITTEN, params![now - KEPT_SECS])?)
+    }
+
+    /// Forget every written batch now, at the user's request. What is still being written or failed stays.
+    pub fn clear_written(&self) -> Result<usize> {
+        Ok(self.connection.execute("DELETE FROM applies WHERE status = 'done'", [])?)
+    }
 }
 
 impl Batch {
@@ -690,6 +710,24 @@ mod tests {
     }
 
     #[test]
+    fn written_batches_are_forgotten_after_thirty_days_or_when_cleared_but_open_and_failed_ones_stay() {
+        let (_dir, queue) = queue();
+        let add = |status: &str, updated: i64| {
+            queue.connection.execute("INSERT INTO applies (project, status, result, created_at, updated_at) VALUES ('demo', ?1, '{}', ?2, ?2)", params![status, updated]).unwrap();
+        };
+        let left = || queue.connection.prepare("SELECT status FROM applies ORDER BY id").unwrap().query_map([], |row| row.get::<_, String>(0)).unwrap().collect::<rusqlite::Result<Vec<_>>>().unwrap();
+        let now = 100 * 24 * 3600;
+        for status in ["done", "failed", "pending", "applying", "index_pending"] {
+            add(status, now - KEPT_SECS - 1);
+        }
+        add("done", now - KEPT_SECS + 1);
+        assert_eq!(queue.prune_written(now).unwrap(), 1);
+        assert_eq!(left(), vec!["failed", "pending", "applying", "index_pending", "done"]);
+        assert_eq!(queue.clear_written().unwrap(), 1);
+        assert_eq!(left(), vec!["failed", "pending", "applying", "index_pending"]);
+    }
+
+    #[test]
     fn a_step_stores_its_candidates_and_moves_the_cursor_together() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
@@ -699,7 +737,7 @@ mod tests {
         assert_eq!(waiting.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), vec!["No alerts.", "Use pages."]);
         assert_eq!(waiting[0].evidence[0].speaker, Speaker::User);
         assert_eq!(queue.left_out().unwrap().len(), 1);
-        assert_eq!(queue.waiting().unwrap(), Waiting { candidates: 2, sessions: 1, oldest_at: 100 });
+        assert_eq!(queue.waiting().unwrap(), Waiting { candidates: 2, sessions: 1, oldest_at: 100, by_job: BTreeMap::from([(job.clone(), 2)]) });
         let stored = queue.get(&job).unwrap().unwrap();
         assert_eq!((stored.cursor_line, stored.cursor_hash.as_str(), stored.status), (12, "hash", crate::queue::Status::Done));
     }

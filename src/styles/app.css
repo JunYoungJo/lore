@@ -1799,10 +1799,151 @@ svg.kind-deleted {
   color: var(--text2);
 }
 
-.cand-all-count {
-  margin-left: auto;
-  color: var(--text3);
+.candidates-window kbd {
+  display: inline-block;
+  min-width: 17px;
+  padding: 0 4px;
+  border: 1px solid var(--line2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--surface);
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  font-weight: 500;
+  line-height: 14px;
+  text-align: center;
+  color: var(--text2);
+}
+
+.cand-progress {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
   font-variant-numeric: tabular-nums;
+}
+
+.cand-bar {
+  display: flex;
+  width: 180px;
+  height: 5px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: var(--sunken);
+}
+
+.cand-bar > span {
+  height: 100%;
+  transition: width 0.18s ease;
+}
+
+.cand-bar > .approve {
+  background: var(--ok);
+}
+
+.cand-bar > .discard {
+  background: var(--danger);
+}
+
+.cand-bar > .later {
+  background: var(--text3);
+}
+
+/* What the user decided for a candidate: the one place, with the kind, where the list uses color. */
+.cand-state {
+  flex: none;
+}
+
+.cand-state circle {
+  fill: none;
+  stroke: var(--text3);
+  stroke-width: 1.5;
+}
+
+.cand-state path {
+  fill: none;
+  stroke-width: 1.8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
+
+.cand-state.approve circle {
+  fill: var(--ok);
+  stroke: none;
+}
+
+.cand-state.discard circle {
+  fill: var(--danger);
+  stroke: none;
+}
+
+.cand-state.approve path,
+.cand-state.discard path {
+  stroke: var(--surface);
+}
+
+.cand-state.later circle,
+.cand-state.later path {
+  stroke: var(--text2);
+  stroke-width: 1.5;
+}
+
+.cand-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.cand-row {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr);
+  gap: 9px;
+  width: calc(100% - 10px);
+  padding: 9px 11px;
+  border: 1px solid transparent;
+  border-radius: 9px;
+  background: none;
+  font: inherit;
+  text-align: left;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cand-row > .cand-state {
+  margin-top: 1px;
+}
+
+.cand-row:hover {
+  background: var(--surface);
+}
+
+.cand-row.current {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.cand-row:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.cand-row-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.cand-row.discard .cand-text {
+  color: var(--text3);
+  text-decoration: line-through;
+}
+
+.cand-row.later .cand-text {
+  color: var(--text2);
 }
 
 /* Every row is two lines of the sentence and one line about it, so the list keeps one rhythm. */
@@ -1813,7 +1954,7 @@ svg.kind-deleted {
   height: 2.9em;
   overflow: hidden;
   font-size: 12.5px;
-  font-weight: 600;
+  font-weight: 500;
   line-height: 1.45;
   word-break: keep-all;
   overflow-wrap: anywhere;
@@ -1823,10 +1964,10 @@ svg.kind-deleted {
   display: flex;
   align-items: center;
   gap: 7px;
-  margin-top: 6px;
+  margin-top: 5px;
   font-size: 11.5px;
   line-height: 1.4;
-  color: var(--text2);
+  color: var(--text3);
   white-space: nowrap;
 }
 
@@ -1848,11 +1989,7 @@ svg.kind-deleted {
   color: var(--warn);
 }
 
-.cand-relation.differs {
-  color: var(--accent);
-}
-
-.cand-relation.obsolete {
+.cand-deletes {
   color: var(--danger);
 }
 
@@ -1872,8 +2009,8 @@ svg.kind-deleted {
 }
 
 .badge.cand-kind.lesson {
-  background: var(--ok-soft);
-  color: var(--ok);
+  background: var(--lesson-soft);
+  color: var(--lesson);
 }
 
 .cand-left-out {
@@ -1900,31 +2037,175 @@ svg.kind-deleted {
   padding-left: 16px;
 }
 
-.cand-written-link {
+.cand-tabs {
   display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 0 14px;
+  border-bottom: 1px solid var(--line);
+}
+
+.cand-tab {
+  position: relative;
+  display: inline-flex;
   align-items: center;
   gap: 7px;
-  width: calc(100% - 10px);
-  margin-top: 14px;
-  padding: 9px 11px;
-  border: 1px solid transparent;
-  border-radius: 10px;
-  background: var(--surface);
+  padding: 10px 10px 9px;
+  border: none;
+  background: none;
   font: inherit;
-  font-size: 12.5px;
-  font-weight: 600;
-  text-align: left;
-  color: var(--text);
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--text2);
   cursor: pointer;
 }
 
-.cand-written-link:hover {
-  border-color: var(--line2);
+.cand-tab:hover {
+  color: var(--text);
 }
 
-.cand-written-link.active {
-  border-color: var(--accent);
-  box-shadow: var(--ring);
+.cand-tab[aria-selected="true"] {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cand-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  right: 6px;
+  bottom: -1px;
+  left: 6px;
+  height: 2px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.cand-tab-count {
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--surface2);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 17px;
+  text-align: center;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+}
+
+.cand-tab-count.alert {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.cand-batch-icon {
+  display: grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  color: var(--text3);
+}
+
+.cand-batch-icon.failed {
+  color: var(--danger);
+}
+
+.cand-batch-title {
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--text);
+}
+
+.cand-results {
+  display: flex;
+  flex-direction: column;
+}
+
+.cand-result {
+  padding: 10px 0;
+  border-top: 1px solid var(--line);
+}
+
+.cand-result:first-child {
+  padding-top: 0;
+  border-top: none;
+}
+
+.cand-result-action {
+  flex: none;
+  min-width: 64px;
+  font-size: 11.5px;
+  color: var(--text3);
+}
+
+.cand-result-action.removed {
+  color: var(--danger);
+}
+
+.cand-result-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 0;
+  border: none;
+  background: none;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  text-align: left;
+  color: var(--text);
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+
+.cand-result-path:hover {
+  color: var(--accent);
+}
+
+.cand-result-path > svg {
+  flex: none;
+  color: var(--text3);
+}
+
+.cand-result-path.gone {
+  color: var(--text3);
+  text-decoration: line-through;
+  cursor: default;
+}
+
+.cand-result-items {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 6px 0 0 72px;
+  padding: 0;
+  list-style: none;
+}
+
+.cand-result-items li {
+  font-size: 12.5px;
+  line-height: 1.55;
+  color: var(--text2);
+  word-break: keep-all;
+  overflow-wrap: anywhere;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.cand-failed-box {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 14px;
+  border: 1px solid var(--danger);
+  border-radius: 10px;
+}
+
+.cand-failed-head {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--danger);
 }
 
 .cand-detail-title {
@@ -1933,17 +2214,123 @@ svg.kind-deleted {
   gap: 8px;
 }
 
-.cand-label {
+.cand-detail {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.cand-detail-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 18px 24px 24px;
+}
+
+.cand-sec {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.cand-sec.first {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* The head keeps its height whether it holds Edit or Save, so the sentence does not move when editing starts. */
+.cand-sec-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 24px;
+  margin-bottom: 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.cand-sec-sub {
+  font-size: 12px;
+  font-weight: 400;
+  color: var(--text3);
+}
+
+.cand-edit-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.cand-edit-link:hover {
+  background: var(--accent-soft);
+}
+
+/* Read and edit share one box, so only its border changes when editing starts. */
+.cand-sentence-box {
+  padding: 10px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--surface2);
+  cursor: text;
+}
+
+.cand-sentence-box:hover {
+  border-color: var(--text3);
+}
+
+.cand-sentence-box.editing {
+  border-color: var(--accent);
+  background: var(--surface);
+  box-shadow: var(--ring);
+  cursor: auto;
+}
+
+.cand-sentence,
+.cand-sentence-edit {
   display: block;
+  width: 100%;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--text);
+  white-space: pre-wrap;
+  word-break: keep-all;
+  overflow-wrap: anywhere;
 }
 
 .cand-sentence {
-  display: block;
-  min-height: 76px;
-  resize: vertical;
-  font-size: 13px;
-  line-height: 1.55;
-  word-break: keep-all;
+  -webkit-user-select: text;
+  user-select: text;
+}
+
+.cand-sentence-edit {
+  overflow: hidden;
+  resize: none;
+  outline: none;
+}
+
+.cand-help {
+  min-height: 20px;
+  margin: 6px 0 0;
+  font-size: 12px;
+  line-height: 20px;
+  color: var(--text3);
 }
 
 .cand-quote {
@@ -1966,22 +2353,125 @@ svg.kind-deleted {
   color: var(--text3);
 }
 
-.cand-note {
-  padding: 6px 6px 10px;
+.cand-outcome {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 12px 14px;
   border: 1px solid var(--line2);
   border-radius: 10px;
 }
 
-.cand-note-label {
-  margin: 6px 8px 0;
-  font-size: 11.5px;
+.cand-outcome-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.cand-outcome.delete .cand-outcome-head {
+  color: var(--danger);
+}
+
+.cand-outcome-line {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--text2);
+  word-break: keep-all;
+}
+
+.cleanup-note-row.cand-outcome-note {
+  background: var(--surface2);
+}
+
+.cand-scope {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+.cand-scope-opt {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 3px 10px;
+  padding: 11px 12px;
+  border: 1px solid var(--line2);
+  border-radius: 10px;
+  background: var(--surface);
+  font: inherit;
+  text-align: left;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+.cand-scope-opt:hover {
+  border-color: var(--text3);
+}
+
+.cand-radio {
+  display: grid;
+  place-content: center;
+  width: 16px;
+  height: 16px;
+  margin-top: 1px;
+  border: 1.5px solid var(--text3);
+  border-radius: 50%;
+}
+
+.cand-scope-title {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.cand-scope-title b {
+  font-weight: inherit;
+}
+
+.cand-scope-detail {
+  grid-column: 2 / 4;
+  font-size: 12px;
+  line-height: 1.5;
   color: var(--text3);
+  word-break: keep-all;
+}
+
+.cand-scope-opt[aria-checked="true"] {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  color: var(--text);
+}
+
+.cand-scope-opt[aria-checked="true"] .cand-radio {
+  border-color: var(--accent);
+  background: var(--accent);
+}
+
+.cand-scope-opt[aria-checked="true"] .cand-radio::after {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent-ink);
+}
+
+.cand-scope-opt[aria-checked="true"] .cand-scope-title {
+  font-weight: 600;
+}
+
+.cand-scope-opt[aria-checked="true"] .cand-scope-detail {
+  color: var(--text2);
 }
 
 .cand-passage {
-  margin: 6px 8px 0;
+  margin: 0;
   padding: 7px 10px;
-  border-radius: 8px;
+  border-left: 3px solid var(--line2);
+  border-radius: 0 8px 8px 0;
   background: var(--surface2);
   font-size: 12.5px;
   line-height: 1.6;
@@ -1992,29 +2482,168 @@ svg.kind-deleted {
   user-select: text;
 }
 
-.cand-actions {
+.cand-decide {
   display: flex;
+  flex: none;
+  flex-wrap: wrap;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  margin-top: 22px;
-  padding-top: 14px;
+  gap: 8px 10px;
+  padding: 10px 24px;
   border-top: 1px solid var(--line);
 }
 
-.cand-wait-note {
-  font-size: 11.5px;
-  color: var(--text3);
+.cand-nav {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
 }
 
-.cand-batch {
-  margin-bottom: 18px;
-  padding-bottom: 14px;
-  border-bottom: 1px solid var(--line);
+.cand-icon-btn {
+  display: grid;
+  place-content: center;
+  width: 26px;
+  height: 26px;
+  border: 1px solid var(--line2);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text2);
+  cursor: pointer;
 }
 
-.cand-batch:last-child {
-  border-bottom: none;
+.cand-icon-btn:hover:not(:disabled) {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.cand-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.cand-state-line {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 6px;
+  min-width: 150px;
+  font-size: 12.5px;
+  color: var(--text2);
+}
+
+.cand-state-line b {
+  font-weight: 600;
+}
+
+.cand-state-line.approve b {
+  color: var(--ok);
+}
+
+.cand-state-line.discard b {
+  color: var(--danger);
+}
+
+.cand-undo {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 5px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text2);
+  cursor: pointer;
+}
+
+.cand-undo:hover {
+  background: var(--surface2);
+  color: var(--text);
+}
+
+.cand-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid var(--line2);
+  border-radius: 8px;
+  background: var(--surface);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.cand-btn kbd {
+  border-color: currentColor;
+  background: transparent;
+  color: inherit;
+  opacity: 0.75;
+}
+
+.cand-btn:hover {
+  background: var(--surface2);
+}
+
+.cand-btn.discard {
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.cand-btn.discard:hover,
+.cand-btn.discard.on {
+  background: var(--danger);
+  color: var(--surface);
+}
+
+.cand-btn.later.on {
+  border-color: var(--text3);
+  background: var(--surface2);
+}
+
+.cand-btn.approve {
+  border-color: var(--ok);
+  background: var(--ok);
+  color: var(--surface);
+}
+
+.cand-btn.approve:hover {
+  filter: brightness(1.06);
+}
+
+.cand-btn.approve.on {
+  box-shadow: 0 0 0 3px var(--ok-soft);
+}
+
+.cand-foot {
+  flex-wrap: wrap;
+}
+
+.cand-tally {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-size: 12px;
+  color: var(--text2);
+  font-variant-numeric: tabular-nums;
+}
+
+.cand-tally > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.cand-tally b {
+  font-weight: 600;
+  color: var(--text);
 }
 
 .cleanup-standing.cand-late {
@@ -2023,29 +2652,9 @@ svg.kind-deleted {
 
 .cand-result-head {
   display: flex;
-  align-items: center;
+  align-items: baseline;
   gap: 8px;
   min-width: 0;
-}
-
-.badge.cand-action {
-  min-width: 62px;
-  text-align: center;
-}
-
-.badge.cand-action.created {
-  background: var(--ok-soft);
-  color: var(--ok);
-}
-
-.badge.cand-action.edited {
-  background: var(--accent-soft);
-  color: var(--accent);
-}
-
-.badge.cand-action.removed {
-  background: var(--danger-soft);
-  color: var(--danger);
 }
 
 .cand-working {
@@ -2059,22 +2668,15 @@ svg.kind-deleted {
   color: var(--accent);
 }
 
-.cand-failed {
-  margin: 0 0 12px;
-}
-
-.cand-failed-main {
-  min-width: 0;
-}
-
 .cand-failed-why {
-  margin-top: 3px;
+  font-size: 12px;
+  line-height: 1.5;
   overflow-wrap: anywhere;
   color: var(--text2);
 }
 
 .cand-failed-actions {
   display: flex;
-  gap: 6px;
-  margin-top: 9px;
+  flex-wrap: wrap;
+  gap: 8px;
 }

@@ -10,9 +10,10 @@ use serde_json::{json, Value};
 
 use crate::candidate::{ApplyResult, Candidate, Kind, NoteAction, NoteResult, RelationKind, Scope, Speaker};
 use crate::error::{Error, Result};
-use crate::notes::{self, title_of, CatalogEntry};
-use crate::prepare::{shown_notes, Ask, Search};
+use crate::notes;
+use crate::prepare::Ask;
 use crate::proposal::{authority_of, body_digest, check_path, check_snapshot, render_note, validate_edit, Change, Edit};
+use crate::qmd::search_collections;
 use crate::recorder::edits_schema;
 
 pub const PROMPT: &str = include_str!("integrate-prompt.md");
@@ -187,11 +188,10 @@ fn members<'a>(basis: &[i64], candidates: &'a [Candidate], what: &str) -> Result
 }
 
 /// Turn approved candidates into the notes to write. Nothing is written here.
-pub fn plan(project: &str, candidates: &[Candidate], notes: &BTreeMap<String, String>, previous_failure: Option<&str>, artifacts: &Path, ask: Ask, search: Search) -> Result<Plan> {
-    let texts: Vec<&str> = candidates.iter().map(|candidate| candidate.text.as_str()).collect();
-    let required: Vec<String> = candidates.iter().filter_map(|candidate| bound_note(candidate, notes)).map(str::to_string).collect();
-    let shown = shown_notes(&texts, &required, notes, search);
-    let catalog: Vec<CatalogEntry> = notes.iter().filter(|(path, _)| !shown.contains_key(*path)).map(|(path, text)| CatalogEntry { path: path.clone(), title: title_of(text) }).collect();
+///
+/// `notes` are the notes of `common/` and of the project as the memory folder holds them now.
+/// The model reads them from `memory` itself; the answer is checked against them.
+pub fn plan(project: &str, candidates: &[Candidate], notes: &BTreeMap<String, String>, memory: &Path, previous_failure: Option<&str>, artifacts: &Path, ask: Ask) -> Result<Plan> {
     let approved: Vec<Value> = candidates
         .iter()
         .enumerate()
@@ -205,7 +205,14 @@ pub fn plan(project: &str, candidates: &[Candidate], notes: &BTreeMap<String, St
         })
         .collect();
     let language = candidates.iter().map(|candidate| candidate.language.as_str()).find(|language| !language.is_empty()).unwrap_or("English");
-    let mut payload = json!({"project": project, "language": language, "approved": approved, "notes": shown, "note_catalog": catalog});
+    let mut payload = json!({
+        "project": project,
+        "language": language,
+        "memory_folder": memory.to_string_lossy().replace('\\', "/"),
+        "note_folders": ["common/", format!("projects/{project}/")],
+        "search_collections": search_collections(project),
+        "approved": approved,
+    });
     if let Some(reason) = previous_failure {
         payload["previous_failure"] = json!(reason);
     }
@@ -266,9 +273,6 @@ pub fn plan(project: &str, candidates: &[Candidate], notes: &BTreeMap<String, St
             Some(known) => {
                 if *known != change.path {
                     return Err(Error::rejected(format!("The path differs from an existing note only by letter case: {}", change.path)));
-                }
-                if !shown.contains_key(known) {
-                    return Err(Error::rejected(format!("Cannot edit an existing note whose text was not provided: {}", change.path)));
                 }
                 if !change.body.trim().is_empty() || change.edits.is_empty() {
                     return Err(Error::rejected(format!("Existing notes must use targeted edits rather than a full replacement: {}", change.path)));
@@ -417,9 +421,6 @@ mod tests {
         ])
     }
 
-    fn all(_: &str) -> Vec<String> {
-        vec!["projects/demo/alerts.md".to_string(), "projects/demo/export.md".to_string()]
-    }
 
     fn run(candidates: &[Candidate], answer: Value) -> Result<Plan> {
         let prompts = RefCell::new(Vec::new());
@@ -427,7 +428,7 @@ mod tests {
             prompts.borrow_mut().push(prompt.to_string());
             Ok(answer.clone())
         };
-        plan("demo", candidates, &notes(), None, Path::new("/tmp/artifacts"), &mut ask, &all)
+        plan("demo", candidates, &notes(), Path::new("D:/memory"), None, Path::new("/tmp/artifacts"), &mut ask)
     }
 
     fn edit(find: &str, text: &str) -> Value {
@@ -529,13 +530,13 @@ mod tests {
     }
 
     #[test]
-    fn existing_notes_take_targeted_edits_and_unseen_notes_none() {
+    fn existing_notes_take_targeted_edits_and_any_note_of_the_folders_can_be_edited() {
         let candidates = [approved(NO_ALERT)];
         let whole = json!({"summary": "s", "removals": [], "changes": [{"path": "projects/demo/alerts.md", "title": "", "body": "Rewritten.", "edits": [], "basis": [1]}]});
         assert!(run(&candidates, whole).unwrap_err().message.contains("targeted edits"));
-        let unseen = json!({"summary": "s", "removals": [], "changes": [{"path": "common/style.md", "title": "", "body": "", "basis": [1], "edits": [edit("short", "brief")]}]});
+        let shared_note = json!({"summary": "s", "removals": [], "changes": [{"path": "common/style.md", "title": "", "body": "", "basis": [1], "edits": [edit("short", "brief")]}]});
         let shared = Candidate { scope: Scope::Common, ..approved("Answer in brief sentences.") };
-        assert!(run(&[shared], unseen).unwrap_err().message.contains("was not provided"));
+        assert!(run(&[shared], shared_note).unwrap().rendered["common/style.md"].contains("Answer in brief sentences."));
         let twice = json!({"summary": "s", "removals": [], "changes": [
             {"path": "projects/demo/alerts.md", "title": "", "body": "", "basis": [1], "edits": [edit("Every", "No")]},
             {"path": "projects/demo/Alerts.md", "title": "", "body": "", "basis": [1], "edits": [edit("Every", "No")]},
@@ -546,20 +547,19 @@ mod tests {
     }
 
     #[test]
-    fn the_model_is_shown_the_statements_and_the_notes_without_their_sources() {
+    fn the_model_is_given_the_statements_and_where_the_notes_are_rather_than_the_notes() {
         let candidates = [bound(NO_ALERT, RelationKind::Differs, "common/style.md")];
         let prompts = RefCell::new(Vec::new());
         let mut ask = |prompt: &str, _: &Value, _: &Path| {
             prompts.borrow_mut().push(prompt.to_string());
             Err::<Value, _>(Error::transient("stop here"))
         };
-        let _ = plan("demo", &candidates, &notes(), Some("the last answer left a statement out"), Path::new("/tmp/a"), &mut ask, &|_| vec!["projects/demo/alerts.md".to_string()]);
+        let _ = plan("demo", &candidates, &notes(), Path::new("D:/memory"), Some("the last answer left a statement out"), Path::new("/tmp/a"), &mut ask);
         let prompt = prompts.borrow()[0].clone();
         assert!(prompt.contains(r#""approved":[{"id":1,"kind":"decision","text":"Finished jobs raise no desktop alert.","said_by":"user","date":"2026-11-17","scope":"common","relation":{"type":"differs","note":"common/style.md"}}]"#));
-        // The note the statement differs from is shown even though the search did not find it.
-        assert!(prompt.contains("Answer in short sentences.") && prompt.contains("Every finished job raises a desktop alert."));
-        assert!(!prompt.contains("raise alerts"));
-        assert!(prompt.contains(r#""note_catalog":[{"path":"projects/demo/export.md","title":"CSV export"}]"#));
+        assert!(prompt.contains(r#""memory_folder":"D:/memory""#) && prompt.contains(r#""note_folders":["common/","projects/demo/"]"#));
+        assert!(prompt.contains(r#""search_collections":{"common":"common/","project-demo":"projects/demo/"}"#));
+        assert!(!prompt.contains("Answer in short sentences.") && !prompt.contains("Every finished job raises a desktop alert."));
         assert!(prompt.contains("the last answer left a statement out"));
         assert!(prompt.find("\"approved\"").unwrap() < prompt.find("# Your task").unwrap());
         assert!(!PROMPT.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c)));
@@ -568,7 +568,7 @@ mod tests {
         let gone = bound("The CSV export was removed.", RelationKind::Obsolete, "projects/demo/export.md");
         let stale = Candidate { relation: Relation { digest: "other".into(), ..gone.relation.clone() }, ..gone.clone() };
         for (candidate, changed) in [(gone, false), (stale, true)] {
-            let _ = plan("demo", &[candidate], &notes(), None, Path::new("/tmp/a"), &mut ask, &|_| Vec::new());
+            let _ = plan("demo", &[candidate], &notes(), Path::new("D:/memory"), None, Path::new("/tmp/a"), &mut ask);
             let prompt = prompts.borrow().last().unwrap().clone();
             assert!(prompt.contains(&format!(r#""relation":{{"type":"obsolete","note":"projects/demo/export.md","note_changed":{changed}}}"#)), "{prompt}");
         }

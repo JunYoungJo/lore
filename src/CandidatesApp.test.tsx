@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { ApplyBatch, Candidate, CandidatesSnapshot } from "@/ipc/contract";
 
 const listeners: (() => void)[] = [];
+const focusListeners: (() => void)[] = [];
 
 const api = vi.hoisted(() => ({
   getCandidates: vi.fn(),
@@ -13,6 +14,12 @@ const api = vi.hoisted(() => ({
   discardCandidates: vi.fn(),
   retryApply: vi.fn(),
   releaseApply: vi.fn(),
+  clearWritten: vi.fn(),
+  takeCandidatesFocus: vi.fn(),
+  onCandidatesFocus: vi.fn((handler: () => void) => {
+    focusListeners.push(handler);
+    return Promise.resolve(() => {});
+  }),
   openNote: vi.fn(),
   onStateChanged: vi.fn((handler: () => void) => {
     listeners.push(handler);
@@ -72,6 +79,10 @@ const LESSON = candidate(3, {
   evidence: [{ ref: "t9", quote: "동기 명령에서 창을 만들자 교착이 일어났습니다.", speaker: "agent", at: "" }],
   createdAt: NOW - 3600,
 });
+const ENDS = candidate(5, {
+  text: "검증할 때 앱을 끄고 다시 띄우는 일은 사용자가 한다.",
+  relation: { type: "obsolete", note: "projects/lore/restart-for-checks.md", title: "검증 때 재시작", quotes: ["검증할 때는 에이전트가 앱을 끄고 다시 띄운다."] },
+});
 const LEFT_OUT = candidate(9, {
   text: "프롬프트와 고정 문구는 영어로 쓴다.",
   state: "duplicate",
@@ -115,160 +126,237 @@ const stateChanged = () => act(async () => listeners.forEach((listener) => liste
 
 const list = () => screen.getByRole("list", { name: "Candidates by session" });
 const detail = () => screen.getByRole("region", { name: "Candidate" });
+const footer = () => screen.getByRole("contentinfo");
+const rowsOf = () => within(list()).getAllByRole("button").filter((button) => button.classList.contains("cand-row"));
+const row = (item: Candidate) => within(list()).getByRole("button", { name: new RegExp(item.text) });
+const stateOf = (item: Candidate) => within(row(item)).getByRole("img").getAttribute("aria-label");
+const field = () => screen.getByRole("textbox", { name: "Sentence to remember" });
 
 beforeEach(() => {
   vi.clearAllMocks();
   listeners.length = 0;
+  focusListeners.length = 0;
+  api.takeCandidatesFocus.mockResolvedValue(null);
   api.editCandidate.mockResolvedValue(true);
   api.approveCandidates.mockResolvedValue(1);
   api.discardCandidates.mockResolvedValue(1);
   api.retryApply.mockResolvedValue(true);
   api.releaseApply.mockResolvedValue(true);
+  api.clearWritten.mockResolvedValue(1);
 });
 
 describe("candidates window", () => {
-  it("lists the waiting candidates by session, all ticked, and shows the first one", async () => {
+  it("lists the waiting candidates by session, none decided yet, and shows the first one", async () => {
     await open();
-    expect(screen.getByText("3 candidates waiting")).toBeInTheDocument();
+    expect(screen.getByText("3 candidates waiting · 0 decided")).toBeInTheDocument();
     const groups = within(list()).getAllByRole("list");
     const found = new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric" }).format(new Date(LOCAL.createdAt * 1000));
     expect(groups.map((group) => group.getAttribute("aria-label"))).toEqual([`lore · Claude · ${found}`, "viewer · Codex · 1h ago"]);
-    expect(within(groups[0]).getAllByRole("checkbox").map((box) => (box as HTMLInputElement).checked)).toEqual([true, true]);
-    expect(screen.getByRole("checkbox", { name: "Select all" })).toBeChecked();
-    expect(screen.getByText("3 of 3 selected")).toBeInTheDocument();
-    expect(screen.getByLabelText("Sentence to remember")).toHaveValue(LOCAL.text);
+    expect([LOCAL, DIFFERS, LESSON].map(stateOf)).toEqual(["Not decided", "Not decided", "Not decided"]);
+    expect(row(LOCAL)).toHaveAttribute("aria-current", "true");
+    expect(detail()).toHaveTextContent(LOCAL.text);
     expect(detail()).toHaveTextContent("marked by the session while it worked");
     expect(detail()).toHaveTextContent("You · 2026-11-17 10:42");
     expect(detail()).toHaveTextContent("큐는 로컬. 싱크는 문서만.");
-    expect(detail()).toHaveTextContent("No existing note was found on this.");
+    expect(detail()).toHaveTextContent("Adds this to your notes");
+    expect(detail()).toHaveTextContent("1 of 3");
   });
 
-  it("says in each row what kind it is, where it came from and how it stands to the notes", async () => {
-    await open();
-    const rows = within(list()).getAllByRole("listitem").filter((row) => row.classList.contains("review-item"));
+  it("says in each row what kind it is and what approving it does to the notes", async () => {
+    await open(snapshot({ waiting: [LOCAL, DIFFERS, ENDS, { ...LESSON, scope: "common" }] }));
+    const rows = rowsOf();
     expect(rows[0]).toHaveTextContent("Decision");
-    expect(rows[0]).toHaveTextContent("Marked in the session");
-    expect(rows[0]).toHaveTextContent("Waiting 2 days");
+    expect(rows[0]).not.toHaveTextContent("·");
     expect(rows[1]).toHaveTextContent("Correction");
-    expect(rows[1]).toHaveTextContent("Found afterwards");
-    expect(rows[1]).toHaveTextContent("Differs from a note");
-    expect(rows[2]).toHaveTextContent("Lesson");
-    expect(rows[2]).toHaveTextContent("Found today");
+    expect(rows[1]).toHaveTextContent("Edits a note");
+    expect(rows[2]).toHaveTextContent("Deletes a note");
+    expect(rows[3]).toHaveTextContent("Lesson");
+    expect(rows[3]).toHaveTextContent("All projects");
+    // How long a candidate waited matters only when it is approved without the user.
+    expect(rows[0]).not.toHaveTextContent(/Waiting|Found today/);
   });
 
-  it("shows the note a candidate differs from, with the passages as they are written, and opens it", async () => {
+  it("shows the note a candidate edits, with the passages as they are written, and opens it", async () => {
     await open();
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(DIFFERS.text) }));
-    expect(screen.getByLabelText("Sentence to remember")).toHaveValue(DIFFERS.text);
+    await userEvent.click(row(DIFFERS));
+    expect(detail()).toHaveTextContent(DIFFERS.text);
+    expect(detail()).toHaveTextContent("Edits this note");
     expect(detail()).toHaveTextContent("기록 흐름");
     expect(detail()).toHaveTextContent("projects/lore/recording-flow.md");
-    expect(detail()).toHaveTextContent("2 passages of this note that the candidate changes, as written:");
+    expect(detail()).toHaveTextContent("These 2 passages change:");
     expect(detail()).toHaveTextContent("세션이 끝나면 모델이 노트를 바로 고쳐 쓴다.");
     expect(detail()).toHaveTextContent("변경은 리뷰 창의 diff로 확인한다.");
-    // Where it goes is the note it differs from, so there is no scope to choose.
-    expect(within(detail()).queryByRole("group", { name: "Applies to" })).not.toBeInTheDocument();
+    // The note it edits is where it goes, so there is no scope to choose.
+    expect(within(detail()).queryByRole("radiogroup", { name: "Applies to" })).not.toBeInTheDocument();
     await userEvent.click(within(detail()).getByRole("button", { name: "Open projects/lore/recording-flow.md" }));
     expect(api.openNote).toHaveBeenCalledWith("projects/lore/recording-flow.md");
   });
 
+  it("says that approving a candidate that ends a note deletes the note", async () => {
+    await open(snapshot({ waiting: [ENDS] }));
+    expect(detail()).toHaveTextContent("Deletes this note");
+    expect(detail()).toHaveTextContent("검증 때 재시작");
+    expect(detail()).toHaveTextContent("The note says:");
+    expect(detail()).toHaveTextContent("검증할 때는 에이전트가 앱을 끄고 다시 띄운다.");
+    expect(detail()).toHaveTextContent("If part of the note still holds, that part is kept and only the rest is removed.");
+  });
+
   it("says when the evidence is the agent's words and not the user's", async () => {
     await open();
-    await userEvent.click(screen.getByRole("button", { name: new RegExp(LESSON.text) }));
+    await userEvent.click(row(LESSON));
     expect(detail()).toHaveTextContent("Agent");
     expect(detail()).toHaveTextContent("These are the agent’s words, not yours.");
   });
 
-  it("saves a reworded sentence when the field is left, and nothing when it did not change", async () => {
+  it("rewords the sentence: Enter saves, Shift+Enter keeps a new line, Esc and an unchanged sentence save nothing", async () => {
     const served = await open();
-    const field = screen.getByLabelText("Sentence to remember");
-    await userEvent.click(field);
-    await userEvent.tab();
+    await userEvent.click(within(detail()).getByRole("button", { name: /^Edit/ }));
+    expect(field()).toHaveValue(LOCAL.text);
+    await userEvent.keyboard("{Escape}");
+    expect(screen.queryByRole("textbox", { name: "Sentence to remember" })).not.toBeInTheDocument();
+    await userEvent.keyboard("e");
+    await userEvent.keyboard("{Enter}");
     expect(api.editCandidate).not.toHaveBeenCalled();
-    served.next = snapshot({ waiting: [{ ...LOCAL, text: "후보는 이 PC에만 둔다.", edited: true }, DIFFERS, LESSON] });
-    await userEvent.clear(field);
-    await userEvent.type(field, "후보는 이 PC에만 둔다.");
-    await userEvent.tab();
-    expect(api.editCandidate).toHaveBeenCalledWith(1, "후보는 이 PC에만 둔다.", null);
-    expect(await within(list()).findByText("후보는 이 PC에만 둔다.")).toBeInTheDocument();
-    expect(within(list()).getAllByRole("listitem").find((row) => row.classList.contains("review-item"))).toHaveTextContent("Marked in the session · Edited");
+
+    served.next = snapshot({ waiting: [{ ...LOCAL, text: "후보는 이 PC에만\n둔다.", edited: true }, DIFFERS, LESSON] });
+    await userEvent.keyboard("e");
+    await userEvent.clear(field());
+    await userEvent.type(field(), "후보는 이 PC에만{Shift>}{Enter}{/Shift}둔다.{Enter}");
+    expect(api.editCandidate).toHaveBeenCalledTimes(1);
+    expect(api.editCandidate).toHaveBeenCalledWith(1, "후보는 이 PC에만\n둔다.", null);
+    expect(await within(list()).findByText(/후보는 이 PC에만/)).toBeInTheDocument();
+    expect(row({ ...LOCAL, text: "후보는 이 PC에만" })).toHaveTextContent("Edited");
   });
 
-  it("puts back the sentence when it is emptied", async () => {
+  it("saves the sentence when the field is left or Save is clicked, and puts it back when it is emptied", async () => {
     await open();
-    const field = screen.getByLabelText("Sentence to remember");
-    await userEvent.clear(field);
+    await userEvent.keyboard("e");
+    await userEvent.clear(field());
     await userEvent.tab();
     expect(api.editCandidate).not.toHaveBeenCalled();
-    expect(field).toHaveValue(LOCAL.text);
+    expect(detail()).toHaveTextContent(LOCAL.text);
+
+    await userEvent.keyboard("e");
+    await userEvent.keyboard(" 꼭");
+    await userEvent.tab();
+    expect(api.editCandidate).toHaveBeenLastCalledWith(1, `${LOCAL.text} 꼭`, null);
+
+    await userEvent.keyboard("e");
+    await userEvent.keyboard(" 반드시");
+    await userEvent.click(within(detail()).getByRole("button", { name: /^Save/ }));
+    expect(api.editCandidate).toHaveBeenCalledTimes(2);
+    expect(api.editCandidate).toHaveBeenLastCalledWith(1, `${LOCAL.text} 반드시`, null);
+  });
+
+  it("does not take the letters typed into the sentence as decisions", async () => {
+    await open();
+    await userEvent.keyboard("e");
+    await userEvent.keyboard("adl");
+    expect(stateOf(LOCAL)).toBe("Not decided");
+    expect(field()).toHaveValue(`${LOCAL.text}adl`);
   });
 
   it("changes whether a candidate applies to its project or to all projects", async () => {
     await open();
-    const scope = within(detail()).getByRole("group", { name: "Applies to" });
-    expect(within(scope).getByRole("button", { name: "This project (lore)" })).toHaveAttribute("aria-pressed", "true");
-    expect(detail()).toHaveTextContent("in the notes of lore");
-    await userEvent.click(within(scope).getByRole("button", { name: "All projects" }));
+    const scope = within(detail()).getByRole("radiogroup", { name: "Applies to" });
+    expect(within(scope).getByRole("radio", { name: /^This project · lore/ })).toHaveAttribute("aria-checked", "true");
+    expect(within(scope).getByRole("radio", { name: /^All projects/ })).toHaveAttribute("aria-checked", "false");
+    await userEvent.click(within(scope).getByRole("radio", { name: /^All projects/ }));
     expect(api.editCandidate).toHaveBeenCalledWith(1, null, "common");
+    await userEvent.keyboard("2");
+    expect(api.editCandidate).toHaveBeenCalledTimes(2);
+    await userEvent.click(within(scope).getByRole("radio", { name: /^This project/ }));
+    expect(api.editCandidate).toHaveBeenCalledTimes(2);
   });
 
-  it("approves only the ticked candidates and then shows what was written", async () => {
-    const served = await open();
-    await userEvent.click(screen.getByRole("checkbox", { name: `Approve: ${LESSON.text}` }));
-    expect(screen.getByText("2 of 3 selected")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Select all" })).not.toBeChecked();
-    served.next = snapshot({ waiting: [LESSON], leftOut: [], applying: [batch(4, { status: "applying" })] });
-    await userEvent.click(screen.getByRole("button", { name: "Approve 2 selected" }));
-    expect(api.approveCandidates).toHaveBeenCalledWith([1, 2]);
-    const written = await screen.findByRole("region", { name: "Written into the notes" });
-    expect(written).toHaveTextContent("lore: writing 2 approved candidates into the notes…");
-    // The one left unticked still waits, and stays unticked.
-    expect(screen.getByRole("checkbox", { name: `Approve: ${LESSON.text}` })).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Approve 0 selected" })).toBeDisabled();
+  it("decides one candidate after another and moves on to the next undecided one", async () => {
+    await open();
+    await userEvent.click(within(detail()).getByRole("button", { name: /^Approve and next/ }));
+    expect(stateOf(LOCAL)).toBe("Approved");
+    expect(row(DIFFERS)).toHaveAttribute("aria-current", "true");
+    await userEvent.keyboard("d");
+    expect(stateOf(DIFFERS)).toBe("Discarded");
+    expect(row(LESSON)).toHaveAttribute("aria-current", "true");
+    await userEvent.keyboard("l");
+    expect(stateOf(LESSON)).toBe("Later");
+    expect(screen.getByText("3 candidates waiting · 3 decided")).toBeInTheDocument();
+    expect(footer()).toHaveTextContent("1 approve");
+    expect(footer()).toHaveTextContent("1 discard");
+    expect(footer()).toHaveTextContent("1 later");
+    expect(screen.getByRole("button", { name: "Apply: approve 1, discard 1" })).toBeEnabled();
 
-    served.next = snapshot({ waiting: [LESSON], leftOut: [], applied: [WRITTEN] });
-    await stateChanged();
+    // Every one is decided, so it stays on the last; u takes the decision back.
+    expect(row(LESSON)).toHaveAttribute("aria-current", "true");
+    await userEvent.keyboard("u");
+    expect(stateOf(LESSON)).toBe("Not decided");
+    await userEvent.keyboard("{ArrowUp}");
+    expect(row(DIFFERS)).toHaveAttribute("aria-current", "true");
+    await userEvent.keyboard("a");
+    expect(stateOf(DIFFERS)).toBe("Approved");
+    expect(row(LESSON)).toHaveAttribute("aria-current", "true");
+    expect(api.approveCandidates).not.toHaveBeenCalled();
+    expect(api.discardCandidates).not.toHaveBeenCalled();
+  });
+
+  it("applies the decisions at once and goes on with what is left", async () => {
+    const served = await open();
+    await userEvent.keyboard("a");
+    await userEvent.keyboard("d");
+    served.next = snapshot({ waiting: [LESSON], leftOut: [], applying: [batch(4, { status: "applying" })] });
+    await userEvent.click(screen.getByRole("button", { name: "Apply: approve 1, discard 1" }));
+    expect(api.approveCandidates).toHaveBeenCalledWith([1]);
+    expect(api.discardCandidates).toHaveBeenCalledWith([2]);
+    expect(await screen.findByText("1 candidate waiting · 0 decided")).toBeInTheDocument();
+    expect(detail()).toHaveTextContent(LESSON.text);
+    expect(footer()).toHaveTextContent("Writing what you approved into the notes…");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    expect(screen.getByRole("tab", { name: /^To review/ })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.click(screen.getByRole("tab", { name: /^Written/ }));
+    expect(screen.getByRole("region", { name: "Written for lore" })).toHaveTextContent("Writing 2 approved candidates into the notes…");
+  });
+
+  it("shows what was written once nothing is left to decide", async () => {
+    const served = await open(snapshot({ waiting: [LOCAL], leftOut: [] }));
+    await userEvent.keyboard("a");
+    served.next = snapshot({ waiting: [], leftOut: [], applied: [WRITTEN] });
+    await userEvent.click(screen.getByRole("button", { name: "Apply: approve 1" }));
+    expect(api.discardCandidates).not.toHaveBeenCalled();
     const result = await screen.findByRole("region", { name: "Written for lore" });
-    expect(result).toHaveTextContent("lore · 2 candidates into 3 notes");
+    expect(screen.getByRole("tab", { name: /^Written/ })).toHaveAttribute("aria-selected", "true");
+    expect(result).toHaveTextContent("2 candidates into 3 notes · approved by you");
     expect(result).toHaveTextContent("기록 흐름 노트를 후보 승인 방식으로 고쳤습니다.");
     expect(result).toHaveTextContent("Edited");
     expect(result).toHaveTextContent("New note");
     expect(result).toHaveTextContent("Removed");
-    expect(result).toHaveTextContent(LOCAL.text);
     // A removed note has nothing to open.
     expect(within(result).queryByRole("button", { name: "Open projects/lore/diff-review.md" })).not.toBeInTheDocument();
     await userEvent.click(within(result).getByRole("button", { name: "Open projects/lore/candidate-queue.md" }));
     expect(api.openNote).toHaveBeenCalledWith("projects/lore/candidate-queue.md");
   });
 
-  it("leaves a candidate that arrives while the window is open unticked", async () => {
+  it("approves the undecided candidates together, but not one that arrived while the window was open until it is seen", async () => {
     const served = await open(snapshot({ waiting: [LOCAL, DIFFERS] }));
-    expect(screen.getByRole("button", { name: "Approve 2 selected" })).toBeEnabled();
     served.next = snapshot();
     await stateChanged();
-    expect(await screen.findByRole("checkbox", { name: `Approve: ${LESSON.text}` })).not.toBeChecked();
-    expect(screen.getByRole("button", { name: "Approve 2 selected" })).toBeEnabled();
-    await userEvent.click(screen.getByRole("checkbox", { name: "Select all" }));
-    expect(screen.getByRole("button", { name: "Approve 3 selected" })).toBeEnabled();
+    expect(await within(list()).findByRole("button", { name: new RegExp(LESSON.text) })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Approve 2 undecided candidates" })).toBeEnabled();
+    await userEvent.click(row(LESSON));
+    await userEvent.click(screen.getByRole("button", { name: "Approve 3 undecided candidates" }));
+    expect([LOCAL, DIFFERS, LESSON].map(stateOf)).toEqual(["Approved", "Approved", "Approved"]);
+    expect(screen.getByRole("button", { name: "Approve 0 undecided candidates" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply: approve 3" })).toBeEnabled();
+    expect(api.approveCandidates).not.toHaveBeenCalled();
   });
 
-  it("asks before discarding the selected candidates", async () => {
-    await open();
-    await userEvent.click(screen.getByRole("button", { name: "Discard 3 selected" }));
-    const confirm = screen.getByRole("alertdialog", { name: "Discard candidates confirmation" });
-    expect(confirm).toHaveTextContent("Discard 3 selected candidates?");
-    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
-    expect(api.discardCandidates).not.toHaveBeenCalled();
-    await userEvent.click(screen.getByRole("button", { name: "Discard 3 selected" }));
-    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Discard 3" }));
-    expect(api.discardCandidates).toHaveBeenCalledWith([1, 2, 3]);
-  });
-
-  it("discards the candidate in view and moves on to the next", async () => {
+  it("keeps its place when the candidate in view leaves the list", async () => {
     const served = await open();
-    served.next = snapshot({ waiting: [DIFFERS, LESSON] });
-    await userEvent.click(within(detail()).getByRole("button", { name: "Discard this candidate" }));
-    expect(api.discardCandidates).toHaveBeenCalledWith([1]);
-    expect(await screen.findByDisplayValue(DIFFERS.text)).toBeInTheDocument();
+    await userEvent.click(row(DIFFERS));
+    served.next = snapshot({ waiting: [LOCAL, LESSON] });
+    await stateChanged();
+    expect(await screen.findByText("2 candidates waiting · 0 decided")).toBeInTheDocument();
+    expect(row(LESSON)).toHaveAttribute("aria-current", "true");
+    expect(detail()).toHaveTextContent(LESSON.text);
   });
 
   it("counts what was left out because a note already says it, and lists it on request", async () => {
@@ -283,20 +371,19 @@ describe("candidates window", () => {
     expect(group).not.toHaveTextContent(LEFT_OUT.text);
   });
 
-  const rowsOf = () => within(list()).getAllByRole("listitem").filter((row) => row.classList.contains("review-item"));
-
   it("says when a candidate is approved without the user", async () => {
     // Automatic approval has been on since before these candidates were found.
     await open(snapshot({ autoApprove: true, autoApproveDays: 3, autoApproveSince: NOW - 30 * DAY }));
     expect(rowsOf()[0]).toHaveTextContent("Auto-approves in 1 day");
     expect(rowsOf()[2]).toHaveTextContent("Auto-approves in 3 days");
-    expect(screen.getByRole("contentinfo")).toHaveTextContent("are approved automatically after 3 days");
+    expect(detail()).toHaveTextContent("Auto-approves in 1 day");
+    expect(footer()).toHaveTextContent("are approved automatically after 3 days");
   });
 
   it("counts the days of automatic approval from when it was turned on or the candidate came back to the list", async () => {
     // Turned on a moment ago: what has waited two days is not approved at once.
     await open(snapshot({ autoApprove: true, autoApproveDays: 3, autoApproveSince: NOW }));
-    expect(rowsOf().map((row) => /Auto-approves in \d+ days?/.exec(row.textContent ?? "")?.[0])).toEqual(["Auto-approves in 3 days", "Auto-approves in 3 days", "Auto-approves in 3 days"]);
+    expect(rowsOf().map((item) => /Auto-approves in \d+ days?/.exec(item.textContent ?? "")?.[0])).toEqual(["Auto-approves in 3 days", "Auto-approves in 3 days", "Auto-approves in 3 days"]);
   });
 
   it("gives a candidate that was put back in the list its full waiting time again", async () => {
@@ -305,19 +392,24 @@ describe("candidates window", () => {
     expect(rowsOf()[0]).toHaveTextContent("Auto-approves in 2 days");
   });
 
+  const writtenTab = () => userEvent.click(screen.getByRole("tab", { name: /^Written/ }));
+
   it("says that a written batch still waits for the search index", async () => {
     const late = batch(8, { status: "index_pending", attempts: 2, lastError: "The notes are written, but the search index could not be refreshed: qmd was not found.", result: WRITTEN.result });
     await open(snapshot({ waiting: [], leftOut: [], applied: [late] }));
+    await writtenTab();
     const result = screen.getByRole("region", { name: "Written for lore" });
     expect(result).toHaveTextContent("The notes are written. The search index is not refreshed yet; Lore keeps trying.");
-    expect(result).toHaveTextContent("lore · 2 candidates into 3 notes");
+    expect(result).toHaveTextContent("2 candidates into 3 notes");
   });
 
   it("offers to try a failed batch again or to put its candidates back in the list", async () => {
     const failed = batch(6, { status: "failed", attempts: 3, lastError: "A removal must rest on a candidate that ends that note." });
     await open(snapshot({ waiting: [], leftOut: [], failed: [failed] }));
-    const written = screen.getByRole("region", { name: "Written into the notes" });
-    expect(written).toHaveTextContent("lore: 2 approved candidates could not be written. The notes are unchanged.");
+    expect(screen.getByRole("tab", { name: /^Written/ })).toHaveTextContent("1");
+    await writtenTab();
+    const written = screen.getByRole("region", { name: "Written for lore" });
+    expect(written).toHaveTextContent("2 approved candidates could not be written. The notes are unchanged.");
     expect(written).toHaveTextContent("A removal must rest on a candidate that ends that note.");
     await userEvent.click(within(written).getByRole("button", { name: "Try again" }));
     expect(api.retryApply).toHaveBeenCalledWith(6);
@@ -328,22 +420,86 @@ describe("candidates window", () => {
   it("says when a batch waits to be tried again", async () => {
     const retrying = batch(7, { status: "pending", attempts: 1, nextAttemptAt: NOW + 300, lastError: "The model timed out." });
     await open(snapshot({ waiting: [], leftOut: [], applying: [retrying] }));
-    expect(screen.getByRole("region", { name: "Written into the notes" })).toHaveTextContent("lore: trying again in about 5 min. The model timed out.");
+    await writtenTab();
+    expect(screen.getByRole("region", { name: "Written for lore" })).toHaveTextContent("Trying again in about 5 min. The model timed out.");
   });
 
-  it("says that nothing waits and that nothing was approved yet", async () => {
+  it("says that nothing waits and that nothing was written yet", async () => {
     await open(snapshot({ waiting: [], leftOut: [] }));
-    expect(screen.getByText("0 candidates waiting")).toBeInTheDocument();
+    expect(screen.getByText("0 candidates waiting · 0 decided")).toBeInTheDocument();
     expect(screen.getByText("No candidate is waiting. New ones appear when a session ends.")).toBeInTheDocument();
-    expect(screen.getByRole("region", { name: "Written into the notes" })).toHaveTextContent("Nothing has been approved yet.");
-    expect(screen.getByRole("button", { name: "Approve 0 selected" })).toBeDisabled();
+    expect(screen.getByText("Nothing left to review.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
+    await writtenTab();
+    expect(screen.getByText("Nothing has been written yet. What you approve appears here once Lore writes it.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 
-  it("reports an action that failed and keeps the list", async () => {
+  it("lists every batch by the day it was written, newest first, and counts on the tab what needs the user", async () => {
+    // The clock is fixed so the day a batch falls on does not depend on when the test runs.
+    vi.useFakeTimers({ toFake: ["Date"] });
+    vi.setSystemTime(new Date(2026, 10, 18, 12, 0, 0));
+    try {
+      const at = Math.floor(new Date(2026, 10, 18, 11, 30, 0).getTime() / 1000);
+      const writing = batch(10, { status: "applying", updatedAt: at, project: "viewer" });
+      const failed = batch(11, { status: "failed", updatedAt: at - 60, project: "lore", lastError: "No plan." });
+      const yesterday = batch(12, { updatedAt: at - DAY, result: WRITTEN.result });
+      const older = batch(13, { updatedAt: at - 2 * DAY, project: "viewer", auto: true, candidates: 1, result: { summary: "", notes: [{ path: "projects/viewer/a.md", action: "created", items: ["하나"] }] } });
+      await open(snapshot({ waiting: [], leftOut: [], applying: [writing], failed: [failed], applied: [older, yesterday] }));
+      expect(screen.getByRole("tab", { name: /^Written/ })).toHaveTextContent("Written 2");
+      await writtenTab();
+      const days = within(screen.getByRole("list", { name: "Written batches" })).getAllByRole("list");
+      expect(days.map((day) => day.getAttribute("aria-label"))).toEqual(["Today", "Yesterday", "Nov 16"]);
+      expect(within(days[0]).getAllByRole("button").map((row) => row.textContent)).toEqual(["viewer · 11:30Writing 2 approved candidates into the notes…", "lore · 11:29Could not be written · 2 candidates"]);
+      expect(days[2]).toHaveTextContent("1 candidate into 1 note · approved automatically");
+      // The newest is shown first; another is shown when chosen.
+      expect(screen.getByRole("region", { name: "Written for viewer" })).toHaveTextContent("Writing 2 approved candidates into the notes…");
+      await userEvent.click(within(days[1]).getByRole("button"));
+      expect(screen.getByRole("region", { name: "Written for lore" })).toHaveTextContent("Yesterday 11:30 · 2 candidates into 3 notes · approved by you");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("opens on the Written tab with the batch it was opened for, and turns to another one when asked again", async () => {
+    const other = batch(5, { project: "viewer", updatedAt: NOW - 30, result: { summary: "뷰어 노트", notes: [{ path: "projects/viewer/a.md", action: "created", items: ["하나"] }] } });
+    api.takeCandidatesFocus.mockResolvedValueOnce(4);
+    await open(snapshot({ applied: [other, WRITTEN] }));
+    expect(await screen.findByRole("region", { name: "Written for lore" })).toHaveTextContent("기록 흐름 노트를 후보 승인 방식으로 고쳤습니다.");
+    expect(screen.getByRole("tab", { name: /^Written/ })).toHaveAttribute("aria-selected", "true");
+
+    await userEvent.click(screen.getByRole("tab", { name: /^To review/ }));
+    api.takeCandidatesFocus.mockResolvedValueOnce(5);
+    await act(async () => focusListeners.forEach((listener) => listener()));
+    expect(await screen.findByRole("region", { name: "Written for viewer" })).toHaveTextContent("뷰어 노트");
+    expect(screen.getByRole("tab", { name: /^Written/ })).toHaveAttribute("aria-selected", "true");
+  });
+
+  it("clears the written batches after asking, and the review keys do nothing on the Written tab", async () => {
+    const late = batch(8, { status: "index_pending", result: WRITTEN.result });
+    await open(snapshot({ applied: [WRITTEN, late] }));
+    await writtenTab();
+    await userEvent.keyboard("a");
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    const confirm = screen.getByRole("alertdialog", { name: "Clear written batches confirmation" });
+    // Only what is done is cleared; a batch whose index is still refreshed stays.
+    expect(confirm).toHaveTextContent("Remove 1 written batch from this list? The notes stay as they are.");
+    await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
+    expect(api.clearWritten).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: "Clear" }));
+    await userEvent.click(within(screen.getByRole("alertdialog")).getByRole("button", { name: "Clear" }));
+    expect(api.clearWritten).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("tab", { name: /^To review/ }));
+    expect(stateOf(LOCAL)).toBe("Not decided");
+  });
+
+  it("reports an action that failed and keeps the decisions", async () => {
     await open();
+    await userEvent.keyboard("a");
     api.approveCandidates.mockRejectedValue("The database is locked.");
-    await userEvent.click(screen.getByRole("button", { name: "Approve 3 selected" }));
+    await userEvent.click(screen.getByRole("button", { name: "Apply: approve 1" }));
     expect(await screen.findByRole("alert")).toHaveTextContent("The database is locked.");
-    expect(screen.getByLabelText("Sentence to remember")).toHaveValue(LOCAL.text);
+    expect(stateOf(LOCAL)).toBe("Approved");
+    expect(screen.getByRole("button", { name: "Apply: approve 1" })).toBeEnabled();
   });
 });

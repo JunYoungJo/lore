@@ -71,6 +71,8 @@ pub fn run() {
             candidates::discard_candidates,
             candidates::retry_apply,
             candidates::release_apply,
+            candidates::clear_written,
+            candidates::take_candidates_focus,
             candidates::set_auto_approve,
             cleanup::open_cleanup,
             cleanup::get_cleanup,

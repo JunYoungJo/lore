@@ -227,7 +227,8 @@ fn run(args: &[String]) -> Result<()> {
             let recorder = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
             let qmd = Qmd::new(&settings, &paths.recorder_workdir(), fixed(settings.qmd_timeout_secs));
             let once = args.iter().any(|arg| arg == "--once");
-            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorder.request_json(prompt, schema, artifacts);
+            let memory = settings.knowledge_root();
+            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorder.request_json_reading(prompt, schema, artifacts, &memory);
             loop {
                 worker::approve_overdue(&queue, &settings, worker::now())?;
                 match worker::step(&queue, &settings, &paths, &mut ask, &qmd, &PrintReporter)? {

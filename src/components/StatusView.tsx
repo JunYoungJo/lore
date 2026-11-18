@@ -301,6 +301,7 @@ function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: Ref
   const gone = goneNotes(activity.summary);
   const firstKept = activity.notes.find((note) => !gone.has(note));
   const summary = summaryLine(activity.summary);
+  const batch = /^apply-(\d+)$/.exec(activity.jobId);
   return (
     <AnchoredCard anchor={anchor} label={`Updated notes in ${name}`} role="dialog" className="notes-card" focus={first} onClose={onClose}>
       <div className="notes-card-head">
@@ -325,6 +326,18 @@ function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: Ref
           </button>
         ),
       )}
+      {batch && (
+        <button
+          type="button"
+          className="notes-card-foot"
+          onClick={() => {
+            onClose();
+            void api.openCandidates(Number(batch[1]));
+          }}
+        >
+          Show in Candidates
+        </button>
+      )}
       {canReview && (
         <button
           type="button"
@@ -341,7 +354,7 @@ function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: Ref
   );
 }
 
-function ActivityRow({ activity, now, canReview }: { activity: Activity; now: number; canReview: boolean }) {
+function ActivityRow({ activity, now, canReview, waiting }: { activity: Activity; now: number; canReview: boolean; waiting: number }) {
   const notesButton = useRef<HTMLButtonElement>(null);
   const [open, setOpen] = useState(false);
   const kind = KINDS[activity.kind] ?? KINDS.no_change!;
@@ -349,7 +362,8 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
   const hasNotes = activity.notes.length > 0;
   const offered = activity.kind === "offered";
   const label = activity.kind === "recorded" ? `${plural(activity.notes.length, "note")} updated` : kind.label;
-  const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : activity.error ?? summaryLine(activity.summary);
+  const said = activity.error ?? summaryLine(activity.summary);
+  const detail = hasNotes ? activity.notes.map(fileName).join(" · ") : offered ? `${said} · ${waiting > 0 ? `${waiting} waiting` : "all decided"}` : said;
   const kindTone = kind.tone;
   const tone = activity.error ? "danger" : hasNotes ? "" : "muted";
   return (
@@ -365,7 +379,7 @@ function ActivityRow({ activity, now, canReview }: { activity: Activity; now: nu
             <button ref={notesButton} type="button" className={`row-kind ${kindTone} notes-btn`} aria-haspopup="dialog" aria-expanded={open} onClick={() => setOpen(!open)}>
               {label}
             </button>
-          ) : offered ? (
+          ) : offered && waiting > 0 ? (
             <button type="button" className="row-kind notes-btn" title="Open the candidates" onClick={() => void api.openCandidates()}>
               {label}
             </button>
@@ -480,7 +494,7 @@ export function StatusView({ snapshot }: { snapshot: Snapshot }) {
             <div>Candidates and the notes written from them will appear here.</div>
           </div>
         ) : (
-          recent.map((row) => (isCleanup(row[0]) ? <CleanupRow key={row[0].id} folders={row} now={now} /> : <ActivityRow key={row[0].id} activity={row[0]} now={now} canReview={canReview} />))
+          recent.map((row) => (isCleanup(row[0]) ? <CleanupRow key={row[0].id} folders={row} now={now} /> : <ActivityRow key={row[0].id} activity={row[0]} now={now} canReview={canReview} waiting={snapshot.candidates.byJob[row[0].jobId] ?? 0} />))
         )}
       </section>
     </div>

@@ -37,7 +37,7 @@ Lore is built for developers who work across coding tools, long-running projects
 ## Features
 
 - **Capture as you work** — A prompt hook tells Claude Code and Codex sessions how to mark what is worth remembering while they work. Hooks at session end and before compaction queue the conversation, and the tray app reads it in the background, resuming from where it stopped.
-- **Candidates, not diffs** — The Candidates window lists one statement per row, grouped by session. Tick, reword, approve or discard. A candidate a note already covers is left out and only counted.
+- **Candidates, not diffs** — The Candidates window lists one statement per row, grouped by session. Go through them one at a time, reword if needed, then approve, discard or leave for later, and apply your decisions at once. A candidate a note already covers is left out and only counted.
 - **Notes organized by topic** — The recording model writes what you approved into project and shared notes: new notes, targeted edits, and the removal of a note you were shown. The program rejects any change that does not rest on an approved candidate.
 - **Wait or approve automatically** — A candidate you have not looked at waits. Optionally it is approved as it stands after a number of days you set.
 - **Checkable sources** — Each note lists the quotations it was built from. They are in the note itself, so the evidence travels with it.

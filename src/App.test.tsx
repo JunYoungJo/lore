@@ -58,7 +58,7 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
     attention: [
       { id: "f1", provider: "codex", transcript: "C:/s.jsonl", status: "failed", cursorLine: 0, cursorHash: "", project: "demoengine", sessionId: null, attempts: 3, nextAttemptAt: 0, lastError: "The evidence location or quotation does not match the provided source.", updatedAt: 1 },
     ],
-    candidates: { candidates: 0, sessions: 0, oldestAt: 0 },
+    candidates: { candidates: 0, sessions: 0, oldestAt: 0, byJob: {} },
     failedApplies: 0,
     problem: null,
     settings: {
@@ -188,7 +188,7 @@ describe("status view", () => {
 
   it("puts the waiting candidates first among what needs attention and opens their window", async () => {
     const now = Math.floor(Date.now() / 1000);
-    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 7, sessions: 2, oldestAt: now - 2 * 3600 }, review: 3 }));
+    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 7, sessions: 2, oldestAt: now - 2 * 3600, byJob: { a: 4, b: 3 } }, review: 3 }));
     render(<App />);
     const attention = await screen.findByRole("region", { name: "Needs attention" });
     const titles = [...attention.querySelectorAll(".todo-title")].map((element) => element.textContent);
@@ -202,7 +202,7 @@ describe("status view", () => {
 
   it("says when waiting candidates are approved by themselves", async () => {
     const now = Math.floor(Date.now() / 1000);
-    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 1, sessions: 1, oldestAt: now - 3600 }, settings: { ...snapshot().settings, autoApprove: true, autoApproveDays: 5 } }));
+    api.getSnapshot.mockResolvedValue(calm({ candidates: { candidates: 1, sessions: 1, oldestAt: now - 3600, byJob: { a: 1 } }, settings: { ...snapshot().settings, autoApprove: true, autoApproveDays: 5 } }));
     render(<App />);
     const attention = await screen.findByRole("region", { name: "Needs attention" });
     expect(attention).toHaveTextContent("1 candidate to review");
@@ -294,6 +294,19 @@ describe("status view", () => {
     render(<App />);
     await userEvent.click(await screen.findByRole("button", { name: "2 notes updated" }));
     expect(within(screen.getByRole("dialog", { name: "Updated notes in demo-app" })).queryByRole("button", { name: "Review changes" })).not.toBeInTheDocument();
+  });
+
+  it("shows the batch of written notes in the candidates window, and offers it only for a written batch", async () => {
+    const written = { id: 9, at: 1_800_000_100, jobId: "apply-7", provider: "claude" as const, project: "lore", kind: "recorded" as const, summary: "기록 흐름을 고쳤습니다.", notes: ["projects/lore/flow.md"], error: null };
+    api.getSnapshot.mockResolvedValue(snapshot({ recent: [written, ...snapshot().recent] }));
+    render(<App />);
+    await userEvent.click(await screen.findByRole("button", { name: "2 notes updated" }));
+    expect(within(screen.getByRole("dialog", { name: "Updated notes in demo-app" })).queryByRole("button", { name: "Show in Candidates" })).not.toBeInTheDocument();
+    await userEvent.keyboard("{Escape}");
+    await userEvent.click(screen.getByRole("button", { name: "1 note updated" }));
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Updated notes in lore" })).getByRole("button", { name: "Show in Candidates" }));
+    expect(api.openCandidates).toHaveBeenCalledWith(7);
+    expect(screen.queryByRole("dialog", { name: "Updated notes in lore" })).not.toBeInTheDocument();
   });
 
   it("closes a card with Escape without hiding the popover, and by clicking elsewhere", async () => {
@@ -461,6 +474,26 @@ describe("status view", () => {
     expect(within(recent).getByText("1 failed · appengine · lore · wevrel · common")).toBeInTheDocument();
     expect(within(recent).getByText("demo-app")).toBeInTheDocument();
     expect(within(recent).getAllByText(/changed ·/)).toHaveLength(1);
+  });
+
+  it("says how many candidates of a session still wait, and opens them only while some do", async () => {
+    api.getSnapshot.mockResolvedValue(
+      snapshot({
+        candidates: { candidates: 2, sessions: 1, oldestAt: 1_800_000_000, byJob: { open: 2 } },
+        recent: [
+          { id: 6, at: 1_800_000_100, jobId: "open", provider: "claude", project: "lore", kind: "offered", summary: "3 candidates offered", notes: [], error: null },
+          { id: 5, at: 1_800_000_000, jobId: "decided", provider: "codex", project: "viewer", kind: "offered", summary: "1 candidate offered", notes: [], error: null },
+        ],
+      }),
+    );
+    render(<App />);
+    const recent = await screen.findByRole("region", { name: "Recent activity" });
+    expect(within(recent).getByText("3 candidates offered · 2 waiting")).toBeInTheDocument();
+    expect(within(recent).getByText("1 candidate offered · all decided")).toBeInTheDocument();
+    const links = within(recent).getAllByRole("button", { name: "Candidates" });
+    expect(links).toHaveLength(1);
+    await userEvent.click(links[0]);
+    expect(api.openCandidates).toHaveBeenCalledTimes(1);
   });
 
   it("says so when a cleanup found nothing to change, stopped early or failed", async () => {
@@ -972,13 +1005,14 @@ describe("settings view", () => {
   });
 
   it("leaves candidates waiting by default and opens their window from settings", async () => {
-    await openSettings(snapshot({ candidates: { candidates: 4, sessions: 1, oldestAt: 1_800_000_000 } }));
+    await openSettings(snapshot({ candidates: { candidates: 4, sessions: 1, oldestAt: 1_800_000_000, byJob: { a: 4 } } }));
     const group = screen.getByRole("region", { name: "Candidates" });
     expect(group).toHaveTextContent("4 candidates wait for your review.");
     expect(group).toHaveTextContent("Off: a candidate waits until you approve or discard it.");
     expect(within(group).getByRole("switch", { name: "Approve automatically" })).not.toBeChecked();
     expect(within(group).queryByLabelText("Approve after")).not.toBeInTheDocument();
-    await userEvent.click(within(group).getByRole("button", { name: "Open candidates" }));
+    expect(group).toHaveTextContent("Candidates and what was written");
+    await userEvent.click(within(group).getByRole("button", { name: "Open" }));
     expect(api.openCandidates).toHaveBeenCalledTimes(1);
   });
 

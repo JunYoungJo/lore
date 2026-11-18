@@ -34,6 +34,63 @@ pub struct CliRecorder {
     pub command: Vec<String>,
     pub workdir: PathBuf,
     pub limit: Limit,
+    /// The qmd MCP server over the memory folder's index, as setup registers it for the CLIs.
+    /// A run that reads the notes searches them with it.
+    pub search: Option<Value>,
+    /// The MCP servers of the user's Codex config. A run turns each of them off.
+    pub user_servers: Vec<String>,
+}
+
+/// What a run leaves out of the user's Codex setup: what acts on its own, and the tools and
+/// instructions meant for interactive work. The rest of the config, such as the sandbox, the
+/// provider and the shell environment, is the user's as it stands.
+const CODEX_OFF: [&str; 17] = [
+    "features.hooks=false",
+    "notify=[]",
+    "features.plugins=false",
+    "plugins._default.enabled=false",
+    "features.apps=false",
+    "skills.bundled.enabled=false",
+    "skills.include_instructions=false",
+    "agents.enabled=false",
+    "features.multi_agent=false",
+    "features.memories=false",
+    "features.computer_use=false",
+    "features.browser_use=false",
+    "features.in_app_browser=false",
+    "features.image_generation=false",
+    "features.goals=false",
+    "web_search=\"disabled\"",
+    "project_doc_max_bytes=0",
+];
+
+const SEARCH_SERVER: &str = "lore_qmd";
+const SEARCH_TOOLS: &str = "mcp__lore_qmd__query,mcp__lore_qmd__get,mcp__lore_qmd__multi_get,mcp__lore_qmd__status";
+
+fn codex_user_servers() -> Vec<String> {
+    let config = crate::hooks::config_path(crate::transcript::Provider::Codex).with_file_name("config.toml");
+    let Some(document) = std::fs::read_to_string(config).ok().and_then(|text| text.parse::<toml_edit::DocumentMut>().ok()) else {
+        return Vec::new();
+    };
+    document.get("mcp_servers").and_then(|servers| servers.as_table_like()).map(|servers| servers.iter().map(|(name, _)| name.to_string()).collect()).unwrap_or_default()
+}
+
+fn codex_server(name: &str, entry: &Value) -> Vec<String> {
+    let mut overrides = vec![format!("mcp_servers.{name}.command={}", entry["command"]), format!("mcp_servers.{name}.args={}", entry["args"])];
+    if let Some(env) = entry["env"].as_object() {
+        let pairs: Vec<String> = env.iter().map(|(key, value)| format!("{key}={value}")).collect();
+        overrides.push(format!("mcp_servers.{name}.env={{{}}}", pairs.join(",")));
+    }
+    overrides
+}
+
+/// The last event of a Claude run with `--output-format stream-json`: the same envelope `json` gives.
+fn stream_result(stdout: &str) -> Result<&str> {
+    stdout
+        .lines()
+        .rev()
+        .find(|line| serde_json::from_str::<Value>(line).ok().is_some_and(|event| event.get("type").and_then(Value::as_str) == Some("result")))
+        .ok_or_else(|| Error::transient("The Claude run ended without a result."))
 }
 
 impl CliRecorder {
@@ -49,6 +106,8 @@ impl CliRecorder {
             command: settings.command_of(backend).to_vec(),
             workdir: workdir.to_path_buf(),
             limit,
+            search: crate::setup::mcp(settings, crate::transcript::Provider::Claude).ok(),
+            user_servers: if backend == "codex" { codex_user_servers() } else { Vec::new() },
         }
     }
 
@@ -61,83 +120,99 @@ impl CliRecorder {
 
     #[cfg(test)]
     fn arguments(&self, schema_path: &Path, response_path: &Path) -> Vec<String> {
-        self.arguments_for_schema(schema_path, response_path, &json!({"type": "object"}))
+        self.arguments_for_schema(schema_path, response_path, &json!({"type": "object"}), None)
     }
 
-    fn arguments_for_schema(&self, schema_path: &Path, response_path: &Path, schema: &Value) -> Vec<String> {
+    /// `reading` is a folder the model may read but not change. Without it the model has no tools.
+    fn arguments_for_schema(&self, schema_path: &Path, response_path: &Path, schema: &Value, reading: Option<&Path>) -> Vec<String> {
         let schema_file = schema_path.to_string_lossy().to_string();
         let response_file = response_path.to_string_lossy().to_string();
+        let folder = reading.map(|folder| folder.to_string_lossy().to_string());
         let mut command = self.command.clone();
         if self.backend == "claude" {
             let model = self.model.clone().unwrap_or_else(|| DEFAULT_CLAUDE_MODEL.into());
             let schema_text = schema.to_string();
-            command.extend(["--safe-mode", "--print", "--model", model.as_str()].map(str::to_string));
+            command.extend(["--print", "--model", model.as_str()].map(str::to_string));
             if let Some(effort) = &self.effort {
                 command.extend(["--effort".to_string(), effort.clone()]);
             }
+            let (tools, system, format) = match folder {
+                Some(_) => ("Read,Grep,Glob", "Use only the supplied data and instructions and the notes of the memory folder the data names, which you may search and read but not change. Return the required JSON Schema in the language specified by the task.", "stream-json"),
+                None => ("", "Use only the supplied data and instructions. Return the required JSON Schema in the language specified by the task. Do not use tools.", "json"),
+            };
+            let search = self.search.as_ref().filter(|_| folder.is_some());
+            let servers = match search {
+                Some(entry) => json!({"mcpServers": {SEARCH_SERVER: entry}}),
+                None => json!({"mcpServers": {}}),
+            }
+            .to_string();
             command.extend(
                 [
+                    "--disable-slash-commands",
+                    "--settings",
+                    r#"{"disableAllHooks":true}"#,
                     "--tools",
-                    "",
+                    tools,
                     "--strict-mcp-config",
                     "--mcp-config",
-                    r#"{"mcpServers":{}}"#,
+                    servers.as_str(),
                     "--no-session-persistence",
                     "--system-prompt",
-                    "Use only the supplied data and instructions. Return the required JSON Schema in the language specified by the task. Do not use tools.",
+                    system,
                     "--json-schema",
                     schema_text.as_str(),
                     "--output-format",
-                    "json",
+                    format,
                 ]
                 .map(str::to_string),
             );
+            if search.is_some() {
+                command.extend(["--allowedTools".to_string(), SEARCH_TOOLS.to_string()]);
+            }
+            if let Some(folder) = folder {
+                // stream-json, whose events name every file the model read, requires --verbose.
+                command.extend(["--verbose".to_string(), "--add-dir".to_string(), folder]);
+            }
         } else {
             let model = self.model.clone().unwrap_or_else(|| DEFAULT_CODEX_MODEL.into());
             let effort = format!("model_reasoning_effort=\"{}\"", self.effort.as_deref().unwrap_or(DEFAULT_CODEX_EFFORT));
-            command.extend(
-                [
-                    "exec",
-                    "--ignore-user-config",
-                    "--ignore-rules",
-                    "--ephemeral",
-                    "--skip-git-repo-check",
-                    "--sandbox",
-                    "read-only",
-                    "-m",
-                    model.as_str(),
-                    "-c",
-                    "project_doc_max_bytes=0",
-                    "-c",
-                    "features.memories=false",
-                    "-c",
-                    "features.multi_agent=false",
-                    "-c",
-                    effort.as_str(),
-                    "--output-schema",
-                    schema_file.as_str(),
-                    "--output-last-message",
-                    response_file.as_str(),
-                    "-",
-                ]
-                .map(str::to_string),
-            );
+            command.extend(["exec", "--ignore-rules", "--ephemeral", "--skip-git-repo-check", "--sandbox", "read-only", "-m", model.as_str(), "-c", effort.as_str()].map(str::to_string));
+            let overrides = CODEX_OFF.iter().map(|setting| setting.to_string()).chain(self.user_servers.iter().map(|server| format!("mcp_servers.{server}.enabled=false")));
+            for setting in overrides {
+                command.extend(["-c".to_string(), setting]);
+            }
+            command.extend(["--output-schema", schema_file.as_str(), "--output-last-message", response_file.as_str()].map(str::to_string));
+            if let Some(folder) = folder {
+                command.extend(["-C".to_string(), folder, "--json".to_string()]);
+                for setting in self.search.iter().flat_map(|entry| codex_server(SEARCH_SERVER, entry)) {
+                    command.extend(["-c".to_string(), setting]);
+                }
+            }
+            command.push("-".to_string());
         }
         command
     }
 
     pub fn request_json(&self, prompt: &str, schema: &Value, artifacts: &Path) -> Result<Value> {
+        self.request(prompt, schema, artifacts, None)
+    }
+
+    pub fn request(&self, prompt: &str, schema: &Value, artifacts: &Path, reading: Option<&Path>) -> Result<Value> {
         std::fs::create_dir_all(artifacts)?;
         atomic_write(&artifacts.join("prompt.txt"), prompt.as_bytes())?;
         let schema_path = artifacts.join("schema.json");
         atomic_write(&schema_path, serde_json::to_string_pretty(schema)?.as_bytes())?;
         let response_path = artifacts.join("response.json");
         let _ = std::fs::remove_file(&response_path);
-        let command = self.arguments_for_schema(&schema_path, &response_path, schema);
+        let command = self.arguments_for_schema(&schema_path, &response_path, schema, reading);
         let output = run::run(&command, &self.workdir, &[], Some(prompt), self.limit.as_ref())?;
         atomic_write(&artifacts.join("model-stderr.txt"), output.stderr.as_bytes())?;
+        if reading.is_some() {
+            atomic_write(&artifacts.join("events.jsonl"), output.stdout.as_bytes())?;
+        }
         let text = if self.backend == "claude" {
-            let text = claude_result(&output.stdout)?;
+            let envelope = if reading.is_some() { stream_result(&output.stdout)? } else { output.stdout.as_str() };
+            let text = claude_result(envelope)?;
             atomic_write(&response_path, text.as_bytes())?;
             text
         } else {
@@ -188,6 +263,11 @@ impl Recorders {
     pub fn request_json(&self, prompt: &str, schema: &Value, artifacts: &Path) -> Result<Value> {
         first_that_runs(&self.0, |recorder| recorder.backend.as_str(), |recorder| recorder.request_json(prompt, schema, artifacts))
     }
+
+    /// A request whose answer depends on the notes: the model may read the memory folder but not change it.
+    pub fn request_json_reading(&self, prompt: &str, schema: &Value, artifacts: &Path, folder: &Path) -> Result<Value> {
+        first_that_runs(&self.0, |recorder| recorder.backend.as_str(), |recorder| recorder.request(prompt, schema, artifacts, Some(folder)))
+    }
 }
 
 #[cfg(test)]
@@ -208,6 +288,63 @@ mod tests {
         let text = r#"{"is_error": false, "result": "{\"summary\": \"t\", \"changes\": []}"}"#;
         assert_eq!(summary(claude_result(text).unwrap()), "t");
         assert!(claude_result(r#"{"is_error": true, "result": "limit"}"#).is_err());
+    }
+
+    #[test]
+    fn a_streamed_claude_run_is_read_from_its_last_result_event() {
+        let stdout = "{\"type\":\"system\"}\n{\"type\":\"assistant\"}\n{\"type\":\"result\",\"is_error\":false,\"structured_output\":{\"a\":1}}\n";
+        assert_eq!(claude_result(stream_result(stdout).unwrap()).unwrap(), "{\"a\":1}");
+        assert!(stream_result("{\"type\":\"assistant\"}\n").is_err());
+    }
+
+    #[test]
+    fn a_run_keeps_the_users_setup_but_not_what_acts_on_its_own_and_reads_only_the_notes() {
+        let mut settings = Settings { backend: "claude".into(), ..Settings::default() };
+        settings.commands.claude = vec!["claude.exe".into()];
+        settings.commands.codex = vec!["codex.exe".into()];
+        let schema = json!({"type": "object"});
+        let folder = Path::new("D:/memory");
+        let search = json!({"type": "stdio", "command": "C:\\node.exe", "args": ["qmd", "mcp", "--index", "index"], "env": {"QMD_CONFIG_DIR": "D:/q/config", "XDG_CACHE_HOME": "D:/q/cache"}});
+        let args = |settings: &Settings, reading: Option<&Path>| {
+            let mut recorder = CliRecorder::from_settings(settings, Path::new("w"), run::fixed(1));
+            recorder.search = Some(search.clone());
+            recorder.user_servers = vec!["atlassian".into(), "qmd".into()];
+            recorder.arguments_for_schema(Path::new("s.json"), Path::new("r.json"), &schema, reading)
+        };
+        let after = |args: &[String], flag: &str| args[args.iter().position(|arg| arg == flag).unwrap() + 1].clone();
+        let has = |args: &[String], arg: &str| args.iter().any(|each| each == arg);
+
+        let claude = args(&settings, Some(folder));
+        assert!(!has(&claude, "--safe-mode") && has(&claude, "--disable-slash-commands"));
+        assert_eq!(after(&claude, "--settings"), r#"{"disableAllHooks":true}"#);
+        assert_eq!(after(&claude, "--tools"), "Read,Grep,Glob");
+        assert_eq!(after(&claude, "--add-dir"), "D:/memory");
+        assert_eq!(after(&claude, "--output-format"), "stream-json");
+        assert!(has(&claude, "--strict-mcp-config"));
+        assert_eq!(serde_json::from_str::<Value>(&after(&claude, "--mcp-config")).unwrap(), json!({"mcpServers": {"lore_qmd": search}}));
+        assert_eq!(after(&claude, "--allowedTools"), SEARCH_TOOLS);
+        let without = args(&settings, None);
+        assert_eq!((after(&without, "--tools").as_str(), after(&without, "--output-format").as_str()), ("", "json"));
+        assert_eq!(after(&without, "--mcp-config"), r#"{"mcpServers":{}}"#);
+        assert!(!has(&without, "--add-dir") && !has(&without, "--allowedTools") && has(&without, "--disable-slash-commands"));
+
+        settings.backend = "codex".into();
+        let codex = args(&settings, Some(folder));
+        assert!(!has(&codex, "--ignore-user-config"));
+        assert_eq!(after(&codex, "--sandbox"), "read-only");
+        assert_eq!(after(&codex, "-C"), "D:/memory");
+        assert!(has(&codex, "--json") && has(&codex, "--ephemeral"));
+        for setting in CODEX_OFF.into_iter().chain(["mcp_servers.atlassian.enabled=false", "mcp_servers.qmd.enabled=false"]) {
+            assert!(has(&codex, setting), "{setting}");
+        }
+        assert!(has(&codex, r#"mcp_servers.lore_qmd.command="C:\\node.exe""#));
+        assert!(has(&codex, r#"mcp_servers.lore_qmd.args=["qmd","mcp","--index","index"]"#));
+        assert!(has(&codex, r#"mcp_servers.lore_qmd.env={QMD_CONFIG_DIR="D:/q/config",XDG_CACHE_HOME="D:/q/cache"}"#));
+        assert_eq!(codex.last().map(String::as_str), Some("-"));
+        let plain = args(&settings, None);
+        assert!(has(&plain, "features.hooks=false") && has(&plain, "mcp_servers.atlassian.enabled=false"));
+        assert!(!has(&plain, "-C") && !plain.iter().any(|arg| arg.starts_with("mcp_servers.lore_qmd")));
+        assert_eq!(plain.last().map(String::as_str), Some("-"));
     }
 
     #[test]
@@ -317,7 +454,7 @@ mod tests {
     // Codex accepts a schema only when every object lists all of its properties as required.
     #[test]
     fn every_schema_requires_every_property_of_every_object_for_strict_output() {
-        for (schema, count) in [(crate::prepare::extract_schema(), 3), (crate::prepare::relate_schema(), 2), (crate::integrate::schema(), 4)] {
+        for (schema, count) in [(crate::prepare::extract_schema(), 4), (crate::integrate::schema(), 4)] {
             let all = objects(&schema);
             assert_eq!(all.len(), count);
             for object in all {

@@ -54,6 +54,83 @@ fn is_ours(command: &str, provider: Provider) -> bool {
     command.to_ascii_lowercase().contains("lore-cli") && command.trim_end().ends_with(&format!("hook {}", provider.as_str()))
 }
 
+/// The prompt hook tells every session to run `lore-cli mark`. Without a rule that allows it,
+/// Claude Code asks the user each time, or in auto mode leaves it to a classifier that may refuse.
+pub fn claude_rules(cli: &Path) -> Vec<String> {
+    let mark = format!("{} mark", crate::mark::shell_command(&cli.to_string_lossy()));
+    let mut rules = vec![format!("Bash({mark} *)")];
+    if cfg!(windows) {
+        rules.push(format!("PowerShell({mark} *)"));
+    }
+    rules
+}
+
+fn is_our_rule(rule: &str) -> bool {
+    let lower = rule.to_ascii_lowercase();
+    (rule.starts_with("Bash(") || rule.starts_with("PowerShell(")) && lower.contains("lore-cli") && lower.contains(" mark ")
+}
+
+/// Codex reads every `.rules` file in the `rules` folder next to its config, so Lore keeps its rule in a file of its own.
+pub fn codex_rules_path(config: &Path) -> PathBuf {
+    config.parent().unwrap_or_else(|| Path::new(".")).join("rules").join("lore.rules")
+}
+
+pub fn codex_rules(cli: &Path) -> String {
+    let program = serde_json::to_string(&cli.to_string_lossy().replace('\\', "/")).unwrap_or_default();
+    format!(
+        "# Written by Lore when it connects to Codex, and removed when it disconnects.\n\
+         prefix_rule(\n    pattern = [{program}, \"mark\"],\n    decision = \"allow\",\n    justification = \"lore-cli mark only prints one line, which Lore reads from the session later.\",\n)\n"
+    )
+}
+
+fn allow_list(root: &mut Value) -> Result<&mut Vec<Value>> {
+    let object = root.as_object_mut().ok_or_else(|| Error::permanent("The settings root must be a JSON object."))?;
+    let permissions = object.entry("permissions").or_insert_with(|| Value::Object(Map::new()));
+    let permissions = permissions.as_object_mut().ok_or_else(|| Error::permanent("The permissions field must be a JSON object."))?;
+    permissions.entry("allow").or_insert_with(|| Value::Array(Vec::new())).as_array_mut().ok_or_else(|| Error::permanent("The permissions.allow field must be an array."))
+}
+
+pub fn add_rules(text: Option<&str>, rules: &[String]) -> Result<String> {
+    let mut root = parse(text)?;
+    let allow = allow_list(&mut root)?;
+    allow.retain(|rule| rule.as_str().map(|rule| rules.iter().any(|wanted| wanted == rule) || !is_our_rule(rule)).unwrap_or(true));
+    for rule in rules {
+        if !allow.iter().any(|existing| existing.as_str() == Some(rule)) {
+            allow.push(Value::String(rule.clone()));
+        }
+    }
+    Ok(format!("{}\n", serde_json::to_string_pretty(&root)?))
+}
+
+pub fn remove_rules(text: Option<&str>) -> Result<(String, usize)> {
+    let mut root = parse(text)?;
+    let mut removed = 0;
+    let mut emptied = false;
+    if let Some(permissions) = root.get_mut("permissions").and_then(Value::as_object_mut) {
+        if let Some(allow) = permissions.get_mut("allow").and_then(Value::as_array_mut) {
+            let before = allow.len();
+            allow.retain(|rule| !rule.as_str().map(is_our_rule).unwrap_or(false));
+            removed = before - allow.len();
+            if removed > 0 && allow.is_empty() {
+                permissions.remove("allow");
+            }
+        }
+        emptied = removed > 0 && permissions.is_empty();
+    }
+    if emptied {
+        if let Some(object) = root.as_object_mut() {
+            object.remove("permissions");
+        }
+    }
+    Ok((format!("{}\n", serde_json::to_string_pretty(&root)?), removed))
+}
+
+fn rules_present(text: Option<&str>, rules: &[String]) -> Result<bool> {
+    let root = parse(text)?;
+    let allow = root.get("permissions").and_then(|permissions| permissions.get("allow")).and_then(Value::as_array);
+    Ok(rules.iter().all(|rule| allow.is_some_and(|allow| allow.iter().any(|existing| existing.as_str() == Some(rule)))))
+}
+
 fn parse(text: Option<&str>) -> Result<Value> {
     match text.map(|text| text.trim_start_matches('\u{feff}').trim()).filter(|text| !text.is_empty()) {
         None => Ok(Value::Object(Map::new())),
@@ -174,14 +251,27 @@ fn write_backup(config: &Path, text: &str, now: i64) -> Result<PathBuf> {
 }
 
 pub fn unregister_at(config: &Path, provider: Provider, now: i64) -> Result<usize> {
-    let Some(original) = read_optional(config)? else { return Ok(0) };
-    let (updated, removed) = remove_hooks(Some(&original), provider)?;
-    if removed == 0 {
-        return Ok(0);
+    let mut removed = 0;
+    if provider == Provider::Codex {
+        match std::fs::remove_file(codex_rules_path(config)) {
+            Ok(()) => removed += 1,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    let Some(original) = read_optional(config)? else { return Ok(removed) };
+    let (mut updated, mut changed) = remove_hooks(Some(&original), provider)?;
+    if provider == Provider::Claude {
+        let (text, rules) = remove_rules(Some(&updated))?;
+        updated = text;
+        changed += rules;
+    }
+    if changed == 0 {
+        return Ok(removed);
     }
     write_backup(config, &original, now)?;
     atomic_write(config, updated.as_bytes())?;
-    Ok(removed)
+    Ok(removed + changed)
 }
 
 fn read_optional(path: &Path) -> Result<Option<String>> {
@@ -192,10 +282,26 @@ fn read_optional(path: &Path) -> Result<Option<String>> {
     }
 }
 
+/// Whether a session may run `lore-cli mark` without being asked. A connection without it counts
+/// as missing, so connecting again after an update adds it.
+fn mark_allowed(config: &Path, text: Option<&str>, provider: Provider, cli: &Path) -> Result<bool> {
+    match provider {
+        Provider::Claude => rules_present(text, &claude_rules(cli)),
+        Provider::Codex => Ok(read_optional(&codex_rules_path(config))?.as_deref() == Some(codex_rules(cli).as_str())),
+    }
+}
+
 pub fn status_at(config: &Path, provider: Provider, cli: &Path) -> HookStatus {
     let wanted = command(cli, provider);
     let config_text = config.to_string_lossy().replace('\\', "/");
-    match read_optional(config).and_then(|text| inspect(text.as_deref(), provider, &wanted)) {
+    let checked = read_optional(config).and_then(|text| {
+        let (state, found) = inspect(text.as_deref(), provider, &wanted)?;
+        if state == HookState::Connected && !mark_allowed(config, text.as_deref(), provider, cli)? {
+            return Ok((HookState::Missing, None));
+        }
+        Ok((state, found))
+    });
+    match checked {
         Ok((state, found)) => HookStatus { provider, state, config: config_text, command: wanted, found, error: None },
         Err(error) => HookStatus { provider, state: HookState::Missing, config: config_text, command: wanted, found: None, error: Some(error.message) },
     }
@@ -203,12 +309,18 @@ pub fn status_at(config: &Path, provider: Provider, cli: &Path) -> HookStatus {
 
 pub fn register_at(config: &Path, provider: Provider, cli: &Path, now: i64) -> Result<Option<PathBuf>> {
     let original = read_optional(config)?;
-    let updated = add_hooks(original.as_deref(), provider, &command(cli, provider))?;
+    let mut updated = add_hooks(original.as_deref(), provider, &command(cli, provider))?;
+    if provider == Provider::Claude {
+        updated = add_rules(Some(&updated), &claude_rules(cli))?;
+    }
     let backup = match &original {
         Some(text) => Some(write_backup(config, text, now)?),
         None => None,
     };
     atomic_write(config, updated.as_bytes())?;
+    if provider == Provider::Codex {
+        atomic_write(&codex_rules_path(config), codex_rules(cli).as_bytes())?;
+    }
     Ok(backup)
 }
 
@@ -338,7 +450,8 @@ mod tests {
         assert_eq!(unregister_at(&config, Provider::Codex, 1).unwrap(), 0);
         register_at(&config, Provider::Codex, Path::new(CLI), 2).unwrap();
         let connected = std::fs::read_to_string(&config).unwrap();
-        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), EVENTS.len());
+        // The hooks and Codex's rules file.
+        assert_eq!(unregister_at(&config, Provider::Codex, 3).unwrap(), EVENTS.len() + 1);
         assert_eq!(std::fs::read_to_string(dir.path().join("hooks.json.lore-backup-3")).unwrap(), connected);
         assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Missing);
         assert_eq!(unregister_at(&config, Provider::Codex, 4).unwrap(), 0);
@@ -374,5 +487,84 @@ mod tests {
         std::fs::write(&config, "{broken").unwrap();
         let status = status_at(&config, Provider::Claude, Path::new(CLI));
         assert!(status.error.is_some());
+    }
+
+    fn allow(text: &str) -> Vec<String> {
+        let value: Value = serde_json::from_str(text).unwrap();
+        value["permissions"]["allow"].as_array().map(|rules| rules.iter().map(|rule| rule.as_str().unwrap().to_string()).collect()).unwrap_or_default()
+    }
+
+    #[test]
+    fn connecting_claude_allows_the_mark_command_and_leaves_the_users_rules() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("settings.json");
+        let original = r#"{"permissions": {"allow": ["Bash(npm test)", "Bash(C:/x/lore-cli.exe status *)"], "deny": ["Bash(rm *)"]}, "model": "opus"}"#;
+        std::fs::write(&config, original).unwrap();
+        register_at(&config, Provider::Claude, Path::new(CLI), 1).unwrap();
+        let connected = std::fs::read_to_string(&config).unwrap();
+        let mut expected = vec!["Bash(npm test)".to_string(), "Bash(C:/x/lore-cli.exe status *)".to_string()];
+        expected.extend(claude_rules(Path::new(CLI)));
+        assert_eq!(allow(&connected), expected);
+        assert!(allow(&connected).contains(&"Bash(C:/Apps/lore/lore-cli.exe mark *)".to_string()));
+        assert_eq!(status_at(&config, Provider::Claude, Path::new(CLI)).state, HookState::Connected);
+        register_at(&config, Provider::Claude, Path::new(CLI), 2).unwrap();
+        assert_eq!(std::fs::read_to_string(&config).unwrap(), connected);
+
+        assert_eq!(unregister_at(&config, Provider::Claude, 3).unwrap(), EVENTS.len() + claude_rules(Path::new(CLI)).len());
+        let disconnected: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        let mut restored: Value = serde_json::from_str(original).unwrap();
+        restored["hooks"] = json!({});
+        assert_eq!(disconnected, restored);
+    }
+
+    #[test]
+    fn disconnecting_claude_takes_away_a_permissions_block_only_lore_made() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("settings.json");
+        std::fs::write(&config, r#"{"model": "opus"}"#).unwrap();
+        register_at(&config, Provider::Claude, Path::new(CLI), 1).unwrap();
+        unregister_at(&config, Provider::Claude, 2).unwrap();
+        let value: Value = serde_json::from_str(&std::fs::read_to_string(&config).unwrap()).unwrap();
+        assert!(value.get("permissions").is_none(), "{value}");
+    }
+
+    #[test]
+    fn a_connection_without_the_mark_rule_counts_as_missing_and_connecting_again_adds_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("settings.json");
+        std::fs::write(&config, add_hooks(None, Provider::Claude, &wanted(Provider::Claude)).unwrap()).unwrap();
+        assert_eq!(status_at(&config, Provider::Claude, Path::new(CLI)).state, HookState::Missing);
+        register_at(&config, Provider::Claude, Path::new(CLI), 1).unwrap();
+        assert_eq!(status_at(&config, Provider::Claude, Path::new(CLI)).state, HookState::Connected);
+    }
+
+    #[test]
+    fn a_mark_rule_for_an_old_install_path_is_replaced() {
+        let old = r#"{"permissions": {"allow": ["Bash(D:/old/lore-cli.exe mark *)", "Bash(npm test)"]}}"#;
+        let updated = add_rules(Some(old), &claude_rules(Path::new(CLI))).unwrap();
+        let mut expected = vec!["Bash(npm test)".to_string()];
+        expected.extend(claude_rules(Path::new(CLI)));
+        assert_eq!(allow(&updated), expected);
+    }
+
+    #[test]
+    fn connecting_codex_writes_its_own_rules_file_and_disconnecting_removes_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("hooks.json");
+        let rules = dir.path().join("rules").join("lore.rules");
+        register_at(&config, Provider::Codex, Path::new(CLI), 1).unwrap();
+        let written = std::fs::read_to_string(&rules).unwrap();
+        assert!(written.contains("pattern = [\"C:/Apps/lore/lore-cli.exe\", \"mark\"]"), "{written}");
+        assert!(written.contains("decision = \"allow\""), "{written}");
+        assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Connected);
+
+        std::fs::remove_file(&rules).unwrap();
+        assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Missing);
+        register_at(&config, Provider::Codex, Path::new(CLI), 2).unwrap();
+        assert_eq!(status_at(&config, Provider::Codex, Path::new(CLI)).state, HookState::Connected);
+
+        unregister_at(&config, Provider::Codex, 3).unwrap();
+        assert!(!rules.exists());
+        assert!(dir.path().join("rules").exists());
     }
 }

@@ -80,6 +80,8 @@ pub struct AppState {
     syncing: AtomicBool,
     setup_busy: AtomicBool,
     catalog: Mutex<Catalog>,
+    /// The written batch the candidates window shows next, when something opened it for that batch.
+    candidates_focus: Mutex<Option<i64>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -104,7 +106,16 @@ impl AppState {
             syncing: AtomicBool::new(false),
             setup_busy: AtomicBool::new(false),
             catalog: Mutex::new(Catalog::default()),
+            candidates_focus: Mutex::new(None),
         }
+    }
+
+    pub fn focus_batch(&self, id: i64) {
+        *lock(&self.candidates_focus) = Some(id);
+    }
+
+    pub fn take_focus(&self) -> Option<i64> {
+        lock(&self.candidates_focus).take()
     }
 
     pub fn catalog(&self) -> Catalog {

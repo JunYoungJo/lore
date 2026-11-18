@@ -4,14 +4,14 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::candidate::{ApplyResult, ApplyStatus, Batch, Origin};
+use crate::candidate::{ApplyResult, ApplyStatus, Batch, Kind, Origin};
 use crate::cleanup::{self, Target};
 use crate::error::{Error, Failure, Result};
 use crate::integrate::{self, Plan};
 use crate::notes;
-use crate::prepare::{self, Ask, NOTES_PER_CANDIDATE};
+use crate::prepare::{self, Ask};
 use crate::proposal::summary_with_log;
-use crate::qmd::{collection_name, Qmd};
+use crate::qmd::Qmd;
 use crate::queue::{Activity, Job, Queue, Status};
 use crate::review;
 use crate::session::{self, previous_failure, Reading};
@@ -72,8 +72,6 @@ pub trait Reporter {
 /// The search index over the notes, as the worker uses it.
 pub trait Index {
     fn available(&self) -> bool;
-    /// The paths of the notes most likely to be about `query`, best first.
-    fn search(&self, query: &str, collections: &[String], limit: usize) -> Vec<String>;
     /// Bring the index up to date with the notes in `root`.
     fn reindex(&self, root: &Path) -> Result<()>;
 }
@@ -81,11 +79,6 @@ pub trait Index {
 impl Index for Qmd {
     fn available(&self) -> bool {
         Qmd::available(self)
-    }
-
-    // A search that fails finds nothing: the candidate is then treated as new content.
-    fn search(&self, query: &str, collections: &[String], limit: usize) -> Vec<String> {
-        self.rank(query, collections, limit).unwrap_or_default()
     }
 
     fn reindex(&self, root: &Path) -> Result<()> {
@@ -125,12 +118,8 @@ fn prune_reviews(folder: &Path) {
     }
 }
 
-fn collections(project: &str) -> Vec<String> {
-    vec!["common".to_string(), collection_name(project)]
-}
-
 /// Read the new part of a session and store what it offers. No note is touched.
-fn offer(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, index: &dyn Index, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
+fn offer(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
     let session = match session::read(job, settings.max_chars, &paths.recorder_workdir())? {
         Reading::Skip(reason) => {
             queue.skip(&job.id, &reason, now())?;
@@ -149,15 +138,12 @@ fn offer(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, index: &dy
         Reading::Ready(session) => session,
     };
     queue.set_session(&job.id, Some(&session.project), &session.parsed.session_id)?;
-    if !index.available() {
-        return Err(Error::transient(NO_QMD));
-    }
     reporter.started(&Work::Session(job.clone()), &session.project);
-    let notes = notes::load_scope(&settings.knowledge_root(), &session.project)?;
-    let scope = collections(&session.project);
-    let search = |text: &str| index.search(text, &scope, NOTES_PER_CANDIDATE);
+    let root = settings.knowledge_root();
+    let notes = notes::load_scope(&root, &session.project)?;
+    let waiting: Vec<(Kind, String)> = queue.waiting_candidates()?.into_iter().filter(|candidate| candidate.project == session.project).map(|candidate| (candidate.kind, candidate.text)).collect();
     let artifacts = paths.reviews().join(format!("{}-{}", job.id, session.batch.end_line));
-    let prepared = prepare::prepare(&session, &notes, previous_failure(job.attempts, job.last_error.as_deref()), &artifacts, ask, &search)?;
+    let prepared = prepare::prepare(&session, &notes, &waiting, &root, previous_failure(job.attempts, job.last_error.as_deref()), &artifacts, ask)?;
     prune_reviews(&paths.reviews());
     let origin = Origin { job_id: &job.id, session_id: &session.parsed.session_id, provider: job.provider, project: &session.project, language: &prepared.language };
     let done = queue.store_candidates(&origin, session.batch.end_line, &session.end_hash, session.has_more(), job.requests, &prepared.offered, &prepared.left_out, now())?;
@@ -218,10 +204,8 @@ fn write(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, index: &dy
             }
             reporter.started(&Work::Apply(batch.clone()), &batch.project);
             let notes = notes::load_scope(&root, &batch.project)?;
-            let scope = collections(&batch.project);
-            let search = |text: &str| index.search(text, &scope, NOTES_PER_CANDIDATE);
             let artifacts = paths.reviews().join(apply_run_id(batch.id));
-            let plan = integrate::plan(&batch.project, &members, &notes, previous_failure(batch.attempts, batch.last_error.as_deref()), &artifacts, ask, &search)?;
+            let plan = integrate::plan(&batch.project, &members, &notes, &root, previous_failure(batch.attempts, batch.last_error.as_deref()), &artifacts, ask)?;
             prune_reviews(&paths.reviews());
             // What the user approved by hand counts as reviewed. A note that already waits for
             // review keeps waiting: what an automatic approval or a cleanup changed in it has not
@@ -290,8 +274,9 @@ fn activity(work: &Work, outcome: &Outcome, fallback: Provider) -> Option<Activi
     let base = |kind: &str, project: Option<String>| Activity { id: 0, at: now(), job_id: work.id(), provider, project, kind: kind.into(), summary: None, notes: Vec::new(), error: None };
     Some(match outcome {
         Outcome::Offered { project, candidates, left_out, .. } => {
-            let waiting = format!("{} to review", plural(*candidates, "candidate", "candidates"));
-            let summary = if *left_out == 0 { waiting } else { format!("{waiting}, {left_out} already in your notes") };
+            // An entry of the activity says what happened then; how many still wait is shown next to it from the queue.
+            let offered = format!("{} offered", plural(*candidates, "candidate", "candidates"));
+            let summary = if *left_out == 0 { offered } else { format!("{offered}, {left_out} already in your notes") };
             Activity { summary: Some(summary), ..base("offered", Some(project.clone())) }
         }
         Outcome::Nothing { project } => Activity { summary: Some("Nothing to remember in this part of the session.".into()), ..base("no_change", Some(project.clone())) },
@@ -312,7 +297,7 @@ pub fn step(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, index: 
         };
         (Work::Apply(batch), outcome)
     } else if let Some(job) = queue.next_job(now())? {
-        let outcome = match offer(queue, settings, paths, ask, index, &job, reporter) {
+        let outcome = match offer(queue, settings, paths, ask, &job, reporter) {
             Ok(outcome) => outcome,
             Err(error) => {
                 let project = queue.get(&job.id)?.and_then(|current| current.project);
@@ -544,9 +529,6 @@ mod tests {
         fn available(&self) -> bool {
             !self.missing
         }
-        fn search(&self, _: &str, _: &[String], _: usize) -> Vec<String> {
-            Vec::new()
-        }
         fn reindex(&self, _: &Path) -> Result<()> {
             let mut failing = self.failing.borrow_mut();
             if *failing > 0 {
@@ -577,8 +559,12 @@ mod tests {
         }
     }
 
+    fn unrelated() -> Value {
+        json!({"type": "new", "note": "", "quotes": []})
+    }
+
     fn extraction() -> Value {
-        json!({"language": "English", "candidates": [{"kind": "decision", "text": "Finished jobs raise no desktop alert.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "Finished jobs get no desktop alert."}]}]})
+        json!({"language": "English", "candidates": [{"kind": "decision", "text": "Finished jobs raise no desktop alert.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "Finished jobs get no desktop alert."}], "relation": unrelated()}]})
     }
 
     fn new_note() -> Value {
@@ -629,7 +615,7 @@ mod tests {
         assert_eq!(applied.result.as_ref().unwrap().notes[0].action, NoteAction::Created);
         let recent = fixture.queue.recent_activity(5).unwrap();
         assert_eq!(recent.iter().map(|entry| (entry.kind.as_str(), entry.job_id.clone())).collect::<Vec<_>>(), vec![("recorded", work.id()), ("offered", job.clone())]);
-        assert_eq!(recent[1].summary.as_deref(), Some("1 candidate to review"));
+        assert_eq!(recent[1].summary.as_deref(), Some("1 candidate offered"));
         assert_eq!(seen.started.borrow().as_slice(), [format!("{job}:demo"), format!("{}:demo", work.id())]);
     }
 
@@ -649,7 +635,7 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
         let job = fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        let invented = json!({"language": "English", "candidates": [{"kind": "decision", "text": "No alerts.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "never alert me"}]}]});
+        let invented = json!({"language": "English", "candidates": [{"kind": "decision", "text": "No alerts.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "never alert me"}], "relation": unrelated()}]});
         let (_, outcome) = run(&fixture, &index, &seen, vec![invented]).unwrap();
         assert!(matches!(&outcome, Outcome::Failed { message, gave_up: false, .. } if message.contains("does not match")), "{outcome:?}");
         assert!(fixture.queue.waiting_candidates().unwrap().is_empty());
@@ -665,7 +651,7 @@ mod tests {
         let batch = fixture.queue.approve_candidates(&[id], auto, 200).unwrap()[0];
         let members = fixture.queue.batch_candidates(batch).unwrap();
         let mut ask = |_: &str, _: &Value, _: &Path| Ok(new_note());
-        let plan = integrate::plan("demo", &members, &Default::default(), None, Path::new("/tmp/a"), &mut ask, &|_| Vec::new()).unwrap();
+        let plan = integrate::plan("demo", &members, &Default::default(), Path::new("/tmp/memory"), None, Path::new("/tmp/a"), &mut ask).unwrap();
         (id, batch, plan)
     }
 
@@ -827,7 +813,7 @@ mod tests {
         assert_eq!((open.status, open.cursor_line, open.ended), (Status::Pending, 2, true));
         assert!(seen.ended.borrow().is_empty());
         // The next step reads the line that was added and then tells the user of both candidates.
-        let second = json!({"language": "English", "candidates": [{"kind": "decision", "text": "The status panel stays.", "scope": "project", "mark": -1, "evidence": [{"ref": "L3", "quote": "Also keep the status panel."}]}]});
+        let second = json!({"language": "English", "candidates": [{"kind": "decision", "text": "The status panel stays.", "scope": "project", "mark": -1, "evidence": [{"ref": "L3", "quote": "Also keep the status panel."}], "relation": unrelated()}]});
         let (_, outcome) = run(&fixture, &index, &seen, vec![second]).unwrap();
         assert_eq!(outcome, Outcome::Offered { project: "demo".into(), candidates: 1, left_out: 0 });
         assert_eq!(seen.ended.borrow().as_slice(), [("demo".to_string(), 2)]);
@@ -882,14 +868,18 @@ mod tests {
     }
 
     #[test]
-    fn missing_qmd_is_reported_before_any_model_is_called() {
+    fn missing_qmd_stops_writing_notes_before_the_model_is_called_but_not_reading_sessions() {
         let fixture = fixture();
         let (index, seen) = (FakeIndex { missing: true, ..FakeIndex::default() }, Seen::default());
-        fixture.queue.enqueue(Provider::Claude, &session(&fixture, "a.jsonl", 2), false, 100).unwrap();
-        let (_, outcome) = run(&fixture, &index, &seen, Vec::new()).unwrap();
+        fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
+        let (_, outcome) = run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        assert_eq!(outcome, Outcome::Offered { project: "demo".into(), candidates: 1, left_out: 0 });
+        let waiting = fixture.queue.waiting_candidates().unwrap();
+        fixture.queue.approve_candidates(&[waiting[0].id], false, now()).unwrap();
+        let (work, outcome) = run(&fixture, &index, &seen, Vec::new()).unwrap();
+        assert!(matches!(work, Work::Apply(_)));
         assert!(matches!(outcome, Outcome::Failed { message, .. } if message.contains("qmd")));
-        assert!(seen.started.borrow().is_empty());
-        assert!(!fixture.paths.reviews().exists());
+        assert_eq!(seen.started.borrow().len(), 1);
     }
 
     #[test]

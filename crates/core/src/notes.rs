@@ -75,16 +75,6 @@ pub fn title_of(content: &str) -> String {
     content.lines().find_map(|line| line.strip_prefix("# ")).map(|title| title.trim().to_string()).unwrap_or_default()
 }
 
-pub fn collection_path(file: &str) -> Option<String> {
-    let rest = file.strip_prefix("qmd://")?;
-    let (collection, path) = rest.split_once('/')?;
-    if collection == "common" {
-        Some(format!("common/{path}"))
-    } else {
-        collection.strip_prefix("project-").map(|project| format!("projects/{project}/{path}"))
-    }
-}
-
 /// Write the changed notes, then delete the removed ones. A note that took in another is on
 /// disk before the other goes, so an interruption leaves a duplicate rather than a loss.
 pub fn write_notes(knowledge_root: &Path, rendered: &BTreeMap<String, String>, removed: &BTreeSet<String>) -> Result<()> {
@@ -109,14 +99,6 @@ pub fn write_notes(knowledge_root: &Path, rendered: &BTreeMap<String, String>, r
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn qmd_file_uris_map_to_knowledge_paths() {
-        assert_eq!(collection_path("qmd://common/review.md").as_deref(), Some("common/review.md"));
-        assert_eq!(collection_path("qmd://project-demo-app/flow.md").as_deref(), Some("projects/demo-app/flow.md"));
-        assert_eq!(collection_path("qmd://other/x.md"), None);
-        assert_eq!(collection_path("projects/x.md"), None);
-    }
 
     #[test]
     fn scope_reads_common_and_the_project_only() {

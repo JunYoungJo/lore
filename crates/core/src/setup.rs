@@ -74,7 +74,7 @@ fn resource_path(home: &Path, provider: Provider, kind: &Kind) -> PathBuf {
     }
 }
 
-fn mcp(settings: &Settings, provider: Provider) -> Result<Value> {
+pub(crate) fn mcp(settings: &Settings, provider: Provider) -> Result<Value> {
     let (command, rest) = settings.commands.qmd.split_first().ok_or_else(|| bad("Install qmd and check again before connecting."))?;
     let args: Vec<_> = rest.iter().cloned().chain(["mcp".into(), "--index".into(), settings.qmd_index.clone()]).collect();
     let mut entry = json!({"command": command, "args": args, "env": {

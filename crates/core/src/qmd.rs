@@ -1,14 +1,10 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::Value;
-
 use crate::error::{Error, Result};
-use crate::notes::collection_path;
 use crate::run::{self, Limit};
 use crate::settings::Settings;
 
-const SEARCH_LIMIT: Duration = Duration::from_secs(180);
 const CONTEXT_LIMIT: Duration = Duration::from_secs(120);
 
 pub const QWEN_EMBED: &str = "hf:Qwen/Qwen3-Embedding-0.6B-GGUF/Qwen3-Embedding-0.6B-Q8_0.gguf";
@@ -87,16 +83,11 @@ pub fn collection_name(project: &str) -> String {
     format!("project-{project}")
 }
 
-fn parse_results(output: &str) -> Result<Value> {
-    let mut offset = 0;
-    for line in output.split_inclusive('\n') {
-        if line.trim_start().starts_with('[') {
-            return serde_json::from_str(output[offset..].trim()).map_err(|error| Error::transient(format!("Could not read qmd search results: {error}")));
-        }
-        offset += line.len();
-    }
-    Err(Error::transient("qmd search returned no results."))
+/// The search collections that hold a project's notes, each with the folder of the memory folder it is.
+pub fn search_collections(project: &str) -> std::collections::BTreeMap<String, String> {
+    [("common".to_string(), "common/".to_string()), (collection_name(project), format!("projects/{project}/"))].into()
 }
+
 
 pub fn has_collection(config_text: &str, name: &str) -> bool {
     let wanted = format!("  {name}:");
@@ -174,21 +165,6 @@ impl Qmd {
         self.config_dir.join(format!("{}.yml", self.index))
     }
 
-    pub fn rank(&self, query: &str, collections: &[String], limit: usize) -> Result<Vec<String>> {
-        let limit = limit.to_string();
-        let mut args = vec!["vsearch", query, "--format", "json", "-n", limit.as_str()];
-        for collection in collections {
-            args.push("-c");
-            args.push(collection);
-        }
-        let output = self.run(&args, &|| SEARCH_LIMIT)?;
-        let results = parse_results(&output)?;
-        Ok(results
-            .as_array()
-            .map(|items| items.iter().filter_map(|item| item.get("file").and_then(Value::as_str)).filter_map(collection_path).collect())
-            .unwrap_or_default())
-    }
-
     pub fn configured_collections(&self) -> Result<String> {
         match std::fs::read_to_string(self.config_path()) {
             Ok(text) => Ok(text),
@@ -252,14 +228,6 @@ mod tests {
         let without_models = with_embed_model("collections:\n  common:\n    path: x\n", QWEN_EMBED);
         assert_eq!(without_models, format!("collections:\n  common:\n    path: x\nmodels:\n  embed: \"{QWEN_EMBED}\"\n"));
         assert_eq!(collection_names(&without_models), ["common"]);
-    }
-
-    #[test]
-    fn search_results_are_read_after_progress_lines_that_echo_the_query() {
-        let output = "├─ [경고] 이유\n└─ hyde: x\nSearching 2 vector queries...\n[\n  {\"file\": \"qmd://project-demo/a.md\"}\n]\n";
-        let results = parse_results(output).unwrap();
-        assert_eq!(results[0]["file"], "qmd://project-demo/a.md");
-        assert!(parse_results("no results\n").is_err());
     }
 
     #[test]
