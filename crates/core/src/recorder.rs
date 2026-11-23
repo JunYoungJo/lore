@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde_json::{json, Value};
@@ -252,6 +253,102 @@ pub fn first_that_runs<R, T>(entries: &[R], name: impl Fn(&R) -> &str, mut attem
     Err(Error::transient("No recording CLI is configured."))
 }
 
+const GET: &str = "mcp__lore_qmd__get";
+const MULTI_GET: &str = "mcp__lore_qmd__multi_get";
+const RESOURCE: &str = "[Resource from lore_qmd at ";
+
+/// The notes the model read whole as they are now, from the record a reading run leaves
+/// (`events.jsonl`: Claude's stream-json events or Codex's JSON events). `notes` holds the
+/// current text of each note that can count, and `collections` maps a qmd collection to its
+/// folder. `Read` takes a file from disk, so a successful call without a range counts. qmd
+/// returns the copy in its index, which can be older than the file, so a note it returned
+/// counts only when that copy is the note's current text. Search results, grep and shell
+/// commands show parts of notes and never count.
+pub fn notes_read(record: &str, memory: &Path, collections: &BTreeMap<String, String>, notes: &BTreeMap<String, String>) -> BTreeSet<String> {
+    let mut asked: BTreeMap<String, (String, Value)> = BTreeMap::new();
+    let mut read = BTreeSet::new();
+    let parts = |value: &Value| value.as_array().cloned().unwrap_or_default();
+    for event in record.lines().filter_map(|line| serde_json::from_str::<Value>(line).ok()) {
+        match event["type"].as_str() {
+            Some("assistant") => {
+                for call in parts(&event["message"]["content"]).into_iter().filter(|part| part["type"] == "tool_use") {
+                    asked.insert(call["id"].as_str().unwrap_or_default().to_string(), (call["name"].as_str().unwrap_or_default().to_string(), call["input"].clone()));
+                }
+            }
+            Some("user") => {
+                for result in parts(&event["message"]["content"]).into_iter().filter(|part| part["type"] == "tool_result") {
+                    let Some((name, input)) = asked.remove(result["tool_use_id"].as_str().unwrap_or_default()) else { continue };
+                    if result["is_error"].as_bool().unwrap_or(false) {
+                        continue;
+                    }
+                    if name == "Read" && input["offset"].is_null() && input["limit"].is_null() {
+                        read.extend(input["file_path"].as_str().and_then(|path| under(memory, path)).filter(|path| notes.contains_key(path)));
+                    } else if name == GET || name == MULTI_GET {
+                        let texts: Vec<String> = match &result["content"] {
+                            Value::String(text) => vec![text.clone()],
+                            content => parts(content).iter().filter_map(|part| part["text"].as_str().map(str::to_string)).collect(),
+                        };
+                        for text in texts {
+                            if let Some((uri, body)) = text.strip_prefix(RESOURCE).and_then(|rest| rest.split_once("] ")) {
+                                read.extend(returned_whole(uri, body, collections, notes));
+                            }
+                        }
+                    }
+                }
+            }
+            Some("item.completed") => {
+                let item = &event["item"];
+                let tool = item["tool"].as_str().unwrap_or_default();
+                if item["type"] == "mcp_tool_call" && item["server"] == SEARCH_SERVER && item["status"] == "completed" && matches!(tool, "get" | "multi_get") {
+                    for part in parts(&item["result"]["content"]).iter().filter(|part| part["type"] == "resource") {
+                        let resource = &part["resource"];
+                        read.extend(returned_whole(resource["uri"].as_str().unwrap_or_default(), resource["text"].as_str().unwrap_or_default(), collections, notes));
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    read
+}
+
+/// A path under the memory folder, relative to it with forward slashes.
+fn under(memory: &Path, path: &str) -> Option<String> {
+    let root = memory.to_string_lossy().replace('\\', "/").trim_end_matches('/').to_string();
+    let path = path.replace('\\', "/");
+    let head = path.get(..root.len())?;
+    let same = if cfg!(windows) { head.eq_ignore_ascii_case(&root) } else { head == root };
+    same.then(|| path[root.len()..].strip_prefix('/').map(str::to_string)).flatten()
+}
+
+/// The note qmd returned as `uri` (`qmd://<collection>/<path>`), when `text` is all of its
+/// current text: qmd may put the collection's context and line numbers before it.
+fn returned_whole(uri: &str, text: &str, collections: &BTreeMap<String, String>, notes: &BTreeMap<String, String>) -> Option<String> {
+    let (collection, rest) = uri.strip_prefix("qmd://")?.split_once('/')?;
+    let path = format!("{}{rest}", collections.get(collection)?);
+    let current = notes.get(&path)?.replace("\r\n", "\n");
+    let text = text.replace("\r\n", "\n");
+    let text = match text.strip_prefix("<!-- Context:").and_then(|rest| rest.split_once("-->\n\n")) {
+        Some((_, body)) => body.to_string(),
+        None => text,
+    };
+    let plain = without_line_numbers(text.trim_end()).unwrap_or(text);
+    (plain.trim_end() == current.trim_end()).then_some(path)
+}
+
+/// The text without the `N: ` that qmd puts before each line, when every line has it in order.
+fn without_line_numbers(text: &str) -> Option<String> {
+    let lines: Option<Vec<&str>> = text
+        .split('\n')
+        .enumerate()
+        .map(|(index, line)| {
+            let number = format!("{}:", index + 1);
+            line.strip_prefix(&number).map(|rest| rest.strip_prefix(' ').unwrap_or(rest))
+        })
+        .collect();
+    lines.map(|lines| lines.join("\n"))
+}
+
 /// The recording CLIs in the order they are tried.
 pub struct Recorders(pub Vec<CliRecorder>);
 
@@ -454,7 +551,7 @@ mod tests {
     // Codex accepts a schema only when every object lists all of its properties as required.
     #[test]
     fn every_schema_requires_every_property_of_every_object_for_strict_output() {
-        for (schema, count) in [(crate::prepare::extract_schema(), 4), (crate::integrate::schema(), 4)] {
+        for (schema, count) in [(crate::prepare::schema(), 3), (crate::integrate::schema(), 4)] {
             let all = objects(&schema);
             assert_eq!(all.len(), count);
             for object in all {
@@ -469,5 +566,72 @@ mod tests {
         let edit = &crate::integrate::schema()["properties"]["changes"]["items"]["properties"]["edits"]["items"];
         let ops: Vec<&str> = edit["properties"]["op"]["enum"].as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert_eq!(ops, crate::proposal::EDIT_OPS);
+    }
+
+    const ALERTS: &str = "---\nqmd:\n  metadata:\n    project: \"demo\"\n---\n\n# 알림\n\n알림은 띄우지 않는다.\n";
+    const QUEUE: &str = "# 큐\n\n하나씩 처리한다.\n";
+
+    fn read_from(record: &[Value]) -> Vec<String> {
+        let collections = BTreeMap::from([("common".to_string(), "common/".to_string()), ("project-demo".to_string(), "projects/demo/".to_string())]);
+        let notes = BTreeMap::from([("common/a.md", "# A\n"), ("common/b.md", "# B\n"), ("projects/demo/alerts.md", ALERTS), ("projects/demo/queue.md", QUEUE)].map(|(path, text)| (path.to_string(), text.to_string())));
+        let text = record.iter().map(Value::to_string).collect::<Vec<_>>().join("\n");
+        notes_read(&text, Path::new("D:/memory"), &collections, &notes).into_iter().collect()
+    }
+
+    fn claude_call(id: &str, name: &str, input: Value, content: Value, failed: bool) -> [Value; 2] {
+        [
+            json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": name, "input": input}]}}),
+            json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": content, "is_error": failed}]}}),
+        ]
+    }
+
+    /// How Claude shows what a qmd call returned: one text per note, after the note's address.
+    fn returned(texts: &[(&str, &str)]) -> Value {
+        json!(texts.iter().map(|(uri, text)| json!({"type": "text", "text": format!("[Resource from lore_qmd at {uri}] {text}")})).collect::<Vec<_>>())
+    }
+
+    fn numbered(text: &str) -> String {
+        text.split('\n').enumerate().map(|(index, line)| format!("{}: {line}", index + 1)).collect::<Vec<_>>().join("\n")
+    }
+
+    #[test]
+    fn a_claude_run_reads_a_note_with_read_when_it_took_the_whole_file() {
+        let record: Vec<Value> = [
+            claude_call("1", "Read", json!({"file_path": "D:\\memory\\common\\a.md"}), json!("1→# A"), false),
+            claude_call("2", "Read", json!({"file_path": "D:/memory/common/b.md", "offset": 10, "limit": 5}), json!("…"), false),
+            claude_call("3", "Read", json!({"file_path": "D:/memory/projects/demo/queue.md"}), json!("File does not exist."), true),
+            claude_call("4", "Read", json!({"file_path": "D:/elsewhere/projects/demo/alerts.md"}), json!("…"), false),
+            claude_call("5", "Grep", json!({"pattern": "알림", "path": "D:/memory"}), json!("projects/demo/alerts.md:9:알림은 띄우지 않는다."), false),
+        ]
+        .concat();
+        assert_eq!(read_from(&record), vec!["common/a.md"]);
+    }
+
+    #[test]
+    fn a_note_qmd_returned_counts_only_when_it_returned_the_current_text_whole() {
+        let context = format!("<!-- Context: Decisions of the demo project. -->\n\n{}", numbered(ALERTS));
+        let record: Vec<Value> = [
+            claude_call("1", "mcp__lore_qmd__get", json!({"file": "project-demo/alerts.md"}), returned(&[("qmd://project-demo/alerts.md", &context)]), false),
+            claude_call("2", "mcp__lore_qmd__multi_get", json!({"pattern": "common/*.md"}), json!([{"type": "text", "text": "Errors:\nFile not found: common/c.md"}, {"type": "text", "text": "[Resource from lore_qmd at qmd://common/a.md] # A\n"}]), false),
+            // An older copy in the index, a cut-off copy and a search result do not count.
+            claude_call("3", "mcp__lore_qmd__get", json!({"file": "project-demo/queue.md"}), returned(&[("qmd://project-demo/queue.md", "# 큐\n\n둘까지 처리한다.\n")]), false),
+            claude_call("4", "mcp__lore_qmd__multi_get", json!({"pattern": "common/b.md", "maxLines": 1}), returned(&[("qmd://common/b.md", "# B\n\n[... truncated 1 more lines]")]), false),
+            claude_call("5", "mcp__lore_qmd__query", json!({"searches": []}), json!("{\"results\":[{\"file\":\"common/b.md\"}]}"), false),
+        ]
+        .concat();
+        assert_eq!(read_from(&record), vec!["common/a.md", "projects/demo/alerts.md"]);
+    }
+
+    #[test]
+    fn a_codex_run_reads_a_note_through_a_completed_qmd_call_and_not_through_the_shell() {
+        let item = |tool: &str, uri: &str, text: &str, status: &str| json!({"type": "item.completed", "item": {"type": "mcp_tool_call", "server": "lore_qmd", "tool": tool, "arguments": {}, "status": status, "result": {"content": [{"type": "resource", "resource": {"uri": uri, "text": text}}]}}});
+        let record = vec![
+            item("get", "qmd://common/a.md", "# A\n", "completed"),
+            item("get", "qmd://common/b.md", "# B\n", "failed"),
+            item("multi_get", "qmd://project-demo/queue.md", &numbered(QUEUE), "completed"),
+            json!({"type": "item.completed", "item": {"type": "command_execution", "command": "cat D:/memory/projects/demo/alerts.md", "aggregated_output": ALERTS, "status": "completed"}}),
+        ];
+        assert_eq!(read_from(&record), vec!["common/a.md", "projects/demo/queue.md"]);
+        assert!(read_from(&[]).is_empty());
     }
 }

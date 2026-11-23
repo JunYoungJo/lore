@@ -43,11 +43,10 @@ export interface Candidate {
   sessionId: string;
   provider: Provider;
   project: string;
-  language: string;
   kind: CandidateKind;
   text: string;
-  /** `marked`: the session flagged it while working. `found`: the model found it afterwards. */
-  source: "marked" | "found";
+  /** The id of the mark the session printed for it. */
+  mark: string;
   scope: CandidateScope;
   evidence: Quote[];
   relation: Relation;
@@ -242,13 +241,11 @@ export interface Settings {
   autoApproveDays: number;
   /** When automatic approval was turned on; 0 while it is off. */
   autoApproveSince: number;
-  /** How much new conversation one step of a session reads. */
-  maxChars: number;
   qmdIndex: string;
   commands: Commands;
 }
 
-export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "fallback" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars">;
+export type EditableSettings = Pick<Settings, "knowledgeRoot" | "backend" | "fallback" | "models" | "efforts" | "modelTimeoutSecs" | "qmdTimeoutSecs">;
 
 export type HookState = "connected" | "other_path" | "missing";
 

@@ -20,8 +20,8 @@ export function JobActions({ job }: { job: Job }) {
       {confirming && (
         <ConfirmCard
           anchor={discardButton}
-          label="Skip failed segment confirmation"
-          message="Skip the failed segment? If the source cannot be read, recording will stop for this session."
+          label="Skip failed session confirmation"
+          message="Skip what this session holds so far? If the source cannot be read, recording will stop for this session."
           action="Skip"
           onConfirm={() => void discard(job.id)}
           onClose={() => setConfirming(false)}

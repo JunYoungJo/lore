@@ -2,12 +2,11 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use lore_core::candidate::Kind;
 use lore_core::cleanup;
 use lore_core::error::{Error, Result};
 use lore_core::hook::{self, Hook};
 use lore_core::hooks;
-use lore_core::mark::{self, Mark};
+use lore_core::mark;
 use lore_core::qmd::Qmd;
 use lore_core::queue::{Queue, Status};
 use lore_core::recorder::Recorders;
@@ -20,9 +19,11 @@ use lore_core::worker::{self, Discarded, Outcome, Reporter, Work, WorkerLock};
 const USAGE: &str = "Usage: lore-cli <command>
   hook <claude|codex>              Handle hook input (JSON on stdin): queue a session that ended or is
                                   about to be compacted, or tell a session how to mark
-  mark <decision|correction|lesson> <sentence>
-                                  Mark something worth remembering, from inside a session. Prints one
-                                  line that Lore reads from the session file; writes nothing
+  mark <decision|correction|lesson> <sentences> --by <user|agent> [--said <the user's words>]... [--common]
+       [--updates <note> | --retires <note>] [--quote <the note's words>]... [--replaces <id>]
+                                  Mark something to remember, from inside a session. Prints one line
+                                  with the mark's id, which Lore reads from the session file; writes nothing
+  mark cancel <id>                Withdraw a mark of the same session
   enqueue <claude|codex> <file>     Queue a transcript file
   scan                            Find sessions missed by hooks and queue them
   work [--once]                   Process queued sessions and approved candidates (tray app must be closed)
@@ -183,14 +184,7 @@ fn run(args: &[String]) -> Result<()> {
                 Hook::Ignored => {}
             }
         }
-        "mark" => {
-            let kind = args.get(1).and_then(|value| Kind::parse(value)).ok_or_else(|| Error::permanent("Use mark <decision|correction|lesson> <sentence>."))?;
-            let text = args[2..].join(" ").trim().to_string();
-            if text.is_empty() {
-                return Err(Error::permanent("Use mark <decision|correction|lesson> <sentence>."));
-            }
-            println!("{}", mark::line(&Mark { kind, text }));
-        }
+        "mark" => println!("{}", mark::line(&mark::from_args(&args[1..], mark::new_id())?)),
         "enqueue" => {
             let provider = provider(args.get(1))?;
             let transcript = args.get(2).ok_or_else(|| Error::permanent("A transcript path is required."))?;
@@ -259,10 +253,10 @@ fn run(args: &[String]) -> Result<()> {
         }
         "discard" => {
             let id = args.get(1).ok_or_else(|| Error::permanent("A job ID is required."))?;
-            let (settings, queue) = open(&paths)?;
-            match worker::discard(&queue, &settings, &paths, id, worker::now())? {
+            let (_, queue) = open(&paths)?;
+            match worker::discard(&queue, &paths, id, worker::now())? {
                 None => return Err(Error::permanent("Only failed jobs can be skipped.")),
-                Some(Discarded::Batch { after_line, end_line }) => println!("Skipping transcript lines {}–{end_line}: {id}", after_line + 1),
+                Some(Discarded::Step { after_line, end_line }) => println!("Skipping transcript lines {}–{end_line}: {id}", after_line + 1),
                 Some(Discarded::Session { reason }) => println!("Recording stopped for unreadable session: {id} ({reason})"),
             }
         }
@@ -313,10 +307,10 @@ fn run(args: &[String]) -> Result<()> {
             let absorb = args.iter().zip(args.iter().skip(1)).filter(|(flag, _)| *flag == "--absorb").map(|(_, folder)| folder.clone()).collect();
             let target = cleanup::Target { folder: folder.clone(), absorb };
             let recorders = Recorders::from_settings(&settings, &paths.recorder_workdir(), fixed(settings.model_timeout_secs), |_| None);
-            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorders.request_json(prompt, schema, artifacts);
+            let mut ask = |prompt: &str, schema: &serde_json::Value, artifacts: &Path| recorders.request_json_reading(prompt, schema, artifacts, &root);
             let outcome = if args.iter().any(|arg| arg == "--dry-run") {
                 let artifacts = paths.reviews().join(format!("cleanup-preview-{folder}-{}", worker::now()));
-                let outcome = cleanup::run(&root, &target, cleanup::REQUEST_CHARS, &lore_core::review::local_date(), &artifacts, false, &mut ask)?;
+                let outcome = cleanup::run(&root, &target, cleanup::ASSIGNED_CHARS, &lore_core::review::local_date(), &artifacts, false, &mut ask)?;
                 println!("Preview only; no file was changed. The model's answer is in {}", artifacts.display());
                 outcome
             } else {

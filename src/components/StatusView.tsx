@@ -313,19 +313,21 @@ function NotesCard({ anchor, activity, name, canReview, onClose }: { anchor: Ref
         </p>
       )}
       {activity.error && <p className="notes-card-summary danger">Stopped early: {activity.error}</p>}
-      {activity.notes.map((note) =>
-        gone.has(note) ? (
-          <div key={note} className="notes-card-row gone" title={gone.get(note)}>
-            <FileX size={14} strokeWidth={1.9} />
-            <span>{fileName(note)}</span>
-          </div>
-        ) : (
-          <button key={note} ref={note === firstKept ? first : undefined} type="button" className="notes-card-row" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
-            <FileText size={14} strokeWidth={1.9} />
-            <span>{fileName(note)}</span>
-          </button>
-        ),
-      )}
+      <div className="notes-card-list">
+        {activity.notes.map((note) =>
+          gone.has(note) ? (
+            <div key={note} className="notes-card-row gone" title={gone.get(note)}>
+              <FileX size={14} strokeWidth={1.9} />
+              <span>{fileName(note)}</span>
+            </div>
+          ) : (
+            <button key={note} ref={note === firstKept ? first : undefined} type="button" className="notes-card-row" title={note} aria-label={`Open ${fileName(note)}`} onClick={() => void api.openNote(note)}>
+              <FileText size={14} strokeWidth={1.9} />
+              <span>{fileName(note)}</span>
+            </button>
+          ),
+        )}
+      </div>
       {batch && (
         <button
           type="button"

@@ -43,10 +43,9 @@ function candidate(id: number, overrides: Partial<Candidate> = {}): Candidate {
     sessionId: "session-lore",
     provider: "claude",
     project: "lore",
-    language: "ko",
     kind: "decision",
     text: `후보 ${id}`,
-    source: "found",
+    mark: `m${id}`,
     scope: "project",
     evidence: [{ ref: "t3", quote: "큐는 로컬. 싱크는 문서만.", speaker: "user", at: "2026-11-17 10:42:05" }],
     relation: { type: "new", note: "", title: "", quotes: [] },
@@ -58,7 +57,7 @@ function candidate(id: number, overrides: Partial<Candidate> = {}): Candidate {
   };
 }
 
-const LOCAL = candidate(1, { text: "후보 큐는 이 PC에만 두고, 싱크는 노트만 한다.", source: "marked" });
+const LOCAL = candidate(1, { text: "후보 큐는 이 PC에만 두고, 싱크는 노트만 한다." });
 const DIFFERS = candidate(2, {
   kind: "correction",
   text: "세션이 끝나면 노트를 바로 쓰지 않고 후보를 목록으로 보여 준다.",
@@ -155,7 +154,8 @@ describe("candidates window", () => {
     expect([LOCAL, DIFFERS, LESSON].map(stateOf)).toEqual(["Not decided", "Not decided", "Not decided"]);
     expect(row(LOCAL)).toHaveAttribute("aria-current", "true");
     expect(detail()).toHaveTextContent(LOCAL.text);
-    expect(detail()).toHaveTextContent("marked by the session while it worked");
+    expect(detail()).toHaveTextContent("Claude session · found");
+    expect(detail()).not.toHaveTextContent("marked by the session");
     expect(detail()).toHaveTextContent("You · 2026-11-17 10:42");
     expect(detail()).toHaveTextContent("큐는 로컬. 싱크는 문서만.");
     expect(detail()).toHaveTextContent("Adds this to your notes");
@@ -298,6 +298,63 @@ describe("candidates window", () => {
     expect(api.discardCandidates).not.toHaveBeenCalled();
   });
 
+  it("scrolls the list to put the candidate it moves to at the top, under its session's name when it is the session's first, but not one the user clicks", async () => {
+    const scroll = vi.spyOn(Element.prototype, "scrollIntoView");
+    try {
+      await open();
+      scroll.mockClear();
+      await userEvent.keyboard("d");
+      expect(scroll.mock.contexts).toEqual([row(DIFFERS)]);
+      expect(scroll).toHaveBeenLastCalledWith({ block: "start" });
+      await userEvent.keyboard("{ArrowDown}");
+      expect(scroll.mock.contexts.at(-1)).toBe(screen.getByRole("list", { name: "viewer · Codex · 1h ago" }).closest("li"));
+      scroll.mockClear();
+      await userEvent.click(row(LOCAL));
+      expect(row(LOCAL)).toHaveAttribute("aria-current", "true");
+      expect(scroll).not.toHaveBeenCalled();
+      await userEvent.click(within(detail()).getByRole("button", { name: "Next candidate" }));
+      expect(scroll.mock.contexts).toEqual([row(DIFFERS)]);
+    } finally {
+      scroll.mockRestore();
+    }
+  });
+
+  describe("a session read again after another session's candidates arrived", () => {
+    const LATER = candidate(6, { text: "세션을 다시 읽어 나온 후보도 같은 세션 묶음에 보인다.", createdAt: NOW - 60 });
+    const arrived = () => snapshot({ waiting: [LOCAL, LESSON, LATER] });
+
+    it("steps through the candidates in the order the list shows them", async () => {
+      await open(arrived());
+      expect(rowsOf().map((button) => button.textContent)).toEqual([expect.stringContaining(LOCAL.text), expect.stringContaining(LATER.text), expect.stringContaining(LESSON.text)]);
+      expect(detail()).toHaveTextContent("1 of 3");
+      await userEvent.keyboard("d");
+      expect(row(LATER)).toHaveAttribute("aria-current", "true");
+      expect(detail()).toHaveTextContent("2 of 3");
+      await userEvent.keyboard("{ArrowDown}");
+      expect(row(LESSON)).toHaveAttribute("aria-current", "true");
+      expect(detail()).toHaveTextContent("3 of 3");
+      await userEvent.keyboard("k");
+      expect(row(LATER)).toHaveAttribute("aria-current", "true");
+    });
+
+    it("goes on with the candidate below in the list after applying", async () => {
+      const served = await open(arrived());
+      await userEvent.keyboard("a");
+      served.next = snapshot({ waiting: [LESSON, LATER] });
+      await userEvent.click(screen.getByRole("button", { name: "Apply: approve 1" }));
+      expect(await screen.findByText("2 candidates waiting · 0 decided")).toBeInTheDocument();
+      expect(row(LATER)).toHaveAttribute("aria-current", "true");
+    });
+
+    it("goes on with the candidate below in the list when the one in view leaves it", async () => {
+      const served = await open(arrived());
+      served.next = snapshot({ waiting: [LESSON, LATER] });
+      await stateChanged();
+      expect(await screen.findByText("2 candidates waiting · 0 decided")).toBeInTheDocument();
+      expect(row(LATER)).toHaveAttribute("aria-current", "true");
+    });
+  });
+
   it("applies the decisions at once and goes on with what is left", async () => {
     const served = await open();
     await userEvent.keyboard("a");
@@ -349,6 +406,22 @@ describe("candidates window", () => {
     expect(api.approveCandidates).not.toHaveBeenCalled();
   });
 
+  it("discards the undecided candidates together, but not a decided one, nor one that arrived while the window was open until it is seen", async () => {
+    const served = await open(snapshot({ waiting: [LOCAL, DIFFERS] }));
+    await userEvent.keyboard("a");
+    served.next = snapshot();
+    await stateChanged();
+    expect(await within(list()).findByRole("button", { name: new RegExp(LESSON.text) })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Discard 1 undecided candidate" }));
+    expect([LOCAL, DIFFERS, LESSON].map(stateOf)).toEqual(["Approved", "Discarded", "Not decided"]);
+    await userEvent.click(row(LESSON));
+    await userEvent.click(screen.getByRole("button", { name: "Discard 1 undecided candidate" }));
+    expect([LOCAL, DIFFERS, LESSON].map(stateOf)).toEqual(["Approved", "Discarded", "Discarded"]);
+    expect(screen.getByRole("button", { name: "Discard 0 undecided candidates" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Apply: approve 1, discard 2" })).toBeEnabled();
+    expect(api.discardCandidates).not.toHaveBeenCalled();
+  });
+
   it("keeps its place when the candidate in view leaves the list", async () => {
     const served = await open();
     await userEvent.click(row(DIFFERS));
@@ -377,7 +450,6 @@ describe("candidates window", () => {
     expect(rowsOf()[0]).toHaveTextContent("Auto-approves in 1 day");
     expect(rowsOf()[2]).toHaveTextContent("Auto-approves in 3 days");
     expect(detail()).toHaveTextContent("Auto-approves in 1 day");
-    expect(footer()).toHaveTextContent("are approved automatically after 3 days");
   });
 
   it("counts the days of automatic approval from when it was turned on or the candidate came back to the list", async () => {
@@ -427,11 +499,11 @@ describe("candidates window", () => {
   it("says that nothing waits and that nothing was written yet", async () => {
     await open(snapshot({ waiting: [], leftOut: [] }));
     expect(screen.getByText("0 candidates waiting · 0 decided")).toBeInTheDocument();
-    expect(screen.getByText("No candidate is waiting. New ones appear when a session ends.")).toBeInTheDocument();
+    expect(screen.getByText("No candidate is waiting.")).toBeInTheDocument();
     expect(screen.getByText("Nothing left to review.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Apply" })).toBeDisabled();
     await writtenTab();
-    expect(screen.getByText("Nothing has been written yet. What you approve appears here once Lore writes it.")).toBeInTheDocument();
+    expect(screen.getByText("Nothing has been written yet.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Clear" })).toBeDisabled();
   });
 

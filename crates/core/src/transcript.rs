@@ -7,7 +7,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 
 use crate::error::{Error, Result};
-use crate::mark::{marks_in, Placed};
+use crate::mark::{entries_in, Placed};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -66,7 +66,7 @@ pub struct Parsed {
     pub cwd: String,
     pub worker_session: bool,
     pub turns: Vec<Turn>,
-    /// What the session marked as worth remembering, read from the results of its tool calls.
+    /// What the session marked to be remembered, read from the results of its tool calls.
     pub marks: Vec<Placed>,
     pub complete_lines: usize,
 }
@@ -247,6 +247,10 @@ fn queued_input(record: &Value) -> Option<(String, Origin)> {
     Some((message_text(attachment.get("prompt")), origin))
 }
 
+fn placed(output: &Value, line: usize, record: &Value) -> Vec<Placed> {
+    entries_in(output).into_iter().map(|entry| Placed { line, at: text_field(record, "timestamp"), entry }).collect()
+}
+
 pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
     let mut result = Parsed::default();
     let mut seen = HashSet::new();
@@ -282,7 +286,7 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                 let item = payload.get("type").and_then(Value::as_str).unwrap_or("");
                 if kind == Some("response_item") && item.ends_with("_output") && !worker {
                     if let Some(output) = payload.get("output") {
-                        result.marks.extend(marks_in(output).into_iter().map(|mark| Placed { line: number, mark }));
+                        result.marks.extend(placed(output, number, &record));
                     }
                     continue;
                 }
@@ -307,7 +311,7 @@ pub fn parse(data: &[u8], provider: Provider) -> Result<Parsed> {
                 } else {
                     if !truthy(record.get("isSidechain")) {
                         for output in claude_tool_outputs(&record) {
-                            result.marks.extend(marks_in(output).into_iter().map(|mark| Placed { line: number, mark }));
+                            result.marks.extend(placed(output, number, &record));
                         }
                     }
                     let text = match record.get("message") {

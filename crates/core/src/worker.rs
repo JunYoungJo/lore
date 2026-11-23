@@ -4,12 +4,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-use crate::candidate::{ApplyResult, ApplyStatus, Batch, Kind, Origin};
+use crate::candidate::{ApplyResult, ApplyStatus, Batch, Origin};
 use crate::cleanup::{self, Target};
 use crate::error::{Error, Failure, Result};
 use crate::integrate::{self, Plan};
 use crate::notes;
-use crate::prepare::{self, Ask};
+use crate::prepare::{self, Ask, Waiting};
 use crate::proposal::summary_with_log;
 use crate::qmd::Qmd;
 use crate::queue::{Activity, Job, Queue, Status};
@@ -118,20 +118,15 @@ fn prune_reviews(folder: &Path) {
     }
 }
 
-/// Read the new part of a session and store what it offers. No note is touched.
+/// Read what a session marked since its last step and store what that offers. No note is touched.
 fn offer(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, job: &Job, reporter: &dyn Reporter) -> Result<Outcome> {
-    let session = match session::read(job, settings.max_chars, &paths.recorder_workdir())? {
+    let session = match session::read(job, &paths.recorder_workdir())? {
         Reading::Skip(reason) => {
             queue.skip(&job.id, &reason, now())?;
             return Ok(Outcome::Skipped { reason });
         }
-        Reading::NothingNew { end_line, end_hash } => {
-            let done = queue.finish(&job.id, end_line, &end_hash, false, job.requests, now())?;
-            announce(queue, job, job.project.as_deref(), done, reporter)?;
-            return Ok(Outcome::CaughtUp);
-        }
-        Reading::AgentOnly { end_line, end_hash, has_more } => {
-            let done = queue.finish(&job.id, end_line, &end_hash, has_more, job.requests, now())?;
+        Reading::NothingNew { end_line, end_hash } | Reading::AgentOnly { end_line, end_hash } => {
+            let done = queue.finish(&job.id, end_line, &end_hash, job.requests, now())?;
             announce(queue, job, job.project.as_deref(), done, reporter)?;
             return Ok(Outcome::CaughtUp);
         }
@@ -141,12 +136,19 @@ fn offer(queue: &Queue, settings: &Settings, paths: &Paths, ask: Ask, job: &Job,
     reporter.started(&Work::Session(job.clone()), &session.project);
     let root = settings.knowledge_root();
     let notes = notes::load_scope(&root, &session.project)?;
-    let waiting: Vec<(Kind, String)> = queue.waiting_candidates()?.into_iter().filter(|candidate| candidate.project == session.project).map(|candidate| (candidate.kind, candidate.text)).collect();
-    let artifacts = paths.reviews().join(format!("{}-{}", job.id, session.batch.end_line));
+    let withdrawn = &session.marks.withdrawn;
+    // What this step withdraws leaves the list, so the model is not asked to compare with it.
+    let waiting: Vec<Waiting> = queue
+        .waiting_candidates()?
+        .into_iter()
+        .filter(|candidate| candidate.project == session.project && !(candidate.job_id == job.id && withdrawn.contains(&candidate.mark)))
+        .map(|candidate| Waiting { id: candidate.id, kind: candidate.kind, text: candidate.text })
+        .collect();
+    let artifacts = paths.reviews().join(format!("{}-{}", job.id, session.end_line));
     let prepared = prepare::prepare(&session, &notes, &waiting, &root, previous_failure(job.attempts, job.last_error.as_deref()), &artifacts, ask)?;
     prune_reviews(&paths.reviews());
-    let origin = Origin { job_id: &job.id, session_id: &session.parsed.session_id, provider: job.provider, project: &session.project, language: &prepared.language };
-    let done = queue.store_candidates(&origin, session.batch.end_line, &session.end_hash, session.has_more(), job.requests, &prepared.offered, &prepared.left_out, now())?;
+    let origin = Origin { job_id: &job.id, session_id: &session.parsed.session_id, provider: job.provider, project: &session.project };
+    let done = queue.store_candidates(&origin, session.end_line, &session.end_hash, job.requests, &prepared.offered, &prepared.left_out, withdrawn, now())?;
     announce(queue, job, Some(&session.project), done, reporter)?;
     if prepared.offered.is_empty() {
         return Ok(Outcome::Nothing { project: session.project.clone() });
@@ -408,25 +410,24 @@ pub fn undo_cleanup(queue: &Queue, settings: &Settings, qmd: &Qmd, folder: &str)
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Discarded {
-    Batch { after_line: usize, end_line: usize },
+    Step { after_line: usize, end_line: usize },
     Session { reason: String },
 }
 
-/// Pass over the part of a session that kept failing, so that the rest of it can be read.
-pub fn discard(queue: &Queue, settings: &Settings, paths: &Paths, id: &str, now: i64) -> Result<Option<Discarded>> {
+/// Pass over the part of a session that kept failing, so that what the session adds later can be read.
+pub fn discard(queue: &Queue, paths: &Paths, id: &str, now: i64) -> Result<Option<Discarded>> {
     let Some(job) = queue.get(id)?.filter(|job| job.status == Status::Failed) else { return Ok(None) };
-    let batch = match session::read(&job, settings.max_chars, &paths.recorder_workdir()) {
-        Ok(Reading::Ready(session)) => Ok((session.batch.end_line, session.end_hash.clone(), session.has_more())),
-        Ok(Reading::AgentOnly { end_line, end_hash, has_more }) => Ok((end_line, end_hash, has_more)),
-        Ok(Reading::NothingNew { end_line, end_hash }) => Ok((end_line, end_hash, false)),
+    let step = match session::read(&job, &paths.recorder_workdir()) {
+        Ok(Reading::Ready(session)) => Ok((session.end_line, session.end_hash.clone())),
+        Ok(Reading::AgentOnly { end_line, end_hash } | Reading::NothingNew { end_line, end_hash }) => Ok((end_line, end_hash)),
         Ok(Reading::Skip(reason)) => Err(reason),
         Err(error) if error.failure == Failure::Permanent => Err(error.message),
         Err(error) => return Err(error),
     };
-    Ok(Some(match batch {
-        Ok((end_line, end_hash, has_more)) => {
-            queue.finish(id, end_line, &end_hash, has_more, job.requests, now)?;
-            Discarded::Batch { after_line: job.cursor_line, end_line }
+    Ok(Some(match step {
+        Ok((end_line, end_hash)) => {
+            queue.finish(id, end_line, &end_hash, job.requests, now)?;
+            Discarded::Step { after_line: job.cursor_line, end_line }
         }
         Err(reason) => {
             queue.skip(id, &reason, now)?;
@@ -438,7 +439,8 @@ pub fn discard(queue: &Queue, settings: &Settings, paths: &Paths, id: &str, now:
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::candidate::{NoteAction, State};
+    use crate::candidate::{Kind, NoteAction, Scope, Speaker, State};
+    use crate::mark;
     use crate::queue::MAX_REJECTED_ATTEMPTS;
     use crate::transcript::{compressed_path, prefix_hash};
     use serde_json::{json, Value};
@@ -457,7 +459,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         fs::create_dir_all(dir.path().join("demo").join(".git")).unwrap();
         let queue = Queue::open(&dir.path().join("state.sqlite")).unwrap();
-        let settings = Settings { max_chars: 1_000, knowledge_root: dir.path().join("memory").to_string_lossy().to_string(), ..Settings::default() };
+        let settings = Settings { knowledge_root: dir.path().join("memory").to_string_lossy().to_string(), ..Settings::default() };
         let paths = Paths { root: dir.path().join("app") };
         Fixture { dir, queue, settings, paths }
     }
@@ -481,7 +483,13 @@ mod tests {
         path
     }
 
-    /// A session in which the user decides one thing.
+    /// The line of a session file that holds what `lore-cli mark` printed for a decision of the user.
+    fn mark_record(fixture: &Fixture, id: &str, text: &str, replaces: Option<&str>) -> Value {
+        let entry = mark::Entry::Mark(mark::Mark { id: id.into(), kind: Kind::Decision, text: text.into(), by: Speaker::User, said: vec!["Finished jobs get no desktop alert.".into()], scope: Scope::Project, replaces: replaces.map(str::to_string), note: None });
+        json!({"type": "user", "uuid": format!("r-{id}"), "userType": "external", "timestamp": "2026-11-05T12:01:00Z", "cwd": fixture.dir.path().join("demo").to_string_lossy(), "sessionId": "sess-1", "message": {"content": [{"type": "tool_result", "tool_use_id": "t", "content": mark::line(&entry)}]}})
+    }
+
+    /// A session in which the user decides one thing and the session marks it.
     fn decided(fixture: &Fixture) -> PathBuf {
         let cwd = fixture.dir.path().join("demo");
         let lines = [
@@ -494,6 +502,7 @@ mod tests {
             record["sessionId"] = json!("sess-1");
             text.push_str(&format!("{record}\n"));
         }
+        text.push_str(&format!("{}\n", mark_record(fixture, "a1b2c3", "Finished jobs raise no desktop alert.", None)));
         let path = fixture.dir.path().join("decided.jsonl");
         fs::write(&path, text).unwrap();
         path
@@ -513,7 +522,7 @@ mod tests {
     }
 
     fn discard_job(fixture: &Fixture, id: &str) -> Result<Option<Discarded>> {
-        discard(&fixture.queue, &fixture.settings, &fixture.paths, id, 200)
+        discard(&fixture.queue, &fixture.paths, id, 200)
     }
 
     /// A search index that is there, finds nothing, and counts how often it was refreshed.
@@ -563,8 +572,9 @@ mod tests {
         json!({"type": "new", "note": "", "quotes": []})
     }
 
-    fn extraction() -> Value {
-        json!({"language": "English", "candidates": [{"kind": "decision", "text": "Finished jobs raise no desktop alert.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "Finished jobs get no desktop alert."}], "relation": unrelated()}]})
+    /// The model's answer for a step with one mark that no note and no waiting candidate states.
+    fn placement() -> Value {
+        json!({"marks": [{"mark": 0, "waiting": 0, "relation": unrelated()}]})
     }
 
     fn new_note() -> Value {
@@ -588,14 +598,14 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
         let job = fixture.queue.enqueue(Provider::Claude, &decided(&fixture), true, 100).unwrap();
-        let (_, outcome) = run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        let (_, outcome) = run(&fixture, &index, &seen, vec![placement()]).unwrap();
         assert_eq!(outcome, Outcome::Offered { project: "demo".into(), candidates: 1, left_out: 0 });
         // The session has ended and all of it is read, so the user is told.
         assert_eq!(seen.ended.borrow().as_slice(), [("demo".to_string(), 1)]);
         let waiting = fixture.queue.waiting_candidates().unwrap();
-        assert_eq!((waiting[0].text.as_str(), waiting[0].project.as_str(), waiting[0].language.as_str()), ("Finished jobs raise no desktop alert.", "demo", "English"));
+        assert_eq!((waiting[0].text.as_str(), waiting[0].project.as_str(), waiting[0].mark.as_str()), ("Finished jobs raise no desktop alert.", "demo", "a1b2c3"));
         let stored = fixture.queue.get(&job).unwrap().unwrap();
-        assert_eq!((stored.status, stored.cursor_line, stored.ended), (Status::Done, 2, false));
+        assert_eq!((stored.status, stored.cursor_line, stored.ended), (Status::Done, 3, false));
         let note = fixture.settings.knowledge_root().join("projects").join("demo").join("alerts.md");
         assert!(!note.exists());
         // With nothing approved there is nothing to do.
@@ -620,14 +630,40 @@ mod tests {
     }
 
     #[test]
-    fn a_session_with_nothing_to_remember_finishes_without_candidates() {
+    fn a_session_that_marked_nothing_finishes_without_candidates_and_without_the_model() {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
-        fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        let (_, outcome) = run(&fixture, &index, &seen, vec![json!({"language": "English", "candidates": []})]).unwrap();
+        let job = fixture.queue.enqueue(Provider::Claude, &session(&fixture, "quiet.jsonl", 4), false, 100).unwrap();
+        // `run` panics if the model is asked.
+        let (_, outcome) = run(&fixture, &index, &seen, Vec::new()).unwrap();
         assert_eq!(outcome, Outcome::Nothing { project: "demo".into() });
         assert!(fixture.queue.waiting_candidates().unwrap().is_empty());
         assert_eq!(fixture.queue.recent_activity(1).unwrap()[0].kind, "no_change");
+        assert_eq!(fixture.queue.get(&job).unwrap().unwrap().cursor_line, 4);
+    }
+
+    #[test]
+    fn a_mark_the_session_replaces_after_a_compaction_leaves_the_list_and_the_new_version_waits() {
+        let fixture = fixture();
+        let (index, seen) = (FakeIndex::default(), Seen::default());
+        let transcript = decided(&fixture);
+        fixture.queue.enqueue(Provider::Claude, &transcript, false, 100).unwrap();
+        run(&fixture, &index, &seen, vec![placement()]).unwrap();
+        let mut text = fs::read_to_string(&transcript).unwrap();
+        text.push_str(&format!("{}\n", mark_record(&fixture, "d4e5f6", "Failed jobs raise no desktop alert either.", None)));
+        text.push_str(&format!("{}\n", mark_record(&fixture, "0f0f0f", "Finished jobs raise no alert of any kind.", Some("a1b2c3"))));
+        fs::write(&transcript, text).unwrap();
+        fixture.queue.enqueue(Provider::Claude, &transcript, true, 200).unwrap();
+        let asked = RefCell::new(String::new());
+        let mut ask = |prompt: &str, _: &Value, _: &Path| {
+            *asked.borrow_mut() = prompt.to_string();
+            Ok(json!({"marks": [{"mark": 0, "waiting": 0, "relation": unrelated()}, {"mark": 1, "waiting": 0, "relation": unrelated()}]}))
+        };
+        step(&fixture.queue, &fixture.settings, &fixture.paths, &mut ask, &index, &seen).unwrap().unwrap();
+        // The replaced candidate is not shown to the model as one that waits.
+        assert!(asked.borrow().contains("\"waiting\":[]"), "{}", asked.borrow());
+        let waiting: Vec<String> = fixture.queue.waiting_candidates().unwrap().into_iter().map(|candidate| candidate.mark).collect();
+        assert_eq!(waiting, vec!["d4e5f6".to_string(), "0f0f0f".to_string()]);
     }
 
     #[test]
@@ -635,9 +671,9 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
         let job = fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        let invented = json!({"language": "English", "candidates": [{"kind": "decision", "text": "No alerts.", "scope": "project", "mark": -1, "evidence": [{"ref": "L1", "quote": "never alert me"}], "relation": unrelated()}]});
+        let invented = json!({"marks": [{"mark": 3, "waiting": 0, "relation": unrelated()}]});
         let (_, outcome) = run(&fixture, &index, &seen, vec![invented]).unwrap();
-        assert!(matches!(&outcome, Outcome::Failed { message, gave_up: false, .. } if message.contains("does not match")), "{outcome:?}");
+        assert!(matches!(&outcome, Outcome::Failed { message, gave_up: false, .. } if message.contains("no mark at position 3")), "{outcome:?}");
         assert!(fixture.queue.waiting_candidates().unwrap().is_empty());
         let stored = fixture.queue.get(&job).unwrap().unwrap();
         assert_eq!((stored.status, stored.cursor_line, stored.attempts), (Status::Pending, 0, 1));
@@ -646,7 +682,7 @@ mod tests {
     /// A candidate offered, approved, and its plan made: the state of a batch about to write.
     fn planned(fixture: &Fixture, index: &FakeIndex, seen: &Seen, auto: bool) -> (i64, i64, Plan) {
         fixture.queue.enqueue(Provider::Claude, &decided(fixture), false, 100).unwrap();
-        run(fixture, index, seen, vec![extraction()]).unwrap();
+        run(fixture, index, seen, vec![placement()]).unwrap();
         let id = fixture.queue.waiting_candidates().unwrap()[0].id;
         let batch = fixture.queue.approve_candidates(&[id], auto, 200).unwrap()[0];
         let members = fixture.queue.batch_candidates(batch).unwrap();
@@ -672,7 +708,7 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex { failing: RefCell::new(1), ..FakeIndex::default() }, Seen::default());
         fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        run(&fixture, &index, &seen, vec![placement()]).unwrap();
         let id = fixture.queue.waiting_candidates().unwrap()[0].id;
         let batch = fixture.queue.approve_candidates(&[id], false, 200).unwrap()[0];
         let (_, outcome) = run(&fixture, &index, &seen, vec![new_note()]).unwrap();
@@ -779,7 +815,7 @@ mod tests {
         let transcript = decided(&fixture);
         // A compaction: the session goes on, so nothing is announced yet.
         let job = fixture.queue.enqueue(Provider::Claude, &transcript, false, 100).unwrap();
-        run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        run(&fixture, &index, &seen, vec![placement()]).unwrap();
         assert!(seen.ended.borrow().is_empty());
         // The session ends without another word. What the earlier step found is announced now.
         fixture.queue.enqueue(Provider::Claude, &transcript, true, 200).unwrap();
@@ -799,22 +835,21 @@ mod tests {
         let (index, seen) = (FakeIndex::default(), Seen::default());
         let transcript = decided(&fixture);
         let job = fixture.queue.enqueue(Provider::Claude, &transcript, false, 100).unwrap();
-        // While the model answers, the user says one more thing and the session ends.
+        // While the model answers, the user decides one more thing, the session marks it and ends.
         let mut ask = |_: &str, _: &Value, _: &Path| {
             let more = json!({"type": "user", "uuid": "u2", "userType": "external", "timestamp": "2026-11-05T12:05:00Z", "cwd": fixture.dir.path().join("demo").to_string_lossy(), "sessionId": "sess-1", "message": {"content": "Also keep the status panel."}});
             let mut text = fs::read_to_string(&transcript).unwrap();
-            text.push_str(&format!("{more}\n"));
+            text.push_str(&format!("{more}\n{}\n", mark_record(&fixture, "b7b7b7", "The status panel stays.", None)));
             fs::write(&transcript, text).unwrap();
             fixture.queue.enqueue(Provider::Claude, &transcript, true, 150).unwrap();
-            Ok(extraction())
+            Ok(placement())
         };
         step(&fixture.queue, &fixture.settings, &fixture.paths, &mut ask, &index, &seen).unwrap().unwrap();
         let open = fixture.queue.get(&job).unwrap().unwrap();
-        assert_eq!((open.status, open.cursor_line, open.ended), (Status::Pending, 2, true));
+        assert_eq!((open.status, open.cursor_line, open.ended), (Status::Pending, 3, true));
         assert!(seen.ended.borrow().is_empty());
-        // The next step reads the line that was added and then tells the user of both candidates.
-        let second = json!({"language": "English", "candidates": [{"kind": "decision", "text": "The status panel stays.", "scope": "project", "mark": -1, "evidence": [{"ref": "L3", "quote": "Also keep the status panel."}], "relation": unrelated()}]});
-        let (_, outcome) = run(&fixture, &index, &seen, vec![second]).unwrap();
+        // The next step reads the lines that were added and then tells the user of both candidates.
+        let (_, outcome) = run(&fixture, &index, &seen, vec![placement()]).unwrap();
         assert_eq!(outcome, Outcome::Offered { project: "demo".into(), candidates: 1, left_out: 0 });
         assert_eq!(seen.ended.borrow().as_slice(), [("demo".to_string(), 2)]);
         assert_eq!(fixture.queue.get(&job).unwrap().unwrap().status, Status::Done);
@@ -825,7 +860,7 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
         fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        run(&fixture, &index, &seen, vec![placement()]).unwrap();
         let id = fixture.queue.waiting_candidates().unwrap()[0].id;
         let batch = fixture.queue.approve_candidates(&[id], false, 200).unwrap()[0];
         let unused = json!({"summary": "Nothing.", "changes": [], "removals": []});
@@ -842,7 +877,7 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex::default(), Seen::default());
         fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        run(&fixture, &index, &seen, vec![placement()]).unwrap();
         let found = fixture.queue.waiting_candidates().unwrap()[0].created_at;
         let day = 86_400;
         assert_eq!(approve_overdue(&fixture.queue, &fixture.settings, found + 30 * day).unwrap(), 0);
@@ -872,7 +907,7 @@ mod tests {
         let fixture = fixture();
         let (index, seen) = (FakeIndex { missing: true, ..FakeIndex::default() }, Seen::default());
         fixture.queue.enqueue(Provider::Claude, &decided(&fixture), false, 100).unwrap();
-        let (_, outcome) = run(&fixture, &index, &seen, vec![extraction()]).unwrap();
+        let (_, outcome) = run(&fixture, &index, &seen, vec![placement()]).unwrap();
         assert_eq!(outcome, Outcome::Offered { project: "demo".into(), candidates: 1, left_out: 0 });
         let waiting = fixture.queue.waiting_candidates().unwrap();
         fixture.queue.approve_candidates(&[waiting[0].id], false, now()).unwrap();
@@ -883,27 +918,17 @@ mod tests {
     }
 
     #[test]
-    fn discarding_skips_only_the_failed_batch_and_queues_the_rest_of_the_session() {
+    fn discarding_skips_what_the_session_holds_so_far_and_reads_what_it_adds_later() {
         let fixture = fixture();
         let transcript = session(&fixture, "a.jsonl", 4);
         let id = failed(&fixture, &transcript);
-        assert_eq!(discard_job(&fixture, &id).unwrap(), Some(Discarded::Batch { after_line: 0, end_line: 2 }));
+        assert_eq!(discard_job(&fixture, &id).unwrap(), Some(Discarded::Step { after_line: 0, end_line: 4 }));
         let job = fixture.queue.get(&id).unwrap().unwrap();
-        assert_eq!((job.status, job.cursor_line, job.attempts, job.last_error), (Status::Pending, 2, 0, None));
-        assert_eq!(job.cursor_hash, prefix_hash(&fs::read(&transcript).unwrap(), 2));
-        assert_eq!(fixture.queue.next_job(200).unwrap().unwrap().id, id);
-    }
-
-    #[test]
-    fn discarding_the_last_batch_finishes_the_job() {
-        let fixture = fixture();
-        let transcript = session(&fixture, "a.jsonl", 4);
-        let id = failed(&fixture, &transcript);
-        discard_job(&fixture, &id).unwrap();
-        fail(&fixture.queue, &id);
-        assert_eq!(discard_job(&fixture, &id).unwrap(), Some(Discarded::Batch { after_line: 2, end_line: 4 }));
-        let job = fixture.queue.get(&id).unwrap().unwrap();
-        assert_eq!((job.status, job.cursor_line), (Status::Done, 4));
+        assert_eq!((job.status, job.cursor_line, job.attempts, job.last_error), (Status::Done, 4, 0, None));
+        assert_eq!(job.cursor_hash, prefix_hash(&fs::read(&transcript).unwrap(), 4));
+        fixture.queue.enqueue(Provider::Claude, &transcript, true, 300).unwrap();
+        let next = fixture.queue.next_job(300).unwrap().unwrap();
+        assert_eq!((next.id, next.cursor_line), (id, 4));
     }
 
     #[test]
@@ -914,7 +939,7 @@ mod tests {
         fs::write(&broken_path, "not json\n").unwrap();
         let broken = failed(&fixture, &broken_path);
         let changed = fixture.queue.enqueue(Provider::Claude, &session(&fixture, "changed.jsonl", 4), false, 100).unwrap();
-        fixture.queue.finish(&changed, 2, "stale", true, 1, 100).unwrap();
+        fixture.queue.finish(&changed, 2, "stale", 1, 100).unwrap();
         fail(&fixture.queue, &changed);
 
         for (id, cause) in [(missing, "Transcript file not found"), (broken, "invalid JSON"), (changed, "previously processed source prefix has changed")] {

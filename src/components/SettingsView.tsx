@@ -18,12 +18,11 @@ const CLI_NAME: Record<Backend, string> = { claude: "Claude", codex: "Codex" };
 const CLI_COMMAND: Record<Backend, string> = { claude: "claude --print", codex: "codex exec" };
 const CONNECTION: Record<ConnectionState, string> = { connected: "Connected", partial: "Needs repair", missing: "Not connected" };
 
-type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs" | "maxChars";
+type LimitKey = "modelTimeoutSecs" | "qmdTimeoutSecs";
 
 const LIMITS: { key: LimitKey; id: string; label: string; unit: string }[] = [
   { key: "modelTimeoutSecs", id: "model-timeout", label: "Recording timeout", unit: "sec" },
   { key: "qmdTimeoutSecs", id: "qmd-timeout", label: "qmd timeout", unit: "sec" },
-  { key: "maxChars", id: "max-chars", label: "Conversation read per step", unit: "chars" },
 ];
 
 interface CommitInputProps {
@@ -399,7 +398,7 @@ export function SettingsView({ snapshot }: { snapshot: Snapshot }) {
           {LIMITS.map(({ key, id, label, unit }) => (
             <CommitField key={key} id={id} label={label} unit={unit} numeric value={String(settings[key] || "")} onCommit={(text) => saveSettings({ [key]: Number(text) })} />
           ))}
-          <div className="set-hint">Timed-out recordings stop and retry later. Character limits apply from the next recording.</div>
+          <div className="set-hint">Timed-out recordings stop and retry later.</div>
           <button type="button" className="link-row" onClick={() => void api.openFolder("data")}>
             <span className="grow">Open app data folder</span>
             <ChevronRight size={14} strokeWidth={1.9} />

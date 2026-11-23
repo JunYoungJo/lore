@@ -22,7 +22,7 @@ function fixture(step = 0): SetupSnapshot {
     settings: {
       knowledgeRoot: "/Users/test/Documents/lore-memory", backend: "claude", fallback: false, models: { codex: null, claude: "opus" }, efforts: { codex: null, claude: null },
       modelTimeoutSecs: 1800, qmdTimeoutSecs: 900, claudeProjectsDir: "/sessions/claude", codexSessionsDir: "/sessions/codex",
-      idleSecs: 600, since: 42, paused: false, syncEnabled: false, autoCleanup: false, autoApprove: false, autoApproveDays: 3, autoApproveSince: 0, maxChars: 50000, qmdIndex: "index",
+      idleSecs: 600, since: 42, paused: false, syncEnabled: false, autoCleanup: false, autoApprove: false, autoApproveDays: 3, autoApproveSince: 0, qmdIndex: "index",
       commands: { codex: ["/tools/codex"], claude: ["/tools/claude"], qmd: ["/tools/qmd"] },
     },
     diagnostics: { commands: { codex: { command: ["/tools/codex"], available: true }, claude: { command: ["/tools/claude"], available: true }, qmd: { command: ["/tools/qmd"], available: true } }, indexConfigured: true, problems: [], qmdConfigDir: "/app/qmd/config", qmdCacheDir: "/app/qmd/cache", hookCli: "/app/lore-cli" },

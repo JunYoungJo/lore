@@ -45,7 +45,7 @@ For a failed draft build, rerun failed workflow jobs. **Run workflow** can also 
 
 ## In-app behavior
 
-Release builds check for updates once after startup. A found version appears in the tray popover; Settings → App updates and the tray's **Check for updates…** menu provide manual checks. A failed check stays in the update settings and does not interrupt recording.
+Release builds check for updates once after startup. A found version appears in the tray popover; Settings → App updates and the tray's **Check for updates** menu provide manual checks. A failed check stays in the update settings and does not interrupt recording.
 
 **Install & restart** is explicit. The backend takes the shared operation gate and setup exclusion flag, refuses active recording/sync/review/setup-terminal work, downloads and verifies the update, and only then installs it. Windows hands off to NSIS; macOS and AppImage restart after successful installation. Queue, settings, and memory are not reset. Automatic Windows upgrades retain the NSIS update-mode guard that skips integration cleanup.
 

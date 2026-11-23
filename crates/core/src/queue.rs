@@ -102,15 +102,15 @@ pub struct Queue {
 
 const JOB_COLUMNS: &str = "id, provider, transcript, status, cursor_line, cursor_hash, project, session_id, attempts, next_attempt_at, requests, last_error, updated_at, ended";
 
-/// Move a job's cursor to the end of the step that just finished. The job is done unless more
-/// of the session is left, or a hook asked for the session again while the step ran: what was
-/// added to the file in the meantime is then read by a further step. Returns whether it is done.
-pub(crate) fn advance(connection: &Connection, id: &str, end_line: usize, end_hash: &str, has_more: bool, seen_requests: i64, now: i64) -> rusqlite::Result<bool> {
+/// Move a job's cursor to the end of the step that just finished. The job is done unless a hook
+/// asked for the session again while the step ran: what was added to the file in the meantime is
+/// then read by a further step. Returns whether it is done.
+pub(crate) fn advance(connection: &Connection, id: &str, end_line: usize, end_hash: &str, seen_requests: i64, now: i64) -> rusqlite::Result<bool> {
     connection.query_row(
-        "UPDATE jobs SET cursor_line = ?2, cursor_hash = ?3, status = CASE WHEN ?4 OR requests <> ?5 THEN 'pending' ELSE 'done' END,
-             attempts = 0, next_attempt_at = 0, last_error = NULL, ended = CASE WHEN ?4 OR requests <> ?5 THEN ended ELSE 0 END, updated_at = ?6
+        "UPDATE jobs SET cursor_line = ?2, cursor_hash = ?3, status = CASE WHEN requests <> ?4 THEN 'pending' ELSE 'done' END,
+             attempts = 0, next_attempt_at = 0, last_error = NULL, ended = CASE WHEN requests <> ?4 THEN ended ELSE 0 END, updated_at = ?5
          WHERE id = ?1 RETURNING status = 'done'",
-        params![id, end_line as i64, end_hash, has_more, seen_requests, now],
+        params![id, end_line as i64, end_hash, seen_requests, now],
         |row| row.get(0),
     )
 }
@@ -252,8 +252,8 @@ impl Queue {
 
     /// Finish a step that stored nothing. `seen_requests` is the job's `requests` as the step
     /// found it. Returns whether the job is done; see [`advance`].
-    pub fn finish(&self, id: &str, end_line: usize, end_hash: &str, has_more: bool, seen_requests: i64, now: i64) -> Result<bool> {
-        Ok(advance(&self.connection, id, end_line, end_hash, has_more, seen_requests, now)?)
+    pub fn finish(&self, id: &str, end_line: usize, end_hash: &str, seen_requests: i64, now: i64) -> Result<bool> {
+        Ok(advance(&self.connection, id, end_line, end_hash, seen_requests, now)?)
     }
 
     pub fn skip(&self, id: &str, reason: &str, now: i64) -> Result<()> {
@@ -429,7 +429,7 @@ mod tests {
         let outcome = queue.record_failure(&first, Failure::Transient, "모델 시간 초과", 100).unwrap();
         assert_eq!(outcome, FailureOutcome { gave_up: false, attempts: 1, next_attempt_at: 160 });
         assert_eq!(queue.next_job(159).unwrap().unwrap().id, second);
-        queue.finish(&second, 3, "h", false, 1, 159).unwrap();
+        queue.finish(&second, 3, "h", 1, 159).unwrap();
         assert!(queue.next_job(159).unwrap().is_none());
         assert_eq!(queue.next_job(160).unwrap().unwrap().id, first);
     }
@@ -459,11 +459,11 @@ mod tests {
         let seen = queue.next_job(100).unwrap().unwrap().requests;
         // The session ends while the step that a compaction started is still with the model.
         queue.enqueue(Provider::Claude, &dir.path().join("a.jsonl"), true, 101).unwrap();
-        assert!(!queue.finish(&id, 7, "h7", false, seen, 102).unwrap());
+        assert!(!queue.finish(&id, 7, "h7", seen, 102).unwrap());
         let open = queue.get(&id).unwrap().unwrap();
         assert_eq!((open.status, open.cursor_line, open.ended), (Status::Pending, 7, true));
         // The next step sees the request and finds nothing more to read: now the job is done.
-        assert!(queue.finish(&id, 7, "h7", false, open.requests, 103).unwrap());
+        assert!(queue.finish(&id, 7, "h7", open.requests, 103).unwrap());
         let done = queue.get(&id).unwrap().unwrap();
         assert_eq!((done.status, done.ended), (Status::Done, false));
     }
@@ -472,7 +472,7 @@ mod tests {
     fn enqueue_reopens_finished_jobs_but_keeps_failed_and_skipped_until_retry() {
         let (dir, queue) = queue();
         let done = add(&queue, &dir, "done.jsonl");
-        queue.finish(&done, 5, "h", false, 1, 100).unwrap();
+        queue.finish(&done, 5, "h", 1, 100).unwrap();
         add(&queue, &dir, "done.jsonl");
         let reopened = queue.get(&done).unwrap().unwrap();
         assert_eq!((reopened.status, reopened.cursor_line), (Status::Pending, 5));
@@ -484,15 +484,6 @@ mod tests {
         let retried = queue.get(&failed).unwrap().unwrap();
         assert_eq!((retried.status, retried.attempts, retried.last_error), (Status::Pending, 0, None));
         assert!(!queue.retry(&done, 101).unwrap());
-    }
-
-    #[test]
-    fn finish_keeps_the_job_open_when_more_lines_remain() {
-        let (dir, queue) = queue();
-        let id = add(&queue, &dir, "a.jsonl");
-        queue.finish(&id, 4, "h4", true, 1, 100).unwrap();
-        let job = queue.get(&id).unwrap().unwrap();
-        assert_eq!((job.status, job.cursor_line, job.cursor_hash.as_str()), (Status::Pending, 4, "h4"));
     }
 
     #[test]
@@ -526,7 +517,7 @@ mod tests {
         let done = add(&queue, &dir, "done.jsonl");
         queue.record_failure(&later, Failure::Transient, "시간 초과", 100).unwrap();
         queue.record_failure(&failed, Failure::Permanent, "원문 없음", 100).unwrap();
-        queue.finish(&done, 3, "h", false, 1, 100).unwrap();
+        queue.finish(&done, 3, "h", 1, 100).unwrap();
         let listed: Vec<String> = queue.unfinished_jobs().unwrap().into_iter().map(|job| job.id).collect();
         assert_eq!(listed, vec![first, later, failed]);
     }

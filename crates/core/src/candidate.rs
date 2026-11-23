@@ -45,18 +45,11 @@ impl Kind {
     }
 }
 
-/// Who found the candidate: the session marked it while working, or the model found it afterwards.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum Source {
-    Marked,
-    Found,
-}
-
 /// Where new content goes: the session's project, or the notes shared by every project.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Scope {
+    #[default]
     Project,
     Common,
 }
@@ -174,7 +167,8 @@ impl State {
 pub struct Found {
     pub kind: Kind,
     pub text: String,
-    pub source: Source,
+    /// The id of the mark it was prepared from.
+    pub mark: String,
     pub scope: Scope,
     pub evidence: Vec<Quote>,
     pub relation: Relation,
@@ -187,7 +181,6 @@ pub struct Origin<'a> {
     pub session_id: &'a str,
     pub provider: Provider,
     pub project: &'a str,
-    pub language: &'a str,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -198,10 +191,10 @@ pub struct Candidate {
     pub session_id: String,
     pub provider: Provider,
     pub project: String,
-    pub language: String,
     pub kind: Kind,
     pub text: String,
-    pub source: Source,
+    /// The id of the mark it was prepared from.
+    pub mark: String,
     pub scope: Scope,
     pub evidence: Vec<Quote>,
     pub relation: Relation,
@@ -303,7 +296,7 @@ pub struct Waiting {
     pub by_job: BTreeMap<String, usize>,
 }
 
-const CANDIDATE_COLUMNS: &str = "id, job_id, session_id, provider, project, language, kind, text, source, scope, evidence, relation, state, edited, created_at, apply_id, waiting_since";
+const CANDIDATE_COLUMNS: &str = "id, job_id, session_id, provider, project, kind, text, source, scope, evidence, relation, state, edited, created_at, apply_id, waiting_since";
 
 fn word<T: Serialize>(value: T) -> String {
     serde_json::to_value(value).ok().and_then(|value| value.as_str().map(str::to_string)).unwrap_or_default()
@@ -314,31 +307,29 @@ fn from_word<T: for<'de> Deserialize<'de>>(value: &str, fallback: T) -> T {
 }
 
 fn candidate_from_row(row: &Row) -> rusqlite::Result<Candidate> {
-    let provider: String = row.get(3)?;
-    let kind: String = row.get(6)?;
-    let source: String = row.get(8)?;
-    let scope: String = row.get(9)?;
-    let evidence: String = row.get(10)?;
-    let relation: String = row.get(11)?;
-    let state: String = row.get(12)?;
+    let provider: String = row.get("provider")?;
+    let kind: String = row.get("kind")?;
+    let scope: String = row.get("scope")?;
+    let evidence: String = row.get("evidence")?;
+    let relation: String = row.get("relation")?;
+    let state: String = row.get("state")?;
     Ok(Candidate {
-        id: row.get(0)?,
-        job_id: row.get(1)?,
-        session_id: row.get(2)?,
+        id: row.get("id")?,
+        job_id: row.get("job_id")?,
+        session_id: row.get("session_id")?,
         provider: Provider::parse(&provider).unwrap_or(Provider::Claude),
-        project: row.get(4)?,
-        language: row.get(5)?,
+        project: row.get("project")?,
         kind: Kind::parse(&kind).unwrap_or(Kind::Decision),
-        text: row.get(7)?,
-        source: from_word(&source, Source::Found),
+        text: row.get("text")?,
+        mark: row.get("source")?,
         scope: from_word(&scope, Scope::Project),
         evidence: serde_json::from_str(&evidence).unwrap_or_default(),
         relation: serde_json::from_str(&relation).unwrap_or_default(),
         state: State::parse(&state),
-        edited: row.get(13)?,
-        created_at: row.get(14)?,
-        waiting_since: row.get(16)?,
-        apply_id: row.get(15)?,
+        edited: row.get("edited")?,
+        created_at: row.get("created_at")?,
+        waiting_since: row.get("waiting_since")?,
+        apply_id: row.get("apply_id")?,
     })
 }
 
@@ -363,6 +354,8 @@ fn batch_from_row(row: &Row) -> rusqlite::Result<Batch> {
     })
 }
 
+/// `source` holds the id of the mark a candidate was prepared from. The column keeps the name it
+/// had when candidates were also found without a mark, so that an existing database still opens.
 pub(crate) const TABLES: &str = "
     CREATE TABLE IF NOT EXISTS candidates (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -404,11 +397,16 @@ pub(crate) const TABLES: &str = "
 impl Queue {
     /// Store what one step of a session offered and move the session's cursor past it, as one
     /// change: a step that is run again after an interruption replaces its own candidates and
-    /// leaves alone the ones the user has already decided. `seen_requests` is the job's
-    /// `requests` as the step found it. Returns whether the job is done (see `queue::advance`).
+    /// leaves alone the ones the user has already decided. `withdrawn` are marks of earlier steps
+    /// that the session withdrew or replaced in this one: what they became leaves the list while
+    /// it still waits, and stays as it is once the user has decided it. `seen_requests` is the
+    /// job's `requests` as the step found it. Returns whether the job is done (see `queue::advance`).
     #[allow(clippy::too_many_arguments)]
-    pub fn store_candidates(&self, origin: &Origin, end_line: usize, end_hash: &str, has_more: bool, seen_requests: i64, offered: &[Found], duplicates: &[Found], now: i64) -> Result<bool> {
+    pub fn store_candidates(&self, origin: &Origin, end_line: usize, end_hash: &str, seen_requests: i64, offered: &[Found], duplicates: &[Found], withdrawn: &[String], now: i64) -> Result<bool> {
         let transaction = self.connection.unchecked_transaction()?;
+        for mark in withdrawn {
+            transaction.execute("DELETE FROM candidates WHERE job_id = ?1 AND source = ?2 AND state IN ('waiting', 'duplicate')", params![origin.job_id, mark])?;
+        }
         let decided: i64 = transaction.query_row(
             "SELECT COUNT(*) FROM candidates WHERE job_id = ?1 AND end_line = ?2 AND state NOT IN ('waiting', 'duplicate')",
             params![origin.job_id, end_line as i64],
@@ -419,18 +417,17 @@ impl Queue {
             for (state, items) in [(State::Waiting, offered), (State::Duplicate, duplicates)] {
                 for item in items {
                     transaction.execute(
-                        "INSERT INTO candidates (job_id, end_line, session_id, provider, project, language, kind, text, source, scope, evidence, relation, state, created_at, waiting_since)
-                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?14)",
+                        "INSERT INTO candidates (job_id, end_line, session_id, provider, project, kind, text, source, scope, evidence, relation, state, created_at, waiting_since)
+                         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?13)",
                         params![
                             origin.job_id,
                             end_line as i64,
                             origin.session_id,
                             origin.provider.as_str(),
                             origin.project,
-                            origin.language,
                             item.kind.as_str(),
                             item.text,
-                            word(item.source),
+                            item.mark,
                             word(item.scope),
                             serde_json::to_string(&item.evidence)?,
                             serde_json::to_string(&item.relation)?,
@@ -443,7 +440,7 @@ impl Queue {
         }
         transaction.execute("DELETE FROM candidates WHERE state IN ('applied', 'discarded', 'duplicate') AND created_at < ?1", params![now - KEPT_SECS])?;
         transaction.execute(PRUNE_WRITTEN, params![now - KEPT_SECS])?;
-        let done = crate::queue::advance(&transaction, origin.job_id, end_line, end_hash, has_more, seen_requests, now)?;
+        let done = crate::queue::advance(&transaction, origin.job_id, end_line, end_hash, seen_requests, now)?;
         transaction.commit()?;
         Ok(done)
     }
@@ -698,7 +695,7 @@ mod tests {
         Found {
             kind: Kind::Decision,
             text: text.into(),
-            source: Source::Found,
+            mark: format!("m-{text}"),
             scope: Scope::Project,
             evidence: vec![Quote { reference: "L2".into(), quote: "no alerts".into(), speaker: Speaker::User, at: "2026-11-17 10:00:00 +09:00".into() }],
             relation: Relation::new(),
@@ -706,7 +703,11 @@ mod tests {
     }
 
     fn origin<'a>(job: &'a str, project: &'a str) -> Origin<'a> {
-        Origin { job_id: job, session_id: "s1", provider: Provider::Claude, project, language: "English" }
+        Origin { job_id: job, session_id: "s1", provider: Provider::Claude, project }
+    }
+
+    fn store(queue: &Queue, job: &str, project: &str, end_line: usize, offered: &[Found], duplicates: &[Found], now: i64) -> bool {
+        queue.store_candidates(&origin(job, project), end_line, "h", 1, offered, duplicates, &[], now).unwrap()
     }
 
     #[test]
@@ -732,26 +733,45 @@ mod tests {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
         let same = Found { relation: Relation::to(RelationKind::Same, "common/a.md", "A", vec!["x".into()], String::new()), ..found("Already there.") };
-        assert!(queue.store_candidates(&origin(&job, "demo"), 12, "hash", false, 1, &[found("No alerts."), found("Use pages.")], &[same], 100).unwrap());
+        assert!(store(&queue, &job, "demo", 12, &[found("No alerts."), found("Use pages.")], &[same], 100));
         let waiting = queue.waiting_candidates().unwrap();
         assert_eq!(waiting.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), vec!["No alerts.", "Use pages."]);
         assert_eq!(waiting[0].evidence[0].speaker, Speaker::User);
         assert_eq!(queue.left_out().unwrap().len(), 1);
         assert_eq!(queue.waiting().unwrap(), Waiting { candidates: 2, sessions: 1, oldest_at: 100, by_job: BTreeMap::from([(job.clone(), 2)]) });
         let stored = queue.get(&job).unwrap().unwrap();
-        assert_eq!((stored.cursor_line, stored.cursor_hash.as_str(), stored.status), (12, "hash", crate::queue::Status::Done));
+        assert_eq!((stored.cursor_line, stored.cursor_hash.as_str(), stored.status), (12, "h", crate::queue::Status::Done));
+        assert_eq!(waiting[0].mark, "m-No alerts.");
+    }
+
+    #[test]
+    fn a_withdrawn_mark_leaves_the_list_while_it_waits_and_stays_once_the_user_decided_it() {
+        let (_dir, queue) = queue();
+        let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
+        let other = queue.enqueue(Provider::Claude, Path::new("/tmp/b.jsonl"), false, 1).unwrap();
+        store(&queue, &job, "demo", 5, &[found("Waits."), found("Approved."), found("Elsewhere.")], &[found("Already there.")], 100);
+        store(&queue, &other, "demo", 5, &[found("Waits.")], &[], 100);
+        let approved = queue.waiting_candidates().unwrap().into_iter().find(|candidate| candidate.text == "Approved.").unwrap();
+        queue.approve_candidates(&[approved.id], false, 150).unwrap();
+        let withdrawn = ["m-Waits.".to_string(), "m-Approved.".to_string(), "m-Already there.".to_string()];
+        queue.store_candidates(&origin(&job, "demo"), 9, "h", 1, &[found("Replacement.")], &[], &withdrawn, 200).unwrap();
+        let waiting: Vec<(String, String)> = queue.waiting_candidates().unwrap().into_iter().map(|candidate| (candidate.job_id, candidate.text)).collect();
+        // The same mark id in another session is another mark.
+        assert_eq!(waiting, vec![(job.clone(), "Elsewhere.".to_string()), (other, "Waits.".to_string()), (job, "Replacement.".to_string())]);
+        assert_eq!(queue.candidate(approved.id).unwrap().unwrap().state, State::Approved);
+        assert!(queue.left_out().unwrap().is_empty());
     }
 
     #[test]
     fn a_step_run_again_replaces_its_own_candidates_but_not_decided_ones() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 12, "h", true, 1, &[found("First wording.")], &[], 100).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 12, "h", true, 1, &[found("Second wording.")], &[], 101).unwrap();
+        store(&queue, &job, "demo", 12, &[found("First wording.")], &[], 100);
+        store(&queue, &job, "demo", 12, &[found("Second wording.")], &[], 101);
         let waiting = queue.waiting_candidates().unwrap();
         assert_eq!(waiting.iter().map(|c| c.text.as_str()).collect::<Vec<_>>(), vec!["Second wording."]);
         queue.discard_candidates(&[waiting[0].id], 102).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 12, "h", true, 1, &[found("Third wording.")], &[], 103).unwrap();
+        store(&queue, &job, "demo", 12, &[found("Third wording.")], &[], 103);
         assert!(queue.waiting_candidates().unwrap().is_empty());
     }
 
@@ -760,7 +780,7 @@ mod tests {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
         let differs = Found { relation: Relation::to(RelationKind::Differs, "projects/demo/a.md", "A", vec!["x".into()], "d1".into()), ..found("Changes a note.") };
-        queue.store_candidates(&origin(&job, "demo"), 5, "h", false, 1, &[found("New content."), differs], &[], 100).unwrap();
+        store(&queue, &job, "demo", 5, &[found("New content."), differs], &[], 100);
         let ids: Vec<i64> = queue.waiting_candidates().unwrap().iter().map(|c| c.id).collect();
         assert!(queue.edit_candidate(ids[0], Some("  Reworded.  "), Some(Scope::Common)).unwrap());
         assert!(!queue.edit_candidate(ids[1], None, Some(Scope::Common)).unwrap());
@@ -777,8 +797,8 @@ mod tests {
         let (_dir, queue) = queue();
         let a = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
         let b = queue.enqueue(Provider::Codex, Path::new("/tmp/b.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&a, "demo"), 5, "h", false, 1, &[found("One."), found("Two.")], &[], 100).unwrap();
-        queue.store_candidates(&origin(&b, "other"), 5, "h", false, 1, &[found("Three.")], &[], 100).unwrap();
+        store(&queue, &a, "demo", 5, &[found("One."), found("Two.")], &[], 100);
+        store(&queue, &b, "other", 5, &[found("Three.")], &[], 100);
         let ids: Vec<i64> = queue.waiting_candidates().unwrap().iter().map(|c| c.id).collect();
         let batches = queue.approve_candidates(&[ids[0], ids[2], 999], false, 200).unwrap();
         assert_eq!(batches.len(), 2);
@@ -809,7 +829,7 @@ mod tests {
     fn a_batch_whose_notes_are_written_never_fails_for_good() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 5, "h", false, 1, &[found("One.")], &[], 100).unwrap();
+        store(&queue, &job, "demo", 5, &[found("One.")], &[], 100);
         let id = queue.waiting_candidates().unwrap()[0].id;
         let batch = queue.approve_candidates(&[id], false, 200).unwrap()[0];
         queue.batch_written(batch, &ApplyResult::default(), &[], 201).unwrap();
@@ -830,11 +850,11 @@ mod tests {
     fn candidates_of_a_session_are_announced_once() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 5, "h", true, 1, &[found("One."), found("Two.")], &[found("Already there.")], 100).unwrap();
+        store(&queue, &job, "demo", 5, &[found("One."), found("Two.")], &[found("Already there.")], 100);
         queue.discard_candidates(&[queue.waiting_candidates().unwrap()[0].id], 101).unwrap();
         assert_eq!(queue.announce(&job).unwrap(), 1);
         assert_eq!(queue.announce(&job).unwrap(), 0);
-        queue.store_candidates(&origin(&job, "demo"), 9, "h", false, 1, &[found("Three.")], &[], 200).unwrap();
+        store(&queue, &job, "demo", 9, &[found("Three.")], &[], 200);
         assert_eq!(queue.announce(&job).unwrap(), 1);
     }
 
@@ -842,7 +862,7 @@ mod tests {
     fn a_batch_that_keeps_failing_stops_and_can_be_retried_or_released() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 5, "h", false, 1, &[found("One.")], &[], 100).unwrap();
+        store(&queue, &job, "demo", 5, &[found("One.")], &[], 100);
         let id = queue.waiting_candidates().unwrap()[0].id;
         let batch = queue.approve_candidates(&[id], true, 200).unwrap()[0];
         let first = queue.batch_failed(batch, Failure::Rejected, "bad answer", 300).unwrap();
@@ -867,8 +887,8 @@ mod tests {
     fn candidates_that_waited_long_enough_are_listed_for_automatic_approval() {
         let (_dir, queue) = queue();
         let job = queue.enqueue(Provider::Claude, Path::new("/tmp/a.jsonl"), false, 1).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 5, "h", true, 1, &[found("Old.")], &[], 100).unwrap();
-        queue.store_candidates(&origin(&job, "demo"), 9, "h", false, 1, &[found("Recent.")], &[], 500).unwrap();
+        store(&queue, &job, "demo", 5, &[found("Old.")], &[], 100);
+        store(&queue, &job, "demo", 9, &[found("Recent.")], &[], 500);
         let old = queue.candidates_waiting_since(300).unwrap();
         assert_eq!(old.len(), 1);
         assert_eq!(queue.candidate(old[0]).unwrap().unwrap().text, "Old.");

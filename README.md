@@ -28,15 +28,15 @@ Approve what is worth keeping, follow the sources, and carry the same Markdown m
 
 “Why did we choose this?” often takes longer to answer than “What does the code do?” A new coding session may have the files but miss the rejected approach, the constraint behind a decision, or the reason yesterday's plan changed.
 
-Lore is built for developers who work across coding tools, long-running projects, or multiple PCs. It preserves that context as topic-based notes, with the supporting conversations and Git history alongside them.
+Lore is built for developers who work across coding tools, long-running projects, or multiple PCs. It preserves that context as topic-based notes, with the words they rest on and Git history alongside them.
 
-- **You decide what is remembered** — A session and a model propose candidates: decisions you made, corrections to how the agent works, and lessons the work established. Lore lists them, each with the words it rests on. Only what you approve reaches the notes.
+- **You decide what is remembered** — The session you work in marks candidates as they come up: decisions you made, corrections to how the agent works, and lessons the work established, each saying whether it is yours or the agent's proposal or finding. Lore lists them, each with the words of yours it rests on. Only what you approve reaches the notes.
 - **Memory you can inspect** — A note carries the quotations it was built from, with who said them and when. A candidate that changes or ends an existing note shows that note's own passages before you approve it.
 - **Continuity across tools and PCs** — Claude Code and Codex can search the same notes through qmd MCP. Git carries the notes and their evidence between PCs; diverged histories have a separate comparison, decision, and final-preview workflow.
 
 ## Features
 
-- **Capture as you work** — A prompt hook tells Claude Code and Codex sessions how to mark what is worth remembering while they work. Hooks at session end and before compaction queue the conversation, and the tray app reads it in the background, resuming from where it stopped.
+- **Capture as you work** — A prompt hook tells Claude Code and Codex sessions how to mark what is to be remembered the moment it happens, how to name the note a mark changes or ends, and how to replace or withdraw a mark later in the session. Hooks at session end and before compaction queue the session, and the tray app reads its marks in the background, resuming from where it stopped. Nothing is looked for in the conversation afterwards.
 - **Candidates, not diffs** — The Candidates window lists one statement per row, grouped by session. Go through them one at a time, reword if needed, then approve, discard or leave for later, and apply your decisions at once. A candidate a note already covers is left out and only counted.
 - **Notes organized by topic** — The recording model writes what you approved into project and shared notes: new notes, targeted edits, and the removal of a note you were shown. The program rejects any change that does not rest on an approved candidate.
 - **Wait or approve automatically** — A candidate you have not looked at waits. Optionally it is approved as it stands after a number of days you set.
@@ -44,7 +44,7 @@ Lore is built for developers who work across coding tools, long-running projects
 - **Local Markdown, searchable context** — Notes live in a folder you choose. [qmd](https://github.com/tobi/qmd) indexes them for search and retrieval through its MCP server. Candidates stay in the app's database on the PC that produced them.
 - **Review of what you did not decide** — Notes changed by an automatic approval or by a cleanup are listed side by side with what they said before.
 - **Git sharing with conflict review** — Move through changed notes, evidence-backed choices, and a side-by-side final result. Compare related changes even when Git reports no line conflict, then confirm before applying and sharing.
-- **Recoverable background work** — View pending and failed sessions, retry them, or skip a failed segment. An approved batch that could not be written can be tried again or put back in the list. A failed sync is retried in the background without holding other work.
+- **Recoverable background work** — View pending and failed sessions, retry them, or skip what a failed session holds so far. An approved batch that could not be written can be tried again or put back in the list. A failed sync is retried in the background without holding other work.
 - **A tray view of the work** — See what is being read or written, waiting sessions, and recent notes. **Needs attention** collects connection problems, candidates to review, notes to review, failures, and unshared memory; the footer shows sync status and a sync action. Open updated notes from an activity row.
 - **Settings that apply as you change them** — Select a recording model and its supported effort from the CLI's list, or enter a model name when a list is unavailable. Choose a system, light, or dark appearance and configure processing limits.
 - **Connection management** — **Manage Lore** separates AI connections, the memory folder, this PC's search index, and required tools. Inspect each managed file and hook, repair or disconnect a client, and change the embedding model with an explicit index rebuild.
@@ -77,18 +77,21 @@ The first-run introduction. Ongoing repair and removal have a separate integrati
 ## How it works
 
 ```text
-While a session runs, it marks decisions, corrections and lessons
+While a session runs, it marks decisions, corrections and lessons: whose each is,
+and the words of yours it rests on
 Claude Code / Codex session ends or reaches compaction
   → Hook adds the transcript to a local queue
-  → Model lists candidates with quotations and relates them to existing notes
-  → Lore checks every quotation against the conversation and the notes
+  → Lore reads the marks, applies what they replace or withdraw, and finds
+    the quoted words in what you said
+  → Model relates each mark to existing notes and to candidates that wait;
+    Lore checks every passage it quotes from a note
   → You approve, reword or discard candidates in the Candidates window
   → Model writes the approved candidates into notes; Lore checks each change
     rests on one, then saves, commits and refreshes the qmd index
   → A later session can find relevant context through qmd MCP
 ```
 
-A model proposes and you decide. Program checks catch quotations that are not in the conversation, changes that rest on nothing you approved, and invalid edits; they do not prove that a memory is correct. Future agents also need qmd MCP and instructions to consult project memory—notes alone do not make every session use them.
+The session proposes and you decide. What the session does not mark is not offered. Program checks keep words that are not in what you said from being shown as yours, and catch changes that rest on nothing you approved and invalid edits; they do not prove that a memory is correct. Future agents also need qmd MCP and instructions to consult project memory—notes alone do not make every session use them.
 
 ## Getting started
 
@@ -179,7 +182,7 @@ lore-memory/
 
 The queue, the candidates, settings, model execution records, and qmd indexes stay in per-PC app data. They are separate from the memory folder and are not synced. A note lists the quotations it was built from in its `Sources` section; no copy of a conversation is written into the memory folder.
 
-Git sharing sends **all committed files in the memory repository**. A note holds the sentences it quotes, with who said them and when. Choose the repository's visibility and contents accordingly. Lore's model processing is not fully offline: the configured coding CLI receives the conversations and context used for each request.
+Git sharing sends **all committed files in the memory repository**. A note holds the sentences it quotes, with who said them and when. Choose the repository's visibility and contents accordingly. Lore's model processing is not fully offline: the configured coding CLI receives the marks, the candidates and the notes used for each request.
 
 ## Platform status
 

@@ -203,7 +203,7 @@ pub async fn discard_job(app: AppHandle, id: String) -> Result<bool, String> {
     let discarded = tauri::async_runtime::spawn_blocking(move || {
         let state = handle.state::<AppState>();
         let queue = Queue::open(&state.paths.database()).map_err(error)?;
-        worker::discard(&queue, &state.settings(), &state.paths, &id, worker::now()).map_err(error)
+        worker::discard(&queue, &state.paths, &id, worker::now()).map_err(error)
     })
     .await
     .map_err(error)??;

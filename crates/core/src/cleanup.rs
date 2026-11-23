@@ -1,6 +1,6 @@
 //! Tidying the notes that recordings have piled up. A recording sees one session, so it cannot
-//! tell that two notes repeat each other or that a note's subject is gone. A cleanup shows the
-//! model a whole folder and applies what it proposes: merges, splits, moves and removals.
+//! tell that two notes repeat each other or that a note's subject is gone. A cleanup has the
+//! model read a whole folder and applies what it proposes: merges, splits, moves and removals.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -9,17 +9,18 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use crate::error::{Error, Failure, Result};
-use crate::notes::{self, CatalogEntry};
+use crate::notes;
 use crate::notes::write_notes;
 use crate::project::is_valid_name;
-use crate::proposal::{carried_sources, change_log, check_snapshot, moved_note, render_note, validate, with_numbered_sources, Proposal, Scope};
-use crate::recorder::edits_schema;
+use crate::proposal::{carried_sources, change_log, check_snapshot, moved_note, render_note, validate, Proposal, Scope};
+use crate::qmd::collection_name;
+use crate::recorder::{edits_schema, notes_read};
 use crate::review;
 
 pub const PROMPT: &str = include_str!("cleanup-prompt.md");
-/// How much note text one request carries. A folder with more is cleaned in several requests,
-/// which keeps both the input and the answer within what a recording model handles in one call.
-pub const REQUEST_CHARS: usize = 80_000;
+/// How much note text one call is responsible for. A folder with more is cleaned in several
+/// calls. The model also reads, in the same call, the notes it compares these with.
+pub const ASSIGNED_CHARS: usize = 40_000;
 const COMMON: &str = "common";
 
 /// The folder to tidy: a project's notes, or the shared ones. A project can take in the notes
@@ -59,6 +60,16 @@ impl Target {
     /// notes what applies beyond the project; it removes and moves nothing there.
     fn shared(&self) -> Option<String> {
         (self.folder != COMMON).then(|| prefix(COMMON))
+    }
+
+    fn readable(&self) -> Vec<String> {
+        self.folders().into_iter().chain(self.shared()).collect()
+    }
+
+    /// The qmd collection of each folder the model may read, as setup indexes them.
+    fn collections(&self) -> BTreeMap<String, String> {
+        let named = |folder: &String| if folder == COMMON { COMMON.to_string() } else { collection_name(folder) };
+        std::iter::once(&self.folder).chain(&self.absorb).map(|folder| (named(folder), prefix(folder))).chain(self.shared().map(|shared| (COMMON.to_string(), shared))).collect()
     }
 }
 
@@ -242,8 +253,8 @@ pub fn schema() -> Value {
                     "sources_from": {"type": "array", "description": "The notes whose content this change takes in. A new note names at least one.", "items": {
                         "type": "object",
                         "properties": {
-                            "path": {"type": "string", "description": "The path of a note whose text you were given."},
-                            "lines": {"type": "array", "description": "The numbers, in that note's Sources list, of the quotations that support the content taken from it. Empty takes the whole list, which is right when the note is merged whole.", "items": {"type": "integer"}}
+                            "path": {"type": "string", "description": "The path of a note you read in full."},
+                            "lines": {"type": "array", "description": "The lines of that note's Sources section that support the content taken from it, each copied exactly as it reads. Empty takes the whole list, which is right when the note is merged whole.", "items": {"type": "string"}}
                         },
                         "required": ["path", "lines"],
                         "additionalProperties": false
@@ -255,7 +266,7 @@ pub fn schema() -> Value {
             "removals": {"type": "array", "description": "Notes to delete.", "items": {
                 "type": "object",
                 "properties": {
-                    "path": {"type": "string", "description": "The path of a note whose text you were given."},
+                    "path": {"type": "string", "description": "The path of a note you read in full."},
                     "reason": {"type": "string", "description": "One sentence: why a future agent no longer needs this note, or which note now holds what it said."}
                 },
                 "required": ["path", "reason"],
@@ -269,25 +280,25 @@ pub fn schema() -> Value {
                 },
                 "required": ["from", "to"],
                 "additionalProperties": false
-            }},
-            "needs_notes": {"type": "array", "description": "Paths from note_catalog whose text is needed before a change can be written.", "items": {"type": "string"}}
+            }}
         },
-        "required": ["summary", "changes", "removals", "moves", "needs_notes"],
+        "required": ["summary", "changes", "removals", "moves"],
         "additionalProperties": false
     })
 }
 
-// The notes go where the prompt marks them, ahead of the instructions, as in a recording.
+// The data goes where the prompt marks it, ahead of the instructions, as in a recording.
 pub fn build_prompt(payload: &Value) -> String {
-    PROMPT.replacen("{{notes}}", &payload.to_string(), 1)
+    PROMPT.replacen("{{data}}", &payload.to_string(), 1)
 }
 
-/// The notes of each request, in path order, so that no request carries more than `budget`.
+/// The notes each call is responsible for, in path order, so that no call is given more than
+/// `budget` characters of notes to read.
 fn parts(notes: &BTreeMap<String, String>, budget: usize) -> Vec<Vec<String>> {
     let mut parts: Vec<Vec<String>> = Vec::new();
     let mut used = 0;
     for (path, text) in notes {
-        let size = with_numbered_sources(text).chars().count();
+        let size = text.chars().count();
         match parts.last_mut() {
             Some(part) if used + size <= budget => part.push(path.clone()),
             _ => {
@@ -300,26 +311,26 @@ fn parts(notes: &BTreeMap<String, String>, budget: usize) -> Vec<Vec<String>> {
     parts
 }
 
-struct Request {
-    payload: Value,
-    shown: BTreeSet<String>,
-}
-
-fn build_request(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<String>, today: &str, failure: Option<&str>) -> Request {
-    let texts: BTreeMap<&String, String> = notes.iter().filter(|(path, _)| shown.contains(*path)).map(|(path, text)| (path, with_numbered_sources(text))).collect();
-    let catalog: Vec<CatalogEntry> = notes.iter().filter(|(path, _)| !shown.contains(*path)).map(|(path, text)| CatalogEntry { path: path.clone(), title: notes::title_of(text) }).collect();
+/// One call's data. It names the notes the call is responsible for and where the notes are; the
+/// model reads them itself.
+fn build_request(knowledge_root: &Path, target: &Target, assigned: &BTreeSet<String>, today: &str, failure: Option<&str>, again: bool) -> Value {
     let mut payload = json!({
         "folder": prefix(&target.folder),
         "absorbed_folders": target.absorb.iter().map(|folder| prefix(folder)).collect::<Vec<_>>(),
         "shared_folder": target.shared(),
         "today": today,
-        "notes": texts,
-        "note_catalog": catalog,
+        "memory_folder": knowledge_root.to_string_lossy().replace('\\', "/"),
+        "note_folders": target.readable(),
+        "search_collections": target.collections(),
+        "assigned": assigned,
     });
+    if again {
+        payload["assigned_again"] = json!(true);
+    }
     if let Some(reason) = failure {
         payload["previous_failure"] = json!(reason);
     }
-    Request { payload, shown: shown.clone() }
+    payload
 }
 
 /// What one answer does to the folder, checked and rendered but not yet written.
@@ -331,7 +342,7 @@ struct Changes {
     log: Vec<String>,
 }
 
-fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<String>, proposal: &Proposal) -> Result<Changes> {
+fn plan(target: &Target, notes: &BTreeMap<String, String>, read: &BTreeSet<String>, proposal: &Proposal) -> Result<Changes> {
     let existing: BTreeSet<String> = notes.keys().cloned().collect();
     let own = prefix(&target.folder);
     // A note enters the shared folder only as text written for it, never by being moved there whole.
@@ -339,7 +350,7 @@ fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<Stri
         return Err(Error::rejected(format!("A note can be moved only into the folder being cleaned: {}", moved.to)));
     }
     let writable = std::iter::once(own).chain(target.shared()).collect();
-    let scope = Scope { project: &target.folder, existing: &existing, editable: shown, writable, removable: target.folders() };
+    let scope = Scope { project: &target.folder, existing: &existing, editable: read, writable, removable: target.folders() };
     validate(proposal, &scope)?;
     let mut changes = Changes { summary: proposal.summary.replace(['\r', '\n'], " ").trim().to_string(), base: notes.clone(), rendered: BTreeMap::new(), removed: BTreeSet::new(), log: change_log(proposal) };
     for moved in &proposal.moves {
@@ -356,26 +367,39 @@ fn plan(target: &Target, notes: &BTreeMap<String, String>, shown: &BTreeSet<Stri
     Ok(changes)
 }
 
+/// Asks the model with a prompt and the answer's schema. A recorder that reads the memory folder
+/// leaves the record of its tool calls as `events.jsonl` in the artifacts folder it is given.
 pub type Ask<'a> = &'a mut dyn FnMut(&str, &Value, &Path) -> Result<Value>;
 
-fn answer(request: &Request, artifacts: &Path, ask: Ask) -> Result<Proposal> {
-    let value = ask(&build_prompt(&request.payload), &schema(), artifacts)?;
-    serde_json::from_value(value).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))
+/// What one call answered, checked against the notes it read in full.
+struct Answered {
+    changes: Changes,
+    read: BTreeSet<String>,
 }
 
-fn propose(target: &Target, notes: &BTreeMap<String, String>, part: &BTreeSet<String>, today: &str, failure: Option<&str>, artifacts: &Path, ask: Ask) -> Result<Changes> {
-    let mut request = build_request(target, notes, part, today, failure);
-    let mut proposal = answer(&request, artifacts, ask)?;
-    let idle = |proposal: &Proposal| proposal.changes.is_empty() && proposal.removals.is_empty() && proposal.moves.is_empty();
-    if idle(&proposal) && !proposal.needs_notes.is_empty() {
-        let wider: BTreeSet<String> = part.iter().chain(proposal.needs_notes.iter().filter(|path| notes.contains_key(*path))).cloned().collect();
-        request = build_request(target, notes, &wider, today, failure);
-        proposal = answer(&request, &artifacts.join("followup"), ask)?;
-        if idle(&proposal) && !proposal.needs_notes.is_empty() {
-            return Err(Error::rejected("The model requested the existing note body again."));
+#[allow(clippy::too_many_arguments)]
+fn propose(knowledge_root: &Path, target: &Target, notes: &BTreeMap<String, String>, assigned: &BTreeSet<String>, today: &str, failure: Option<&str>, again: bool, artifacts: &Path, ask: Ask) -> Result<Answered> {
+    let record = artifacts.join("events.jsonl");
+    // A record left by an earlier call must not count for this one.
+    let _ = std::fs::remove_file(&record);
+    let value = ask(&build_prompt(&build_request(knowledge_root, target, assigned, today, failure, again)), &schema(), artifacts)?;
+    let read = notes_read(&std::fs::read_to_string(&record).unwrap_or_default(), knowledge_root, &target.collections(), notes);
+    let proposal: Proposal = serde_json::from_value(value).map_err(|error| Error::rejected(format!("Invalid model response format: {error}")))?;
+    Ok(Answered { changes: plan(target, notes, &read, &proposal)?, read })
+}
+
+/// One call over `assigned`, asked once more with the reason when its answer is rejected, and
+/// applied when `write` is on.
+#[allow(clippy::too_many_arguments)]
+fn call(knowledge_root: &Path, target: &Target, notes: &BTreeMap<String, String>, assigned: &BTreeSet<String>, today: &str, again: bool, artifacts: &Path, write: bool, ask: Ask) -> Result<Answered> {
+    let mut failure: Option<String> = None;
+    loop {
+        match propose(knowledge_root, target, notes, assigned, today, failure.as_deref(), again, artifacts, ask) {
+            Err(error) if error.failure == Failure::Rejected && failure.is_none() => failure = Some(error.message),
+            Ok(answered) if write => break apply(knowledge_root, target, &answered.changes).map(|()| answered),
+            result => break result,
         }
     }
-    plan(target, notes, &request.shown, &proposal)
 }
 
 fn apply(knowledge_root: &Path, target: &Target, changes: &Changes) -> Result<()> {
@@ -406,70 +430,84 @@ impl Outcome {
     }
 }
 
+/// What the calls of one run changed so far.
+#[derive(Default)]
+struct Tally {
+    written: BTreeSet<String>,
+    removed: BTreeSet<String>,
+    summaries: Vec<String>,
+    last: String,
+    log: Vec<String>,
+}
+
+impl Tally {
+    fn add(&mut self, changes: Changes) {
+        self.last = changes.summary.clone();
+        if !changes.rendered.is_empty() || !changes.removed.is_empty() {
+            self.summaries.push(changes.summary);
+        }
+        self.log.extend(changes.log);
+        // A note written by one call and removed by a later one ends up removed.
+        for path in changes.rendered.into_keys() {
+            self.removed.remove(&path);
+            self.written.insert(path);
+        }
+        for path in changes.removed {
+            self.written.remove(&path);
+            self.removed.insert(path);
+        }
+    }
+
+    fn is_empty(&self) -> bool {
+        self.written.is_empty() && self.removed.is_empty()
+    }
+}
+
 /// Clean one folder. With `write` off nothing is changed and the outcome says what would be.
 pub fn run(knowledge_root: &Path, target: &Target, budget: usize, today: &str, artifacts: &Path, write: bool, ask: Ask) -> Result<Outcome> {
     target.check()?;
-    let is_shared = |path: &String| target.shared().is_some_and(|shared| path.starts_with(&shared));
-    let (shared, own): (BTreeMap<String, String>, BTreeMap<String, String>) = load(knowledge_root, target)?.into_iter().partition(|(path, _)| is_shared(path));
+    // The run is responsible for the notes of its folders. In a project cleanup the shared notes
+    // are read and added to, but the shared folder's own cleanup is responsible for them.
+    let folders = target.folders();
+    let own: BTreeMap<String, String> = load(knowledge_root, target)?.into_iter().filter(|(path, _)| folders.iter().any(|folder| path.starts_with(folder))).collect();
     if !own.keys().any(|path| path.starts_with(&prefix(&target.folder))) && target.absorb.is_empty() {
         return Err(Error::permanent(format!("The folder holds no notes: {}", target.folder)));
     }
-    // The shared notes go with every request so that nothing is added to them twice. When
-    // they would take more than half of a request they are listed by title instead, and the
-    // model asks for the ones it needs.
-    let shared_size: usize = shared.values().map(|text| with_numbered_sources(text).chars().count()).sum();
-    let with_shared = shared_size <= budget / 2;
-    let part_budget = if with_shared { budget - shared_size } else { budget };
-    let mut written = BTreeSet::new();
-    let mut removed = BTreeSet::new();
-    let mut summaries = Vec::new();
-    let mut last = String::new();
-    let mut log = Vec::new();
+    let mut tally = Tally::default();
+    let mut unread = BTreeSet::new();
     let mut incomplete = None;
-    for (index, part) in parts(&own, part_budget).into_iter().enumerate() {
-        // An earlier part may have removed or rewritten notes of this one.
-        let notes = load(knowledge_root, target)?;
-        let mut part: BTreeSet<String> = part.into_iter().filter(|path| notes.contains_key(path)).collect();
-        if part.is_empty() {
-            continue;
-        }
-        if with_shared {
-            part.extend(notes.keys().filter(|path| is_shared(path)).cloned());
-        }
+    'parts: for (index, part) in parts(&own, budget).into_iter().enumerate() {
         let folder = artifacts.join(format!("part-{}", index + 1));
-        // An answer the program rejects is asked for once more, with the reason.
-        let mut failure: Option<String> = None;
-        let result = loop {
-            match propose(target, &notes, &part, today, failure.as_deref(), &folder, ask) {
-                Err(error) if error.failure == Failure::Rejected && failure.is_none() => failure = Some(error.message),
-                Ok(changes) if write => break apply(knowledge_root, target, &changes).map(|()| changes),
-                result => break result,
+        let mut assigned: BTreeSet<String> = part.into_iter().collect();
+        // Assigned notes the call did not read in full are assigned once more, alone.
+        for again in [false, true] {
+            // An earlier call may have removed or rewritten notes of this one.
+            let notes = load(knowledge_root, target)?;
+            assigned.retain(|path| notes.contains_key(path));
+            if assigned.is_empty() {
+                continue 'parts;
             }
-        };
-        let changes = match result {
-            Ok(changes) => changes,
-            // What earlier parts changed is on disk, so it is reported rather than hidden behind the error.
-            Err(error) if write && !(written.is_empty() && removed.is_empty()) => {
-                incomplete = Some(error.message);
-                break;
+            let at = if again { folder.join("followup") } else { folder.clone() };
+            match call(knowledge_root, target, &notes, &assigned, today, again, &at, write, ask) {
+                Ok(answered) => {
+                    assigned.retain(|path| !answered.read.contains(path));
+                    tally.add(answered.changes);
+                }
+                // What earlier calls changed is on disk, so it is reported rather than hidden behind the error.
+                Err(error) if write && !tally.is_empty() => {
+                    incomplete = Some(error.message);
+                    break 'parts;
+                }
+                Err(error) => return Err(error),
             }
-            Err(error) => return Err(error),
-        };
-        last = changes.summary.clone();
-        if !changes.rendered.is_empty() || !changes.removed.is_empty() {
-            summaries.push(changes.summary);
         }
-        log.extend(changes.log);
-        // A note written by one part and removed by a later one ends up removed.
-        for path in changes.rendered.into_keys() {
-            removed.remove(&path);
-            written.insert(path);
-        }
-        for path in changes.removed {
-            written.remove(&path);
-            removed.insert(path);
-        }
+        unread.extend(assigned);
     }
+    if !unread.is_empty() {
+        let names = format!("Not read by the model: {}", unread.into_iter().collect::<Vec<_>>().join(", "));
+        incomplete = Some(incomplete.map_or(names.clone(), |stopped| format!("{stopped} {names}")));
+    }
+    let Tally { written, removed, summaries, last, log } = tally;
     let summary = if summaries.is_empty() { last } else { summaries.join(" ") };
     Ok(Outcome { summary, written: written.into_iter().collect(), removed: removed.into_iter().collect(), log, incomplete })
 }
@@ -490,7 +528,7 @@ pub fn clean(knowledge_root: &Path, target: &Target, artifacts: &Path, ask: Ask)
     let date = review::local_date();
     // Notes written but not committed yet get their own commit first.
     review::record_commit(knowledge_root)?;
-    let result = run(knowledge_root, target, REQUEST_CHARS, &date, artifacts, true, ask);
+    let result = run(knowledge_root, target, ASSIGNED_CHARS, &date, artifacts, true, ask);
     let (summary, log) = result.as_ref().map(|outcome| (outcome.summary.as_str(), outcome.log.as_slice())).unwrap_or_default();
     review::commit_all(knowledge_root, &commit_message(target, &date, summary, log))?;
     result
@@ -559,26 +597,66 @@ mod tests {
     /// endings on Windows, and its opening sentences mention the tag, so the data is what lies
     /// between the closing tag and the last opening tag before it, whatever the line breaks are.
     fn payload_of(prompt: &str) -> Value {
-        let end = prompt.find("</notes>").unwrap();
-        let start = prompt[..end].rfind("<notes>").unwrap() + "<notes>".len();
+        let end = prompt.find("</data>").unwrap();
+        let start = prompt[..end].rfind("<data>").unwrap() + "<data>".len();
         serde_json::from_str(prompt[start..end].trim()).unwrap()
     }
 
-    /// Answers each request with the next prepared proposal and keeps what it was asked.
+    /// Leaves the record a reading run leaves when the model read `paths` in full with `Read`.
+    fn record_reads(prompt: &str, artifacts: &Path, paths: &[String]) {
+        let memory = payload_of(prompt)["memory_folder"].as_str().unwrap().to_string();
+        let lines: Vec<String> = paths
+            .iter()
+            .enumerate()
+            .flat_map(|(index, path)| {
+                let id = format!("read-{index}");
+                [
+                    json!({"type": "assistant", "message": {"content": [{"type": "tool_use", "id": id, "name": "Read", "input": {"file_path": format!("{memory}/{path}")}}]}}).to_string(),
+                    json!({"type": "user", "message": {"content": [{"type": "tool_result", "tool_use_id": id, "content": "the note"}]}}).to_string(),
+                ]
+            })
+            .collect();
+        fs::create_dir_all(artifacts).unwrap();
+        fs::write(artifacts.join("events.jsonl"), lines.join("\n")).unwrap();
+    }
+
+    /// The notes a call was assigned and every note its answer touches.
+    fn assigned_and_touched(prompt: &str, answer: &Value) -> Vec<String> {
+        let proposal: Proposal = serde_json::from_value(answer.clone()).unwrap();
+        let assigned = payload_of(prompt)["assigned"].as_array().unwrap().iter().map(|path| path.as_str().unwrap().to_string()).collect::<Vec<_>>();
+        let touched = proposal.changes.iter().flat_map(|change| std::iter::once(change.path.clone()).chain(change.sources_from.iter().map(|source| source.path().to_string())));
+        let touched = touched.chain(proposal.removals.iter().map(|removal| removal.path.clone())).chain(proposal.moves.iter().map(|moved| moved.from.clone()));
+        assigned.into_iter().chain(touched).collect()
+    }
+
+    /// Answers each request with the next prepared proposal and keeps what it was asked. Unless
+    /// told what each call reads, it reads the assigned notes and every note it answers about.
     struct Model {
         answers: RefCell<Vec<Value>>,
+        reads: RefCell<Vec<Vec<String>>>,
         asked: RefCell<Vec<Value>>,
     }
 
     impl Model {
         fn answering(answers: Vec<Proposal>) -> Self {
-            Self { answers: RefCell::new(answers.into_iter().rev().map(|proposal| serde_json::to_value(proposal).unwrap()).collect()), asked: RefCell::new(Vec::new()) }
+            Self::reading(answers, Vec::new())
         }
 
-        fn ask(&self, prompt: &str, schema: &Value, _: &Path) -> Result<Value> {
+        fn reading(answers: Vec<Proposal>, reads: Vec<Vec<&str>>) -> Self {
+            Self {
+                answers: RefCell::new(answers.into_iter().rev().map(|proposal| serde_json::to_value(proposal).unwrap()).collect()),
+                reads: RefCell::new(reads.into_iter().rev().map(|paths| paths.into_iter().map(String::from).collect()).collect()),
+                asked: RefCell::new(Vec::new()),
+            }
+        }
+
+        fn ask(&self, prompt: &str, schema: &Value, artifacts: &Path) -> Result<Value> {
             assert_eq!(schema, &super::schema());
             self.asked.borrow_mut().push(payload_of(prompt));
-            Ok(self.answers.borrow_mut().pop().expect("the model was asked more often than expected"))
+            let answer = self.answers.borrow_mut().pop().expect("the model was asked more often than expected");
+            let read = self.reads.borrow_mut().pop().unwrap_or_else(|| assigned_and_touched(prompt, &answer));
+            record_reads(prompt, artifacts, &read);
+            Ok(answer)
         }
 
         fn asked(&self, index: usize) -> Value {
@@ -638,26 +716,27 @@ mod tests {
         assert!(merged.ends_with("## Sources\n- 2026-10-03, user: \"로그만 남기십시오\"\n- 2026-10-04, user: \"문구는 짧게\"\n"), "{merged}");
         assert!(merged.contains("authority: \"mixed_evidence\""));
 
-        // The model saw this folder's notes and the shared ones, without their source lists.
+        // The model was given no note text: the notes it is responsible for, and where it may read.
         let asked = model.asked(0);
         assert_eq!((&asked["folder"], &asked["shared_folder"]), (&json!("projects/demo/"), &json!("common/")));
         assert_eq!(asked["today"], "2026-11-12");
-        assert_eq!(asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>(), vec!["common/a.md", "projects/demo/bg.md", "projects/demo/popup.md"]);
-        // Each note's source list is shown with its lines numbered.
-        let shown = asked["notes"]["projects/demo/bg.md"].as_str().unwrap();
-        assert!(shown.ends_with("경고 없이 TP 로그만 남깁니다.\n\n## Sources\n1. 2026-10-03, user: \"로그만 남기십시오\"\n"), "{shown}");
+        assert_eq!(asked["assigned"], json!(["projects/demo/bg.md", "projects/demo/popup.md"]));
+        assert_eq!(asked["memory_folder"], fixture.root().to_string_lossy().replace('\\', "/"));
+        assert_eq!(asked["note_folders"], json!(["projects/demo/", "common/"]));
+        assert_eq!(asked["search_collections"], json!({"common": "common/", "project-demo": "projects/demo/"}));
+        assert!(asked.get("notes").is_none() && asked.get("assigned_again").is_none());
     }
 
     #[test]
     fn a_note_taken_apart_gives_each_piece_only_the_source_lines_named_for_it() {
         let ticket = "---\nqmd:\n  metadata:\n    project: \"demo\"\n    kind: \"issue\"\n    authority: \"mixed_evidence\"\n---\n\n# ISSUE-88\n\n지적과 미해결이 섞인 노트\n\n## Sources\n- 2026-11-01, user: \"끝난 것부터 말해\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n";
         let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
-        let lines = |numbers: Vec<usize>| vec![SourceRef::Lines { path: "projects/demo/issue-88.md".into(), lines: numbers }];
+        let lines = |lines: &[&str]| vec![SourceRef::Lines { path: "projects/demo/issue-88.md".into(), lines: lines.iter().map(|line| line.to_string()).collect() }];
         let proposal = Proposal {
             summary: "이슈 노트를 나눴습니다.".into(),
             changes: vec![
-                Change { sources_from: lines(vec![1]), ..shared_note("common/answer-status-first.md", &[]) },
-                Change { sources_from: lines(vec![2]), ..append("projects/demo/bg.md", "결정", "4GB 미만 PC에서는 확인하지 않았습니다.", &[]) },
+                Change { sources_from: lines(&["- 2026-11-01, user: \"끝난 것부터 말해\""]), ..shared_note("common/answer-status-first.md", &[]) },
+                Change { sources_from: lines(&["2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\""]), ..append("projects/demo/bg.md", "결정", "4GB 미만 PC에서는 확인하지 않았습니다.", &[]) },
             ],
             removals: vec![remove("projects/demo/issue-88.md")],
             ..Proposal::default()
@@ -669,11 +748,11 @@ mod tests {
         let topic = fixture.read("projects/demo/bg.md").unwrap();
         assert!(topic.ends_with("## Sources\n- 2026-10-03, user: \"로그만 남기십시오\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n"), "{topic}");
 
-        let wrong = Proposal { summary: "s".into(), changes: vec![Change { sources_from: lines(vec![3]), ..append("projects/demo/bg.md", "결정", "추가", &[]) }], ..Proposal::default() };
+        let wrong = Proposal { summary: "s".into(), changes: vec![Change { sources_from: lines(&["3"]), ..append("projects/demo/bg.md", "결정", "추가", &[]) }], ..Proposal::default() };
         let refused = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/issue-88.md", ticket)]);
         let model = Model::answering(vec![wrong.clone(), wrong]);
         assert_eq!(tidy(&refused, &demo(), 100_000, true, &model).unwrap_err().failure, Failure::Rejected);
-        assert!(model.asked(1)["previous_failure"].as_str().unwrap().contains("no source line 3"));
+        assert!(model.asked(1)["previous_failure"].as_str().unwrap().contains("no source line that reads exactly \"3\""));
     }
 
     const RULE: &str = "---\nqmd:\n  metadata:\n    project: \"common\"\n    kind: \"lesson\"\n    authority: \"user_decision\"\n---\n\n# 보고 방식\n\n## 규칙\n\n확인한 것만 보고합니다.\n\n## Sources\n- 2026-10-05, user: \"확인한 것만\"\n";
@@ -730,27 +809,66 @@ mod tests {
     }
 
     #[test]
-    fn the_shared_notes_go_with_every_part_and_are_listed_by_title_when_they_are_too_many() {
+    fn a_folder_is_split_by_size_into_calls_and_the_shared_notes_are_read_but_not_assigned() {
         let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("common/reporting.md", RULE)]);
         let nothing = || Proposal { summary: "없음".into(), ..Proposal::default() };
-        let keys = |asked: &Value| asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
-        let size = |text: &str| with_numbered_sources(text).chars().count();
-
-        // Room for the shared note and one project note: two parts, each with the shared note.
         let model = Model::answering(vec![nothing(), nothing()]);
-        tidy(&fixture, &demo(), size(RULE) + size(BG) + 10, true, &model).unwrap();
-        assert_eq!(keys(&model.asked(0)), vec!["common/reporting.md", "projects/demo/bg.md"]);
-        assert_eq!(keys(&model.asked(1)), vec!["common/reporting.md", "projects/demo/popup.md"]);
+        let outcome = tidy(&fixture, &demo(), BG.chars().count() + 10, true, &model).unwrap();
+        assert_eq!(outcome.incomplete, None);
+        assert_eq!(model.asked(0)["assigned"], json!(["projects/demo/bg.md"]));
+        assert_eq!(model.asked(1)["assigned"], json!(["projects/demo/popup.md"]));
+        // Each call may read the shared notes, which the shared folder's own cleanup is responsible for.
+        assert_eq!(model.asked(1)["note_folders"], json!(["projects/demo/", "common/"]));
+    }
 
-        // Shared notes that would take more than half of a request are named, and their text is sent when asked for.
-        let long = format!("# 긴 공용 노트\n\n{}\n", "가".repeat(400));
-        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("common/reporting.md", RULE), ("common/long.md", &long)]);
-        let wants_rule = Proposal { summary: "s".into(), needs_notes: vec!["common/reporting.md".into()], ..Proposal::default() };
-        let model = Model::answering(vec![wants_rule, nothing()]);
-        tidy(&fixture, &demo(), size(BG) + size(POPUP) + 10, true, &model).unwrap();
-        assert_eq!(keys(&model.asked(0)), vec!["projects/demo/bg.md", "projects/demo/popup.md"]);
-        assert_eq!(model.asked(0)["note_catalog"], json!([{"path": "common/long.md", "title": "긴 공용 노트"}, {"path": "common/reporting.md", "title": "보고 방식"}]));
-        assert_eq!(keys(&model.asked(1)), vec!["common/reporting.md", "projects/demo/bg.md", "projects/demo/popup.md"]);
+    #[test]
+    fn a_change_to_a_note_the_call_did_not_read_in_full_is_asked_again_with_the_reason() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP)]);
+        let merge = Proposal {
+            summary: "합침".into(),
+            changes: vec![append("projects/demo/bg.md", "결정", "팝업 문구는 짧게 씁니다.", &["projects/demo/popup.md"])],
+            removals: vec![remove("projects/demo/popup.md")],
+            ..Proposal::default()
+        };
+        let nothing = Proposal { summary: "없음".into(), ..Proposal::default() };
+        let model = Model::reading(vec![merge, nothing], vec![vec!["projects/demo/bg.md"], vec!["projects/demo/bg.md", "projects/demo/popup.md"]]);
+        let outcome = tidy(&fixture, &demo(), 100_000, true, &model).unwrap();
+        assert!(model.asked(1)["previous_failure"].as_str().unwrap().contains("not read in full in this call: projects/demo/popup.md"));
+        assert_eq!((outcome.written, outcome.removed, outcome.incomplete), (vec![], vec![], None));
+        assert_eq!(fixture.read("projects/demo/popup.md").as_deref(), Some(POPUP));
+    }
+
+    #[test]
+    fn assigned_notes_left_unread_are_assigned_once_more_and_then_named_as_not_read() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/demo/queue.md", OLD)]);
+        let nothing = || Proposal { summary: "없음".into(), ..Proposal::default() };
+        // The first call reads only bg, its follow-up reads popup, and queue is read by no call.
+        let model = Model::reading(vec![nothing(), nothing(), nothing(), nothing()], vec![vec!["projects/demo/bg.md"], vec!["projects/demo/popup.md"], vec![], vec![]]);
+        let outcome = tidy(&fixture, &demo(), BG.chars().count() + POPUP.chars().count() + 10, true, &model).unwrap();
+        assert_eq!(model.asked(0)["assigned"], json!(["projects/demo/bg.md", "projects/demo/popup.md"]));
+        assert_eq!((&model.asked(1)["assigned"], &model.asked(1)["assigned_again"]), (&json!(["projects/demo/popup.md"]), &json!(true)));
+        assert_eq!(model.asked(2)["assigned"], json!(["projects/demo/queue.md"]));
+        assert_eq!((&model.asked(3)["assigned"], &model.asked(3)["assigned_again"]), (&json!(["projects/demo/queue.md"]), &json!(true)));
+        assert_eq!(outcome.incomplete.as_deref(), Some("Not read by the model: projects/demo/queue.md"));
+    }
+
+    #[test]
+    fn a_record_left_by_an_earlier_call_does_not_count_for_the_next() {
+        let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP)]);
+        let root = fixture.root().to_path_buf();
+        let artifacts = root.join("artifacts");
+        let removal = Proposal { summary: "s".into(), removals: vec![remove("projects/demo/popup.md")], ..Proposal::default() };
+        let mut asked = 0;
+        let result = run(&root, &demo(), 100_000, "2026-11-12", &artifacts, true, &mut |prompt, _, folder| {
+            asked += 1;
+            if asked == 1 {
+                record_reads(prompt, folder, &["projects/demo/popup.md".to_string()]);
+                return Err(Error::rejected("Invalid model response format"));
+            }
+            Ok(serde_json::to_value(&removal).unwrap())
+        });
+        assert_eq!(result.unwrap_err().failure, Failure::Rejected);
+        assert_eq!(fixture.read("projects/demo/popup.md").as_deref(), Some(POPUP));
     }
 
     #[test]
@@ -801,31 +919,23 @@ mod tests {
     }
 
     #[test]
-    fn a_large_folder_is_cleaned_in_parts_that_list_the_other_notes_by_title() {
+    fn a_call_merges_a_note_assigned_to_a_later_call_once_it_has_read_it() {
         let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP), ("projects/demo/queue.md", OLD)]);
         let nothing = || Proposal { summary: "없음".into(), ..Proposal::default() };
-        let wants_bg = Proposal { summary: "s".into(), needs_notes: vec!["projects/demo/bg.md".into()], ..Proposal::default() };
         let merge = Proposal {
             summary: "합침".into(),
             changes: vec![append("projects/demo/bg.md", "결정", "팝업 문구는 짧게 씁니다.", &["projects/demo/popup.md"])],
             removals: vec![remove("projects/demo/popup.md")],
             ..Proposal::default()
         };
-        // Part 1 holds bg, part 2 holds popup and asks for bg, part 3 holds queue.
-        let model = Model::answering(vec![nothing(), wants_bg, merge, nothing()]);
-        let budget = with_numbered_sources(POPUP).chars().count() + 10;
-        let outcome = tidy(&fixture,&demo(), budget, true, &model).unwrap();
+        // Each note gets a call of its own. The call for bg finds popup and merges it.
+        let model = Model::answering(vec![merge, nothing()]);
+        let outcome = tidy(&fixture, &demo(), OLD.chars().count() + 10, true, &model).unwrap();
         assert_eq!((outcome.written, outcome.removed), (vec!["projects/demo/bg.md".to_string()], vec!["projects/demo/popup.md".to_string()]));
-        assert_eq!(outcome.summary, "합침");
-
-        let keys = |asked: &Value| asked["notes"].as_object().unwrap().keys().cloned().collect::<Vec<_>>();
-        assert_eq!(keys(&model.asked(0)), vec!["projects/demo/bg.md"]);
-        assert_eq!(model.asked(0)["note_catalog"], json!([{"path": "projects/demo/popup.md", "title": "경고 팝업 문구"}, {"path": "projects/demo/queue.md", "title": "큐 잠금"}]));
-        assert_eq!(keys(&model.asked(1)), vec!["projects/demo/popup.md"]);
-        assert_eq!(keys(&model.asked(2)), vec!["projects/demo/bg.md", "projects/demo/popup.md"]);
-        // The last part no longer lists the note the part before it removed.
-        assert_eq!(keys(&model.asked(3)), vec!["projects/demo/queue.md"]);
-        assert_eq!(model.asked(3)["note_catalog"], json!([{"path": "projects/demo/bg.md", "title": "BG 불일치는 로그만 남긴다"}]));
+        assert_eq!((outcome.summary.as_str(), outcome.incomplete), ("합침", None));
+        assert_eq!(model.asked(0)["assigned"], json!(["projects/demo/bg.md"]));
+        // The call for popup is not made, since the note is gone.
+        assert_eq!(model.asked(1)["assigned"], json!(["projects/demo/queue.md"]));
     }
 
     #[test]
@@ -836,7 +946,8 @@ mod tests {
         let outcome = tidy(&fixture,&common, 100_000, true, &model).unwrap();
         assert_eq!(outcome.removed, vec!["common/b.md".to_string()]);
         assert_eq!((&model.asked(0)["folder"], &model.asked(0)["shared_folder"]), (&json!("common/"), &Value::Null));
-        assert_eq!(model.asked(0)["notes"].as_object().unwrap().len(), 2);
+        assert_eq!(model.asked(0)["assigned"], json!(["common/a.md", "common/b.md"]));
+        assert_eq!((&model.asked(0)["note_folders"], &model.asked(0)["search_collections"]), (&json!(["common/"]), &json!({"common": "common/"})));
 
         let never = Model::answering(vec![]);
         for bad in [
@@ -855,7 +966,8 @@ mod tests {
         let fixture = Fixture::new(&[("projects/demo/bg.md", BG), ("projects/demo/popup.md", POPUP)]);
         let proposal = Proposal { summary: "s".into(), changes: vec![append("projects/demo/bg.md", "결정", "추가", &[])], removals: vec![remove("projects/demo/popup.md")], ..Proposal::default() };
         let root = fixture.root().to_path_buf();
-        let result = run(&root, &demo(), 100_000, "2026-11-12", &root.join("artifacts"), true, &mut |_, _, _| {
+        let result = run(&root, &demo(), 100_000, "2026-11-12", &root.join("artifacts"), true, &mut |prompt, _, artifacts| {
+            record_reads(prompt, artifacts, &["projects/demo/bg.md".to_string(), "projects/demo/popup.md".to_string()]);
             fs::write(root.join("projects/demo/popup.md"), "# 경고 팝업 문구\n\n사용자가 고친 내용\n").unwrap();
             Ok(serde_json::to_value(&proposal).unwrap())
         });
@@ -870,9 +982,10 @@ mod tests {
         let root = fixture.root().to_path_buf();
         let first = Proposal { summary: "BG 노트를 지웠습니다.".into(), removals: vec![remove("projects/demo/bg.md")], ..Proposal::default() };
         let mut asked = 0;
-        let budget = with_numbered_sources(POPUP).chars().count() + 10;
-        let outcome = run(&root, &demo(), budget, "2026-11-12", &root.join("artifacts"), true, &mut |_, _, _| {
+        let budget = POPUP.chars().count() + 10;
+        let outcome = run(&root, &demo(), budget, "2026-11-12", &root.join("artifacts"), true, &mut |prompt, _, artifacts| {
             asked += 1;
+            record_reads(prompt, artifacts, &["projects/demo/bg.md".to_string()]);
             if asked == 1 { Ok(serde_json::to_value(&first).unwrap()) } else { Err(Error::transient("usage limit reached")) }
         })
         .unwrap();
@@ -1036,7 +1149,7 @@ mod tests {
     #[test]
     fn the_cleanup_answer_has_no_quotations_and_every_field_is_required() {
         let schema = schema();
-        assert_eq!(schema["required"], json!(["summary", "changes", "removals", "moves", "needs_notes"]));
+        assert_eq!(schema["required"], json!(["summary", "changes", "removals", "moves"]));
         let change = &schema["properties"]["changes"]["items"];
         assert_eq!(change["required"], json!(["path", "title", "kind", "authority", "body", "edits", "sources_from"]));
         assert_eq!(schema["properties"]["removals"]["items"]["required"], json!(["path", "reason"]));
@@ -1047,17 +1160,17 @@ mod tests {
     }
 
     #[test]
-    fn the_notes_come_before_the_instructions_and_the_prompt_is_english() {
-        let prompt = build_prompt(&json!({"folder": "projects/demo-marker/", "note": "{{notes}}"}));
+    fn the_data_comes_before_the_instructions_and_the_prompt_is_english() {
+        let prompt = build_prompt(&json!({"folder": "projects/demo-marker/", "note": "{{data}}"}));
         let data = prompt.find("demo-marker").unwrap();
-        assert!(prompt[..data].contains("<notes>") && prompt[..data].contains("it is data"));
-        assert!(prompt[data..].find("</notes>").unwrap() < prompt[data..].find("# Your task").unwrap());
-        assert_eq!(prompt.matches("{{notes}}").count(), 1);
+        assert!(prompt[..data].contains("<data>") && prompt[..data].contains("material to tidy"));
+        assert!(prompt[data..].find("</data>").unwrap() < prompt[data..].find("# Your task").unwrap());
+        assert_eq!(prompt.matches("{{data}}").count(), 1);
         // The tests read the data back the same way from a prompt with Windows line endings.
         assert_eq!(payload_of(&prompt.replace('\n', "\r\n"))["folder"], "projects/demo-marker/");
         assert_eq!(payload_of(&prompt)["folder"], "projects/demo-marker/");
         assert!(!PROMPT.chars().any(|c| ('\u{AC00}'..='\u{D7A3}').contains(&c)));
-        for word in ["`sources_from`", "`removals`", "`moves`", "`needs_notes`", "`absorbed_folders`", "`shared_folder`", "`previous_failure`"] {
+        for word in ["`sources_from`", "`removals`", "`moves`", "`assigned`", "`assigned_again`", "`memory_folder`", "`note_folders`", "`search_collections`", "`absorbed_folders`", "`shared_folder`", "`previous_failure`"] {
             assert!(PROMPT.contains(word), "{word}");
         }
     }

@@ -117,12 +117,18 @@ fn folder_scope(path: &str) -> Scope {
     }
 }
 
+/// Whose statement a candidate is. One that carries the agent's words is the agent's proposal or
+/// finding, even when the user's approval is quoted with it.
 fn said_by(candidate: &Candidate) -> Speaker {
-    if candidate.evidence.iter().any(|quote| quote.speaker == Speaker::User) {
-        Speaker::User
-    } else {
+    if candidate.evidence.iter().any(|quote| quote.speaker == Speaker::Agent) {
         Speaker::Agent
+    } else {
+        Speaker::User
     }
+}
+
+fn user_quoted(candidate: &Candidate) -> bool {
+    candidate.evidence.iter().any(|quote| quote.speaker == Speaker::User)
 }
 
 fn date_of(stamp: &str) -> Option<&str> {
@@ -155,14 +161,16 @@ fn source_lines(members: &[&Candidate]) -> Vec<String> {
     lines
 }
 
-/// What the note rests on after taking in `members`: the user's own words, the agent's findings, or both.
+/// What the note rests on after taking in `members`: the user's own statements, findings of the
+/// agent that the user did not confirm, or both.
 fn authority(members: &[&Candidate], old: Option<&str>) -> String {
-    let speakers: BTreeSet<&str> = members.iter().flat_map(|candidate| candidate.evidence.iter().map(|quote| quote.speaker.as_str())).collect();
-    let new = match (speakers.contains("user"), speakers.contains("agent")) {
-        (true, false) => "user_decision",
-        (false, true) => "assistant_report",
-        _ => "mixed_evidence",
+    let of = |candidate: &&Candidate| match said_by(candidate) {
+        Speaker::User => "user_decision",
+        Speaker::Agent if user_quoted(candidate) => "mixed_evidence",
+        Speaker::Agent => "assistant_report",
     };
+    let kinds: BTreeSet<&str> = members.iter().map(of).collect();
+    let new = if kinds.len() == 1 { kinds.into_iter().next().unwrap_or("mixed_evidence") } else { "mixed_evidence" };
     match old.and_then(authority_of) {
         Some(previous) if previous != new => "mixed_evidence".to_string(),
         _ => new.to_string(),
@@ -201,13 +209,15 @@ pub fn plan(project: &str, candidates: &[Candidate], notes: &BTreeMap<String, St
                 Some(note) => json!({"type": candidate.relation.kind, "note": note}),
                 None => json!({"type": RelationKind::New, "note": ""}),
             };
-            json!({"id": index + 1, "kind": candidate.kind, "text": candidate.text, "said_by": said_by(candidate), "date": said_on(candidate), "scope": candidate.scope, "relation": relation})
+            let mut entry = json!({"id": index + 1, "kind": candidate.kind, "text": candidate.text, "said_by": said_by(candidate), "date": said_on(candidate), "scope": candidate.scope, "relation": relation});
+            if said_by(candidate) == Speaker::Agent {
+                entry["user_approved"] = json!(user_quoted(candidate));
+            }
+            entry
         })
         .collect();
-    let language = candidates.iter().map(|candidate| candidate.language.as_str()).find(|language| !language.is_empty()).unwrap_or("English");
     let mut payload = json!({
         "project": project,
-        "language": language,
         "memory_folder": memory.to_string_lossy().replace('\\', "/"),
         "note_folders": ["common/", format!("projects/{project}/")],
         "search_collections": search_collections(project),
@@ -377,7 +387,7 @@ pub fn undo(knowledge_root: &Path, plan: &Plan) -> Result<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::candidate::{Quote, Relation, Source, State};
+    use crate::candidate::{Quote, Relation, State};
     use crate::transcript::Provider;
     use std::cell::RefCell;
 
@@ -392,10 +402,9 @@ mod tests {
             session_id: "s".into(),
             provider: Provider::Claude,
             project: "demo".into(),
-            language: "English".into(),
             kind: Kind::Decision,
             text: text.into(),
-            source: Source::Found,
+            mark: "3fa9c2".into(),
             scope: Scope::Project,
             evidence: vec![quote(Speaker::User, "no alerts\nfor finished jobs")],
             relation: Relation::new(),
@@ -572,9 +581,36 @@ mod tests {
             let prompt = prompts.borrow().last().unwrap().clone();
             assert!(prompt.contains(&format!(r#""relation":{{"type":"obsolete","note":"projects/demo/export.md","note_changed":{changed}}}"#)), "{prompt}");
         }
-        for word in ["`note_changed`", "`scope`", "`basis`", "`previous_failure`"] {
+        for word in ["`note_changed`", "`scope`", "`basis`", "`previous_failure`", "`user_approved`"] {
             assert!(PROMPT.contains(word), "{word}");
         }
+    }
+
+    #[test]
+    fn a_proposal_of_the_agent_that_the_user_approved_is_the_agents_and_the_user_approval_is_kept_with_it() {
+        let proposal = "Leave the cleanup as it is for now.";
+        let approved_proposal = Candidate { evidence: vec![quote(Speaker::Agent, proposal), quote(Speaker::User, "알겠어 일단 놔두자.")], ..approved(proposal) };
+        let finding = Candidate { kind: Kind::Lesson, evidence: vec![quote(Speaker::Agent, "Paging fixes the timeout.")], ..approved("Paging fixes the timeout.") };
+        let prompts = RefCell::new(Vec::new());
+        let mut ask = |prompt: &str, _: &Value, _: &Path| {
+            prompts.borrow_mut().push(prompt.to_string());
+            Err::<Value, _>(Error::transient("stop here"))
+        };
+        let _ = plan("demo", &[approved_proposal.clone(), finding.clone(), approved(NO_ALERT)], &notes(), Path::new("D:/memory"), None, Path::new("/tmp/a"), &mut ask);
+        let prompt = prompts.borrow()[0].clone();
+        assert!(prompt.contains(r#""said_by":"agent","date":"2026-11-17","scope":"project","relation":{"type":"new","note":""},"user_approved":true}"#), "{prompt}");
+        assert!(prompt.contains(r#""said_by":"agent","date":"2026-11-17","scope":"project","relation":{"type":"new","note":""},"user_approved":false}"#), "{prompt}");
+        assert!(prompt.contains(r#""said_by":"user","date":"2026-11-17","scope":"project","relation":{"type":"new","note":""}}"#), "{prompt}");
+
+        let created = |candidate: &Candidate| {
+            let answer = json!({"summary": "Recorded.", "removals": [], "changes": [{"path": "projects/demo/cleanup.md", "title": "Cleanup", "body": candidate.text, "edits": [], "basis": [1]}]});
+            run(std::slice::from_ref(candidate), answer).unwrap().rendered["projects/demo/cleanup.md"].clone()
+        };
+        let note = created(&approved_proposal);
+        assert!(note.contains("authority: \"mixed_evidence\""), "{note}");
+        assert!(note.ends_with(&format!("## Sources\n- 2026-11-17, agent: \"{proposal}\"\n- 2026-11-17, user: \"알겠어 일단 놔두자.\"\n")), "{note}");
+        assert!(created(&finding).contains("authority: \"assistant_report\""));
+        assert!(created(&approved(NO_ALERT)).contains("authority: \"user_decision\""));
     }
 
     #[test]

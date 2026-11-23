@@ -183,8 +183,9 @@ pub fn spawn(app: AppHandle) {
                     notify(&app, "Cleanup started", &what);
                 }
                 changed(&app);
+                let memory = settings.knowledge_root();
                 let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    worker::clean(&queue, &settings, &paths, &qmd, &target, run, &mut |prompt, schema, artifacts| recorder.request_json(prompt, schema, artifacts))
+                    worker::clean(&queue, &settings, &paths, &qmd, &target, run, &mut |prompt, schema, artifacts| recorder.request_json_reading(prompt, schema, artifacts, &memory))
                 }));
                 let counts = match &result {
                     Ok(Ok(outcome)) => {

@@ -149,7 +149,7 @@ pub fn setup_tray(app: &AppHandle) -> tauri::Result<()> {
     let paused = app.state::<AppState>().settings().paused;
     let open = MenuItem::with_id(app, "open", "Open", true, None::<&str>)?;
     let pause = CheckMenuItem::with_id(app, PAUSE_ITEM, "Pause", true, paused, None::<&str>)?;
-    let update = MenuItem::with_id(app, "update", "Check for updates…", true, None::<&str>)?;
+    let update = MenuItem::with_id(app, "update", "Check for updates", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
     let menu = Menu::with_items(app, &[&open, &pause, &update, &quit])?;
     let pause_item = pause.clone();

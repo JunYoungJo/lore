@@ -96,8 +96,6 @@ pub struct Settings {
     pub idle_secs: u64,
     pub since: i64,
     pub paused: bool,
-    /// How much new conversation one step of a session reads.
-    pub max_chars: usize,
     pub qmd_index: String,
     pub commands: Commands,
     pub sync_enabled: bool,
@@ -122,7 +120,6 @@ pub struct EditableSettings {
     pub efforts: Efforts,
     pub model_timeout_secs: u64,
     pub qmd_timeout_secs: u64,
-    pub max_chars: usize,
 }
 
 fn slash(path: PathBuf) -> String {
@@ -145,7 +142,6 @@ impl Default for Settings {
             idle_secs: 600,
             since: 0,
             paused: false,
-            max_chars: 200_000,
             qmd_index: "index".into(),
             commands: Commands::default(),
             sync_enabled: false,
@@ -209,9 +205,6 @@ impl Settings {
         if !self.knowledge_root().is_absolute() {
             return Err(Error::permanent("The memory folder must be an absolute path on this PC."));
         }
-        if self.max_chars < 1_000 {
-            return Err(Error::permanent("The input limit is too small."));
-        }
         if !(1..=365).contains(&self.auto_approve_days) {
             return Err(Error::permanent("Candidates are approved automatically after 1 to 365 days."));
         }
@@ -262,7 +255,6 @@ impl Settings {
             efforts: change.efforts.trimmed(),
             model_timeout_secs: change.model_timeout_secs,
             qmd_timeout_secs: change.qmd_timeout_secs,
-            max_chars: change.max_chars,
             ..self.clone()
         }
     }
@@ -376,7 +368,10 @@ mod tests {
     fn missing_fields_take_defaults_and_unknown_backend_is_invalid() {
         let parsed: Settings = serde_json::from_str(r#"{"knowledgeRoot": "E:/notes", "backend": "claude"}"#).unwrap();
         assert_eq!(parsed.knowledge_root, "E:/notes");
-        assert_eq!((parsed.max_chars, parsed.auto_approve, parsed.auto_approve_days), (200_000, false, 3));
+        assert_eq!((parsed.auto_approve, parsed.auto_approve_days), (false, 3));
+        // A value the app no longer has, written by an earlier version, is passed over.
+        let earlier: Settings = serde_json::from_str(r#"{"knowledgeRoot": "E:/notes", "maxChars": 200000}"#).unwrap();
+        assert_eq!(earlier.knowledge_root, "E:/notes");
         assert!(Settings { auto_approve_days: 0, ..Settings::default() }.validate().is_err());
         Settings { knowledge_root: home().join("notes").to_string_lossy().to_string(), ..parsed }.validate().unwrap();
         let wrong = Settings { backend: "gpt".into(), ..Settings::default() };
@@ -404,7 +399,6 @@ mod tests {
             efforts: Efforts { codex: Some(" high ".into()), claude: Some(" ".into()) },
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
-            max_chars: 20_000,
         }
     }
 
@@ -419,7 +413,6 @@ mod tests {
             efforts: Efforts { codex: Some("high".into()), claude: None },
             model_timeout_secs: 1_200,
             qmd_timeout_secs: 300,
-            max_chars: 20_000,
             ..running()
         };
         assert_eq!(edited, expected);

@@ -18,10 +18,14 @@ Bring every statement in `approved` into the notes, and return the result as cha
 
 # What the user approved
 
-Each entry of `approved` has an `id`, a `kind`, the `text` the user approved, who it rests on (`said_by`: the `user`, or the `agent` when it is the assistant's finding), the `date` it was said, and a `relation` to the existing notes.
+Each entry of `approved` has an `id`, a `kind`, the `text` the user approved, whose statement it is (`said_by`), the `date` it was said, and a `relation` to the existing notes.
+
+- `said_by` `user`: the user decided, corrected or stated it.
+- `said_by` `agent` with `user_approved` true: the assistant proposed or found it, and the user approved or confirmed it in the session. The reasons in `text` are then the assistant's.
+- `said_by` `agent` with `user_approved` false: the assistant's finding, which the user did not confirm in the session.
 
 - Carry the meaning of `text` into the note exactly. Do not widen it into a general rule, do not narrow it, and add no reason, condition or consequence that the text does not state. You may change its wording so that it fits the note.
-- Say who decided, once, where it matters: that the user decided it and on which day, or that it is the assistant's finding. Write these labels in the note's language.
+- Say who decided, once, where it matters: that the user decided it and on which day; that the assistant proposed it and the user approved it on that day; or that it is the assistant's finding, confirmed by the user or not. Never present what the assistant proposed or found as something the user said. Write these labels in the note's language.
 
 # Who reads the notes
 
@@ -49,13 +53,13 @@ File names are lowercase English words joined by hyphens that name the topic, no
 
 # Language
 
-Write titles, note bodies, edit text and `summary` in `language`. When you edit an existing note, keep that note's language. Keep code, identifiers, commands, file paths, product names and quotations exactly as they are. File names stay English.
+Write titles, note bodies, edit text and `summary` in the language the approved statements are written in. When you edit an existing note, keep that note's language. Keep code, identifiers, commands, file paths, product names and quotations exactly as they are. File names stay English.
 
 # Output
 
 Return one JSON object that matches the schema.
 
-- `summary`: one sentence, in `language`, for the app's list of what was recorded.
+- `summary`: one sentence, in the language of the approved statements, for the app's list of what was recorded.
 - `changes`: one entry per note to create or edit, with `path`, `title`, `body`, `edits` and `basis`.
 - `removals`: one entry per note to delete, with `path`, a one-sentence `reason` and `basis`.
 

@@ -1,4 +1,3 @@
-pub mod batch;
 pub mod candidate;
 pub mod catalog;
 pub mod cleanup;

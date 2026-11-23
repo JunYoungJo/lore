@@ -79,7 +79,6 @@ function snapshot(overrides: Partial<Snapshot> = {}): Snapshot {
       autoApprove: false,
       autoApproveDays: 3,
       autoApproveSince: 0,
-      maxChars: 30000,
       qmdIndex: "index",
       commands: { codex: ["node", "codex.js"], claude: ["claude.exe"], qmd: ["node", "qmd"] },
     },
@@ -752,8 +751,8 @@ describe("queue view", () => {
     const failed = await openFailed();
     const trigger = within(failed).getByRole("button", { name: "Skip" });
     await userEvent.click(trigger);
-    const confirm = screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" });
-    expect(confirm).toHaveTextContent("Skip the failed segment?");
+    const confirm = screen.getByRole("alertdialog", { name: "Skip failed session confirmation" });
+    expect(confirm).toHaveTextContent("Skip what this session holds so far?");
     expect(failed).not.toContainElement(confirm);
     expect(trigger).toHaveAttribute("aria-expanded", "true");
     await userEvent.click(within(confirm).getByRole("button", { name: "Cancel" }));
@@ -761,7 +760,7 @@ describe("queue view", () => {
     expect(trigger).toHaveFocus();
 
     await userEvent.click(trigger);
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" })).getByRole("button", { name: "Skip" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed session confirmation" })).getByRole("button", { name: "Skip" }));
     expect(api.discardJob).toHaveBeenCalledWith("f1");
   });
 
@@ -769,7 +768,7 @@ describe("queue view", () => {
     api.discardJob.mockRejectedValue("File error: the file is in use by another process.");
     const failed = await openFailed();
     await userEvent.click(within(failed).getByRole("button", { name: "Skip" }));
-    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed segment confirmation" })).getByRole("button", { name: "Skip" }));
+    await userEvent.click(within(screen.getByRole("alertdialog", { name: "Skip failed session confirmation" })).getByRole("button", { name: "Skip" }));
     expect(await screen.findByText("File error: the file is in use by another process.")).toBeInTheDocument();
   });
 });
@@ -841,7 +840,6 @@ describe("settings view", () => {
       efforts: { codex: null, claude: null },
       modelTimeoutSecs: 600,
       qmdTimeoutSecs: 900,
-      maxChars: 30000,
     });
     expect(await screen.findByText("Saved")).toBeInTheDocument();
     await userEvent.type(screen.getByLabelText("Model"), "x");
@@ -937,7 +935,7 @@ describe("settings view", () => {
     await userEvent.click(screen.getByRole("button", { name: "Show" }));
     expect(screen.getByLabelText("Recording timeout")).toHaveValue(600);
     expect(screen.getByLabelText("qmd timeout")).toHaveValue(900);
-    expect(screen.getByLabelText("Conversation read per step")).toHaveValue(30000);
+    expect(screen.queryByLabelText("Conversation read per step")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("Existing notes per recording")).not.toBeInTheDocument();
     await userEvent.clear(screen.getByLabelText("Recording timeout"));
     await userEvent.type(screen.getByLabelText("Recording timeout"), "1200{Enter}");
@@ -949,7 +947,6 @@ describe("settings view", () => {
       efforts: { codex: null, claude: null },
       modelTimeoutSecs: 1200,
       qmdTimeoutSecs: 900,
-      maxChars: 30000,
     });
   });
 

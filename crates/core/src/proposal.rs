@@ -40,17 +40,18 @@ pub struct Change {
 }
 
 /// A note whose content a change takes in, and which of its source lines go with that content.
-/// A cleanup is shown the lines and names the ones that support what it took, so that a note
+/// A cleanup reads the note and copies the lines that support what it took, so that a note
 /// taken apart does not hand each piece the evidence of the others.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum SourceRef {
     Whole(String),
-    /// `lines` counts from 1 in the note's source list. Empty takes every line.
+    /// `lines` are lines of the note's source list as they read, with or without the "- " that
+    /// starts them. Empty takes every line.
     Lines {
         path: String,
         #[serde(default)]
-        lines: Vec<usize>,
+        lines: Vec<String>,
     },
 }
 
@@ -92,15 +93,13 @@ pub struct Proposal {
     pub removals: Vec<Removal>,
     #[serde(default)]
     pub moves: Vec<Move>,
-    #[serde(default)]
-    pub needs_notes: Vec<String>,
 }
 
 /// What a cleanup's proposal may touch.
 pub struct Scope<'a> {
     pub project: &'a str,
     pub existing: &'a BTreeSet<String>,
-    /// The notes whose text the model was given. Only these can be edited, removed or drawn from.
+    /// The notes the model read in full. Only these can be edited, removed, moved or drawn from.
     pub editable: &'a BTreeSet<String>,
     /// Folders notes may be written to, as path prefixes such as "projects/demo/".
     pub writable: Vec<String>,
@@ -186,7 +185,7 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
             return Err(Error::rejected(format!("The note to remove does not exist: {}", removal.path)));
         }
         if !scope.editable.contains(&removal.path) {
-            return Err(Error::rejected(format!("Cannot remove a note whose body was not provided: {}", removal.path)));
+            return Err(Error::rejected(format!("Cannot remove a note that was not read in full in this call: {}", removal.path)));
         }
         if removal.reason.trim().is_empty() {
             return Err(Error::rejected(format!("Removing a note requires a reason: {}", removal.path)));
@@ -200,6 +199,9 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
         if !scope.existing.contains(&moved.from) {
             return Err(Error::rejected(format!("The note to move does not exist: {}", moved.from)));
         }
+        if !scope.editable.contains(&moved.from) {
+            return Err(Error::rejected(format!("Cannot move a note that was not read in full in this call: {}", moved.from)));
+        }
         if known(&moved.to).is_some() {
             return Err(Error::rejected(format!("A note already exists at the path to move to: {}", moved.to)));
         }
@@ -209,7 +211,7 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
         claim(&change.path)?;
         for source in change.sources_from.iter().map(SourceRef::path) {
             if source == change.path || !scope.editable.contains(source) {
-                return Err(Error::rejected(format!("sources_from must name another existing note whose body was provided: {source}")));
+                return Err(Error::rejected(format!("sources_from must name another existing note that was read in full in this call: {source}")));
             }
         }
         if let Some(existing) = known(&change.path) {
@@ -217,7 +219,7 @@ pub fn validate(proposal: &Proposal, scope: &Scope) -> Result<()> {
                 return Err(Error::rejected(format!("The path differs from an existing note only by letter case: {}", change.path)));
             }
             if !scope.editable.contains(existing) {
-                return Err(Error::rejected(format!("Cannot edit an existing note whose body was not provided: {}", change.path)));
+                return Err(Error::rejected(format!("Cannot edit a note that was not read in full in this call: {}", change.path)));
             }
             if !change.body.trim().is_empty() || change.edits.is_empty() {
                 return Err(Error::rejected(format!("Existing notes must use targeted edits rather than a full replacement: {}", change.path)));
@@ -425,27 +427,17 @@ pub fn source_lines(note: &str) -> Vec<String> {
     split_note(note).sources
 }
 
-/// A note as a cleanup is shown it: the source list stays, with its lines numbered, so that
-/// the model can say which lines go with the content it moves.
-pub fn with_numbered_sources(note: &str) -> String {
-    let lines = source_lines(note);
-    if lines.is_empty() {
-        return without_sources(note);
-    }
-    let quotes: Vec<String> = lines.iter().enumerate().map(|(index, line)| format!("{}. {}", index + 1, line.strip_prefix("- ").unwrap_or(line))).collect();
-    format!("{}{SOURCES_HEADING}{}\n", without_sources(note), quotes.join("\n"))
-}
-
 /// The source lines a change takes over from the notes it names in `sources_from`.
 pub fn carried_sources<'a>(change: &Change, text_of: impl Fn(&str) -> Option<&'a str>) -> Result<Vec<String>> {
+    let words = |line: &str| line.trim().strip_prefix("- ").unwrap_or(line.trim()).to_string();
     let mut carried = Vec::new();
     for source in &change.sources_from {
         let all = text_of(source.path()).map(source_lines).unwrap_or_default();
         match source {
             SourceRef::Lines { path, lines } if !lines.is_empty() => {
-                for number in lines {
-                    let line = number.checked_sub(1).and_then(|index| all.get(index));
-                    carried.push(line.cloned().ok_or_else(|| Error::rejected(format!("{path} has no source line {number}; its Sources list has {} lines.", all.len())))?);
+                for wanted in lines {
+                    let line = all.iter().find(|line| words(line) == words(wanted));
+                    carried.push(line.cloned().ok_or_else(|| Error::rejected(format!("{path} has no source line that reads exactly {wanted:?}. Copy the line from its Sources section as it is.")))?);
                 }
             }
             _ => carried.extend(all),
@@ -695,9 +687,9 @@ mod tests {
     }
 
     #[test]
-    fn existing_note_can_change_only_when_its_body_was_provided() {
+    fn existing_note_can_change_only_when_it_was_read_in_full() {
         let edited = with_change(editing(vec![append("결정", "로그만 남깁니다.")]));
-        assert!(check(&edited, &[NOTE], &[]).unwrap_err().to_string().contains("was not provided"));
+        assert!(check(&edited, &[NOTE], &[]).unwrap_err().to_string().contains("not read in full"));
         check(&edited, &[NOTE], &[NOTE]).unwrap();
         assert!(check(&edited, &["projects/demo/BG-Policy.md"], &["projects/demo/BG-Policy.md"]).unwrap_err().to_string().contains("letter case"));
     }
@@ -868,9 +860,9 @@ mod tests {
     }
 
     #[test]
-    fn a_note_is_removed_only_with_a_reason_and_its_text_provided() {
+    fn a_note_is_removed_only_with_a_reason_and_when_it_was_read_in_full() {
         check(&removing(NOTE), &[NOTE], &[NOTE]).unwrap();
-        assert!(check(&removing(NOTE), &[NOTE], &[]).unwrap_err().to_string().contains("was not provided"));
+        assert!(check(&removing(NOTE), &[NOTE], &[]).unwrap_err().to_string().contains("not read in full"));
         assert!(check(&removing(NOTE), &[], &[]).unwrap_err().to_string().contains("does not exist"));
         assert!(check(&removing("projects/other/bg-policy.md"), &["projects/other/bg-policy.md"], &["projects/other/bg-policy.md"]).is_err());
         let mut silent = removing(NOTE);
@@ -910,25 +902,21 @@ mod tests {
     fn only_the_chosen_source_lines_follow_the_content_and_a_line_that_does_not_exist_is_rejected() {
         let ticket = "# 이슈 노트\n\n본문\n\n## Sources\n- 2026-11-01, user: \"끝난 것부터 말해\"\n- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n";
         let text_of = |path: &str| (path == OTHER).then_some(ticket);
-        let taking = |lines: Vec<usize>| Change { sources_from: vec![SourceRef::Lines { path: OTHER.into(), lines }], ..editing(vec![append("남은 점", "4GB 미만 미확인")]) };
-        assert_eq!(carried_sources(&taking(vec![2]), text_of).unwrap(), vec!["- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"".to_string()]);
-        assert_eq!(carried_sources(&taking(vec![]), text_of).unwrap().len(), 2);
-        assert_eq!(carried_sources(&Change { sources_from: vec![OTHER.into()], ..taking(vec![]) }, text_of).unwrap().len(), 2);
-        for missing in [vec![3], vec![0], vec![1, 9]] {
+        let taking = |lines: &[&str]| Change { sources_from: vec![SourceRef::Lines { path: OTHER.into(), lines: lines.iter().map(|line| line.to_string()).collect() }], ..editing(vec![append("남은 점", "4GB 미만 미확인")]) };
+        let agent = "- 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"";
+        // A line is named as it reads, with or without the dash that starts it.
+        assert_eq!(carried_sources(&taking(&[agent]), text_of).unwrap(), vec![agent.to_string()]);
+        assert_eq!(carried_sources(&taking(&[" 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\" "]), text_of).unwrap(), vec![agent.to_string()]);
+        assert_eq!(carried_sources(&taking(&[]), text_of).unwrap().len(), 2);
+        assert_eq!(carried_sources(&Change { sources_from: vec![OTHER.into()], ..taking(&[]) }, text_of).unwrap().len(), 2);
+        for missing in [&["- 2026-11-01, agent: \"4GB에서는 실행하지 않았습니다\""][..], &["2"], &[agent, "- 2026-11-02, user: \"없는 말\""]] {
             let error = carried_sources(&taking(missing), text_of).unwrap_err();
             assert!(error.failure == crate::error::Failure::Rejected && error.to_string().contains("source line"), "{error}");
         }
 
-        // The model is shown the list numbered, each line with its day and speaker, so it can
-        // name the lines. A dash inside the words is part of them.
-        assert_eq!(with_numbered_sources(ticket), "# 이슈 노트\n\n본문\n\n## Sources\n1. 2026-11-01, user: \"끝난 것부터 말해\"\n2. 2026-11-01, agent: \"4GB 미만에서는 실행하지 않았습니다\"\n");
-        assert_eq!(with_numbered_sources("# 근거 없는 노트\n\n본문\n"), "# 근거 없는 노트\n\n본문\n");
-        let dashed = "# 알림\n\n본문\n\n## Sources\n- 2026-11-17, user: \"알림 띄우지 마 — 방해된다\"\n";
-        assert_eq!(with_numbered_sources(dashed), "# 알림\n\n본문\n\n## Sources\n1. 2026-11-17, user: \"알림 띄우지 마 — 방해된다\"\n");
-
-        // Both forms of an answer read: a path alone, and a path with line numbers.
-        let read: Change = serde_json::from_str(r#"{"path": "projects/demo/a.md", "kind": "decision", "authority": "mixed_evidence", "sources_from": ["projects/demo/b.md", {"path": "projects/demo/c.md", "lines": [2]}]}"#).unwrap();
-        assert_eq!(read.sources_from, vec![SourceRef::Whole("projects/demo/b.md".into()), SourceRef::Lines { path: "projects/demo/c.md".into(), lines: vec![2] }]);
+        // Both forms of an answer read: a path alone, and a path with the lines it takes.
+        let read: Change = serde_json::from_str(r#"{"path": "projects/demo/a.md", "kind": "decision", "authority": "mixed_evidence", "sources_from": ["projects/demo/b.md", {"path": "projects/demo/c.md", "lines": ["- 2026-11-01, user: \"끝난 것부터 말해\""]}]}"#).unwrap();
+        assert_eq!(read.sources_from, vec![SourceRef::Whole("projects/demo/b.md".into()), SourceRef::Lines { path: "projects/demo/c.md".into(), lines: vec!["- 2026-11-01, user: \"끝난 것부터 말해\"".into()] }]);
     }
 
     #[test]
@@ -971,6 +959,7 @@ mod tests {
         let old = "projects/old/bg-policy.md";
         tidy(&moving(old, "projects/demo/bg-mismatch.md"), &[NOTE, old]).unwrap();
         tidy(&moving(NOTE, "projects/demo/bg-mismatch.md"), &[NOTE]).unwrap();
+        assert!(check(&moving(NOTE, "projects/demo/bg-mismatch.md"), &[NOTE], &[]).unwrap_err().to_string().contains("not read in full"));
         assert!(tidy(&moving(old, NOTE), &[NOTE, old]).unwrap_err().to_string().contains("already exists"));
         assert!(tidy(&moving(old, "projects/demo/BG-Policy.md"), &[NOTE, old]).is_err());
         assert!(tidy(&moving(old, "projects/old/renamed.md"), &[NOTE, old]).is_err());

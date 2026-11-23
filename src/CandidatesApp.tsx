@@ -284,7 +284,7 @@ function Detail({ candidate, snapshot, now, state, position, count, editing, onS
             {candidate.project}
           </div>
           <div className="head-sub">
-            {providerLabel(candidate.provider)} session · found {relativePhrase(candidate.createdAt, now)} · {candidate.source === "marked" ? "marked by the session while it worked" : "found in the conversation afterwards"}
+            {providerLabel(candidate.provider)} session · found {relativePhrase(candidate.createdAt, now)}
             {candidate.edited && " · edited by you"}
             {wait && ` · ${wait.text}`}
           </div>
@@ -503,7 +503,7 @@ function WrittenView({ snapshot, now, selected, onSelect, onRetry, onRelease }: 
     <div className="review-body">
       <aside className="review-side">
         {items.length === 0 ? (
-          <div className="review-note">Nothing has been written yet. What you approve appears here once Lore writes it.</div>
+          <div className="review-note">Nothing has been written yet.</div>
         ) : (
           <ul className="review-groups" aria-label="Written batches">
             {days.map((day) => (
@@ -523,7 +523,7 @@ function WrittenView({ snapshot, now, selected, onSelect, onRetry, onRelease }: 
           </ul>
         )}
       </aside>
-      {shown ? <BatchDetail item={shown} now={now} onRetry={() => onRetry(shown.batch.id)} onRelease={() => onRelease(shown.batch.id)} /> : <div className="review-center">Nothing has been written yet.</div>}
+      {shown ? <BatchDetail item={shown} now={now} onRetry={() => onRetry(shown.batch.id)} onRelease={() => onRelease(shown.batch.id)} /> : <div className="review-center" />}
     </div>
   );
 }
@@ -553,6 +553,9 @@ export function CandidatesApp() {
   const loading = useRef(false);
   const again = useRef(false);
   const keys = useRef<(event: KeyboardEvent) => void>(() => {});
+  const side = useRef<HTMLElement>(null);
+  // A row the user clicked is already where they look, so the list moves only for keys and buttons.
+  const following = useRef(false);
 
   const load = useCallback(async () => {
     if (loading.current) {
@@ -561,7 +564,8 @@ export function CandidatesApp() {
     }
     loading.current = true;
     try {
-      const next = await api.getCandidates();
+      const served = await api.getCandidates();
+      const next = { ...served, waiting: sessions(served.waiting).flat() };
       setSnapshot(next);
       const ids = next.waiting.map((candidate) => candidate.id);
       const present = new Set(ids);
@@ -646,10 +650,20 @@ export function CandidatesApp() {
     setEditing(on);
   };
 
-  const view = (id: number | null) => {
+  const view = (id: number | null, follow = true) => {
     edit(false);
+    following.current = follow;
     setViewing(id);
   };
+
+  useEffect(() => {
+    if (!following.current) return;
+    following.current = false;
+    const row = side.current?.querySelector<HTMLElement>(".cand-row.current");
+    if (!row) return;
+    const first = !row.parentElement?.previousElementSibling;
+    (first ? (row.closest<HTMLElement>(".review-group") ?? row) : row).scrollIntoView({ block: "start" });
+  }, [viewing]);
 
   /** The first candidate after `from` that is not decided yet, going round the list; else simply the next one. */
   const nextOpen = (from: number, decided: ReadonlyMap<number, Decision>, ids = waiting.map((candidate) => candidate.id)) => {
@@ -737,19 +751,15 @@ export function CandidatesApp() {
     run();
   };
 
+  const decideUndecided = (decision: Decision) => setDecisions(new Map([...decisions, ...undecided.map((candidate) => [candidate.id, decision] as const)]));
+
   const applying = [tally.approve > 0 && `approve ${tally.approve}`, tally.discard > 0 && `discard ${tally.discard}`].filter(Boolean).join(", ");
-  const status = !snapshot
-    ? ""
-    : writing
-      ? "Writing what you approved into the notes…"
-      : `Nothing is written until you apply. Later and undecided candidates keep waiting${snapshot.autoApprove ? ` and are approved automatically after ${plural(snapshot.autoApproveDays, "day")}` : ""}.`;
 
   return (
     <main className="review candidates-window">
       <header className="review-head">
         <div className="head-text">
           <div className="head-title">Candidates</div>
-          <div className="head-sub">Decisions, corrections and lessons from your sessions. Only what you approve is written into your notes.</div>
         </div>
         {snapshot && tab === "review" && (
           <div className="cand-progress">
@@ -790,7 +800,7 @@ export function CandidatesApp() {
           <WrittenView snapshot={snapshot} now={now} selected={selectedBatch} onSelect={setSelectedBatch} onRetry={(id) => void act(() => api.retryApply(id))} onRelease={(id) => void act(() => api.releaseApply(id))} />
           <footer className="review-foot">
             <div className="review-actions">
-              <span className="grow plain">Written batches stay here for 30 days. The notes keep what was written; only the notes are shared with your other PCs.</span>
+              <span className="grow" />
               <button ref={clearButton} type="button" className="btn ghost" disabled={clearable === 0} aria-expanded={confirmingClear} onClick={() => setConfirmingClear(!confirmingClear)}>
                 Clear
               </button>
@@ -810,9 +820,9 @@ export function CandidatesApp() {
       ) : (
         <>
           <div className="review-body">
-            <aside className="review-side">
+            <aside className="review-side" ref={side}>
               {waiting.length === 0 ? (
-                <div className="review-note">No candidate is waiting. New ones appear when a session ends.</div>
+                <div className="review-note">No candidate is waiting.</div>
               ) : (
                 <ul className="review-groups" aria-label="Candidates by session">
                   {sessions(waiting).map((group) => {
@@ -832,7 +842,7 @@ export function CandidatesApp() {
                         </div>
                         <ul className="cand-rows" aria-label={title}>
                           {group.map((candidate) => (
-                            <CandidateRow key={candidate.id} candidate={candidate} snapshot={snapshot} state={stateOf(candidate.id)} viewing={candidate.id === viewing} onView={() => view(candidate.id)} />
+                            <CandidateRow key={candidate.id} candidate={candidate} snapshot={snapshot} state={stateOf(candidate.id)} viewing={candidate.id === viewing} onView={() => view(candidate.id, false)} />
                           ))}
                         </ul>
                         {leftOut.length > 0 && (
@@ -888,10 +898,17 @@ export function CandidatesApp() {
                 ))}
               </span>
               <span className={`grow plain${writing ? " cand-working" : ""}`}>
-                {writing && <LoaderCircle size={14} strokeWidth={1.9} className="spin" />}
-                {status}
+                {writing && (
+                  <>
+                    <LoaderCircle size={14} strokeWidth={1.9} className="spin" />
+                    Writing what you approved into the notes…
+                  </>
+                )}
               </span>
-              <button type="button" className="btn ghost" disabled={undecided.length === 0} onClick={() => setDecisions(new Map([...decisions, ...undecided.map((candidate) => [candidate.id, "approve"] as const)]))}>
+              <button type="button" className="btn ghost" disabled={undecided.length === 0} onClick={() => decideUndecided("discard")}>
+                Discard {plural(undecided.length, "undecided candidate")}
+              </button>
+              <button type="button" className="btn ghost" disabled={undecided.length === 0} onClick={() => decideUndecided("approve")}>
                 Approve {plural(undecided.length, "undecided candidate")}
               </button>
               <button type="button" className="btn primary" disabled={applying === ""} onClick={() => void apply()}>

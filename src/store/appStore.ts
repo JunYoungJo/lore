@@ -7,8 +7,8 @@ export type View = "status" | "settings" | "queue";
 
 export type QueueGroup = "recording" | "ready" | "waiting" | "failed";
 
-export function editable({ knowledgeRoot, backend, fallback, models, efforts, modelTimeoutSecs, qmdTimeoutSecs, maxChars }: Settings): EditableSettings {
-  return { knowledgeRoot, backend, fallback, models: { ...models }, efforts: { ...efforts }, modelTimeoutSecs, qmdTimeoutSecs, maxChars };
+export function editable({ knowledgeRoot, backend, fallback, models, efforts, modelTimeoutSecs, qmdTimeoutSecs }: Settings): EditableSettings {
+  return { knowledgeRoot, backend, fallback, models: { ...models }, efforts: { ...efforts }, modelTimeoutSecs, qmdTimeoutSecs };
 }
 
 const cleanValue = (value: string | null) => (value?.trim() ? value.trim() : null);
